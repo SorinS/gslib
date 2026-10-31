@@ -15,8 +15,8 @@ owns, fed as the data comes.
 | `compress.lzw` | Go's compress/lzw (GIF, TIFF and PDF orders) | yes | yes |
 | `compress.bzip2` | bzip2 | yes | yes |
 | `compress.xz` | xz, LZMA2, .lzma | (pending) | (pending) |
-| `compress.zip` | zip archives | (pending) | (pending) |
-| `compress.tar` | tar archives | (pending) | (pending) |
+| `compress.zip` | zip archives (ZIP64, data descriptors, Go's checks) | yes | yes |
+| `compress.tar` | tar archives (USTAR, PAX, GNU, sparse) | yes | yes |
 
 ```goose
 import compress from "../compressgoose.git";
@@ -214,7 +214,153 @@ verdict tool with checked arithmetic). Natively, decoding runs about as fast
 as the bzip2 program on random data and text, and compressing at -9 within
 about 25% of it.
 
-<!-- xz, zip, tar -->
+<!-- xz -->
+## compress.zip
+
+Go's archive/zip, both ways. The reader takes the whole archive in memory
+(`zip_open`), or only its end (`zip_open_tail(tail, size)`: when the
+directory starts earlier, `r.err` is `ERR_TRUNCATED` and `r.need` says
+where the tail must start), and keeps one fixed-size record a file, its
+name, extra field and comment as positions into the caller's buffer.
+
+```goose
+var r = compress::zip_open(archive);            // zip_open(archive, true): GODEBUG=zipinsecurepath=0
+for e in r.entries {
+    let name = compress::zip_name(r, archive, e);    // e.method, e.modified, e.crc32, sizes, ...
+    compress::zip_mode(r, archive, e)                // Go's Mode(): fs.FileMode bits
+    var f = compress::zip_file_open(r, archive, e);  // f.err: Go's Open error
+    let made, st = compress::zip_file_read_mem(f, archive, r, out);  // STREAM_END: checked
+}
+compress::zip_extract(r, archive, e, out, limit)
+// archive not in memory: zip_file_start(e, local_header, name), zip_file_read(f, input, out)
+
+var w = compress::zip_writer();
+compress::zip_create(w, "a.txt", out);            // Deflate (level 5, as Go), data descriptor
+compress::zip_write(w, data, out);
+compress::zip_create_header(w, compress::ZipHeader { name: "b/", modified: t, .. }, out);
+compress::zip_create_raw(w, h, out);  compress::zip_copy(w, r, archive, e, out);
+compress::zip_set_comment(w, c);  compress::zip_set_offset(w, n);  compress::zip_close(w, out);
+```
+
+What Go does, this does: the end record searched in the last 1 KiB and
+then 65 KiB; ZIP64 end records and extra fields by Go's rules; the base
+offset of an archive with a prefix (self-extracting) and Go's recovery
+when the offsets were right after all; the directory read until it ends,
+and the count checked as Go checks it (16 bits); Go's detectUTF8 for
+NonUTF8 and for the writer's UTF-8 flag; Modified from the MS-DOS fields
+and the NTFS, Unix, Info-ZIP and extended-timestamp extra fields, with
+Go's time zone inference (`ZipTime` keeps the zone offset); Mode() from
+the Unix or MS-DOS attributes; a file's data inflated into the caller's
+room and checked at its end (size, data descriptor's CRC, CRC-32);
+ErrInsecurePath with the entries kept when the check is on (off by
+default, as in Go 1.27; `r.insecure` says either way). The writer writes
+Go's bytes: stored archives, raw files, copies and ZIP64 records are
+byte-identical to Go's writer's. A `ZipFile` is about 37 KB (an inflater).
+
+Errors: ErrFormat `ERR_FORMAT`, ErrAlgorithm `ERR_UNSUPPORTED`,
+ErrChecksum `ERR_CHECKSUM`, ErrInsecurePath `ERR_INSECURE_PATH`,
+io.ErrUnexpectedEOF `ERR_TRUNCATED`, io.EOF `ZIP_ERR_EOF` (-100), the
+negative-offset ReadAt error `ZIP_ERR_NEG_OFFSET` (-101), flate's
+CorruptInputError `ERR_DATA`. Departures: Go's string errors (write to a
+directory, closed twice, too long) are `ERR_ARGUMENT`/`ERR_TOO_LARGE`; a
+too-long name or extra fails before the file is added (Go adds it first);
+`zip_set_offset` after writing is an error where Go panics; paths are
+judged as `filepath.IsLocal` does on Unix; Deflate output is not Go's bytes
+(the compressor differs; stored archives are identical). Not done: the
+fs.FS view (Open by path, ReadDir, duplicate names), registering other
+methods (they are `ERR_UNSUPPORTED`), AddFS and FileInfoHeader (no file
+system API in Goose's stdlib), the content of the sparse 5 GB goldens (only
+their directory and data offsets are read), and Go's
+TestBaseOffsetPlusOverflow, whose ReaderAt claims more bytes than it holds
+(its data is tested as an ordinary archive).
+
+Tests: `test/zip.goose` reads Go's testdata, its sparse 5 GB ZIP64 goldens
+(from their tail) and the archives of Go's regression tests, and compares
+everything with Go 1.27.1's reading (test/vectors/zip/go_dump*.txt, from
+gooracle zip, path check off and on), through rooms of 64 KiB and 7 bytes;
+and ports Go's writer tests (TestWriter, TestWriterCopy, TestWriterOffset,
+TestWriterComment, TestWriterUTF8, TestWriterDir, TestWriterDirAttributes,
+TestWriterCreateRaw, TestHeaderTooLongErr, TestInsecurePaths,
+TestUnderSize, TestOver65kFiles with 65,578 files; TestWriterTime byte for
+byte). `python3 scripts/zip_differential.py --count 1000` reads about 3,000
+archives (80,000 files: Python's zipfile, the zip CLI, Go's writer and
+ours, Go's testdata, corrupted copies of all) with Go and with us, path
+check off and on, output rooms of 64 KiB and of 5 bytes: 0 differences
+over seeds 2, 3, 4, 5, 7 (with --debug) and 11, every file-level error
+class included (algorithm 1,545, format 580, checksum 265, truncated 262,
+data 126, eof 22, negative offset 16). 260 of our archives were read back
+by Python's zipfile (testzip and every file) and `unzip -t`; 282 were
+byte-identical to Go's writer's. Natively, reading runs at about 160 MB/s;
+writing at the compressor's speed (about 22 MB/s at level 5); 10,000 small
+deflated files in 0.04 s.
+
+## compress.tar
+
+```goose
+var r = compress::tar_reader();                 // tar_reader(true): flag insecure paths, as GODEBUG=tarinsecurepath=0
+let used, made, st = compress::tar_read(r, input, out);
+//   st == compress::TAR_HEADER: compress::tar_header(r) is the next entry; the calls after it
+//   write its contents into out (tar_in_entry(r) turns false at the call that ends them;
+//   tar_skip(r) passes over them); 0: more input or room; STREAM_END: two zero blocks
+compress::tar_finish(r)                         // at the end of the input: STREAM_END or ERR_TRUNCATED
+compress::tar_each(data) { h, contents => ... } // a whole archive in memory
+
+var w = compress::tar_writer();
+compress::tar_write_header(w, compress::TarHeader { typeflag: '0', name: "a.txt", size: 5, mtime: compress::tar_time(t), .. }, out);
+compress::tar_write(w, "hello", out);
+compress::tar_close(w, out);
+```
+
+Reads V7, USTAR, PAX (local and global headers), GNU (long names and
+links, base-256 numbers, atime/ctime, old sparse files with extension
+blocks) and star archives, and GNU sparse 0.0, 0.1 and 1.0 in PAX. Sparse
+holes read as zeros, and the map is checked as Go checks it
+(`TAR_WHY_MISS_DATA`, `TAR_WHY_UNREF_DATA`). A `TarHeader` is Go's Header:
+its strings point into the reader, and `pax` holds the PAX records in
+PAX's own encoding, sorted, the last of each key (`tar_pax_get`,
+`tar_pax_each`, `tar_pax_append`), so Xattrs are the `SCHILY.xattr.*`
+records. Results follow Go exactly: headers and formats; ErrHeader,
+ErrFieldTooLong (special files over 1 MiB) and errSparseTooLong (2^20
+entries, 1 MiB of map), told apart by `tar_why(r)`; an archive may end at a
+header, after one zero block, or anywhere in an entry's padding, and
+anywhere else is `ERR_TRUNCATED`; a global header is handed out on its own
+and not merged into later headers. Memory stays bounded: only the last PAX
+header, long name and long link are kept, each at most 1 MiB.
+
+The writer is Go's Writer: it picks USTAR, then PAX, then GNU (or the
+format asked for), writes PAX records for long or non-ASCII names, large
+numbers and sub-second times (`PaxHeaders.0/…`, keys sorted) and GNU long
+names, and with no format asked for rounds times to the second and drops
+atime and ctime. Errors (`tar_writer_why`): a header no format can hold
+(`ERR_HEADER`), a write past the size (`ERR_TOO_LARGE`), an entry not all
+written (`ERR_ARGUMENT`, "missed writing") — none of which stops the
+writer, as in Go — and writing after close.
+
+Departures: no separate Xattrs field (they are the `SCHILY.xattr.*` PAX
+records, as Go stores them); PAX records are PAX-encoded text rather than a
+map; the insecure-path check uses Unix rules only (Go's `filepath.IsLocal`
+on Unix) and, as in Go by default (GODEBUG `tarinsecurepath` unset), is off
+unless asked for — when on, the header is still handed out and
+`tar_insecure_path(r)` says so, as Go returns the header with
+ErrInsecurePath; the writer's errors above do not stop it (Go's behaviour,
+where the package's other codecs make errors sticky); sparse files are not
+written (Go's sparse writer is disabled too); no FileInfoHeader or AddFS.
+
+Tests: `test/tar.goose` reads Go's testdata archives (whole, and in pieces
+of 1, 7 and 513 bytes) against Go's recorded results, rebuilds Go's
+TestWriter archives byte for byte, and runs Go's strconv tables, the
+writer's errors, insecure paths, bounded memory and where an archive may
+end. `python3 scripts/tar_differential.py [--count N]` compares against Go
+(`gooracle tar`): Go's testdata (decoded from .base64 and .bz2) every way;
+thousands of mutated archives; archives made by Python's tarfile, GNU tar
+1.33, bsdtar and by hand (every GNU sparse format, valid and invalid maps)
+and mutations of them; random headers written by Go's Writer and ours (same
+bytes, same results); our archives read and extracted by tarfile, GNU tar
+and bsdtar. At `--count 3000`: 13,367 read comparisons, 1,500 written
+archives identical to Go's, 750 read by the three other readers, 450
+round-trip extractions, 0 failures. Reading a 200 MB archive natively, CRC
+included, takes 0.13 s.
+
 
 ## Tests
 
