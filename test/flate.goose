@@ -117,6 +117,67 @@ fn go_streams() {
     if n != 28 { fail("go_streams.txt: not 28 cases"); }
 }
 
+fn verdict_code(v: const u8[:]) -> i64 {
+    if v == "ok" { return 0; }
+    if v == "truncated" { return compress::ERR_TRUNCATED; }
+    if v == "checksum" { return compress::ERR_CHECKSUM; }
+    if v == "header" { return compress::ERR_HEADER; }
+    if v == "dictionary" { return compress::ERR_DICTIONARY; }
+    if v == "data" { return compress::ERR_DATA; }
+    return 99;
+}
+
+// Go's gunzipTests (gunzip_test.go): the verdict, the output (also before
+// an error, as Go's test checks it) and the first member's name.
+fn go_gunzip_tests() {
+    var text: u8[>..] = [];
+    if !read_file("vectors/flate/go_gunzip_tests.txt", text) { fail("cannot read go_gunzip_tests.txt"); return; }
+    var n = 0;
+    each_split(text, '\n') {
+        if it.len > 0 && it[0] != '#' {
+            let f = split(it, ' ');
+            let s = unhex(f[2]);
+            let want = if f[3] == "-" { unhex("") } else { unhex(f[3]) };
+            let want_name = if f[1] == "-" { unhex("") } else { unhex(f[1]) };
+            expect(it[f[0].len + f[1].len + f[2].len + f[3].len + 4..], GZIP, s, want, verdict_code(f[0]));
+            var r = compress::gzip_reader();
+            var out: u8[>..] = [];
+            compress::gzip_decode_with(r, s, out, -1);
+            var name: u8[>..] = [];
+            compress::gzip_latin1_to_utf8(r.name, name);
+            if name[..] != want_name { print("FAIL gunzip test name: ", name, " want ", want_name); failures++; }
+            n++;
+        }
+    };
+    if n != 15 { fail("go_gunzip_tests.txt: not 15 cases"); }
+}
+
+// Go's zlibTests (reader_test.go): the verdict, and the output when there
+// is no error (as Go's test checks it), with the dictionary given.
+fn go_zlib_tests() {
+    var text: u8[>..] = [];
+    if !read_file("vectors/flate/go_zlib_tests.txt", text) { fail("cannot read go_zlib_tests.txt"); return; }
+    var n = 0;
+    each_split(text, '\n') {
+        if it.len > 0 && it[0] != '#' {
+            let f = split(it, ' ');
+            let dict = if f[1] == "-" { unhex("") } else { unhex(f[1]) };
+            let s = if f[2] == "-" { unhex("") } else { unhex(f[2]) };
+            let want = if f[3] == "-" { unhex("") } else { unhex(f[3]) };
+            let code = verdict_code(f[0]);
+            for chunk in [1, 1 << 30] {
+                let out, e = decode(ZLIB, s, chunk, 7, dict);
+                if e != code || (code == 0 && out[..] != want) {
+                    print("FAIL zlib test ", it, ": err ", e, ", ", out.len, " bytes");
+                    failures++;
+                }
+            }
+            n++;
+        }
+    };
+    if n != 14 { fail("go_zlib_tests.txt: not 14 cases"); }
+}
+
 // compress/flate/testdata's .golden files are Go's Huffman-only encodings
 // of the .in files, without a final block: they decode to the .in file and
 // then end too soon, in Go and here.
@@ -322,6 +383,8 @@ fn bomb() {
 fn main() {
     go_streams();
     go_golden();
+    go_gunzip_tests();
+    go_zlib_tests();
     huffman_codes();
     truncated();
     python_streams();

@@ -1,0 +1,15 @@
+# Go's compress/zlib zlibTests (reader_test.go): VERDICT DICTHEX ZLIBHEX WANTHEX # DESC
+truncated - - - # truncated empty
+truncated 00 78bb - # truncated dict
+truncated 00 78bb00010001ca48cdc9c9d75128cf2fca4901040000ffff - # truncated checksum
+ok - 789c030000000001 - # empty
+ok - 789c4bcfcf4f49aa4cd55128cf2fca49010028a5055e 676f6f646279652c20776f726c64 # goodbye
+header - 8898030000000001 - # bad header (CINFO)
+header - 789f030000000001 - # bad header (FCHECK)
+checksum - 789c0300000000ff - # bad checksum
+truncated - 789c03000000 - # not enough data
+ok - 789c030000000001789cff - # excess data is silently ignored
+ok 48656c6c6f20576f726c640a 78bb1c320427f300b175201c452e0024120474 48656c6c6f2c20576f726c64210a # dictionary
+dictionary 48656c6c 78bb1c320427f300b175201c452e0024120474 - # wrong dictionary
+truncated - 789c000c00f3ff68656c6c6f 68656c6c6f # truncated zlib stream amid raw-block
+truncated - 789cf248cd 4865 # truncated zlib stream amid fixed-block

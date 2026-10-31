@@ -244,13 +244,16 @@ fn df_longest_match(w: Deflate&, cur_match: i64) -> i64 {
     if nice > w.lookahead { nice = w.lookahead; }
     if best_len >= maxlen { return maxlen; }
     let win = w.window[..];
+    let b = win[scan..scan + maxlen];
     var cur = cur_match;
     loop {
         // The candidate must at least beat best_len: its byte there
         // and its first two first.
-        if win[cur + best_len] == win[scan + best_len] && win[cur] == win[scan] && win[cur + 1] == win[scan + 1] {
+        let a = win[cur..cur + maxlen];
+        assert(a.len == b.len && best_len < a.len && a.len >= 2);
+        if a[best_len] == b[best_len] && a[0] == b[0] && a[1] == b[1] {
             var len: i64 = 2;
-            while len < maxlen && win[cur + len] == win[scan + len] { len++; }
+            while len < a.len && a[len] == b[len] { len++; }
             if len > best_len {
                 w.match_start = cur;
                 best_len = len;
