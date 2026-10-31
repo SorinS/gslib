@@ -61,6 +61,7 @@ var tables = map[string]tableSpec{
 	"charset_decoder":     {"mime", "TestCharsetDecoder", "tests", nil},
 	"qp_reader":           {"mime/quotedprintable", "TestReader", "tests", actualQPReader},
 	"qp_writer":           {"mime/quotedprintable", "testWriter", "tests", actualQPWriter},
+	"qp_testmsg":          {"mime/quotedprintable", "", "testMsg", actualQPWriter},
 	"name_accessors":      {"mime/multipart", "TestNameAccessors", "tests", actualNameAccessors},
 	"multipart_parse":     {"mime/multipart", "", "parseTests", actualMultipartParse},
 	"set_boundary":        {"mime/multipart", "TestWriterSetBoundary", "tests", actualSetBoundary},
@@ -86,6 +87,9 @@ func vectorsMode(args []string) error {
 	v, err := p.table(e, spec.fn, spec.name)
 	if err != nil {
 		return err
+	}
+	if one, ok := v.(string); ok { // a single value: one row
+		v = []any{[]any{one}}
 	}
 	rows, ok := v.([]any)
 	if !ok {
@@ -400,6 +404,10 @@ func (e *env) call(x *ast.CallExpr) (any, error) {
 		return nil, err
 	}
 	switch f := x.Fun.(type) {
+	case *ast.ArrayType: // []byte(s)
+		if len(args) == 1 {
+			return args[0], nil
+		}
 	case *ast.SelectorExpr:
 		pk, ok := f.X.(*ast.Ident)
 		if ok && pk.Name == "strings" {
@@ -627,6 +635,17 @@ func actualQPReader(row any) ([]string, error) {
 }
 
 func actualQPWriter(row any) ([]string, error) {
+	if r, ok := row.([]any); ok && len(r) == 1 { // testMsg: the round trip
+		var b strings.Builder
+		w := quotedprintable.NewWriter(&b)
+		w.Write([]byte(r[0].(string)))
+		w.Close()
+		back, err := io.ReadAll(quotedprintable.NewReader(strings.NewReader(b.String())))
+		if err != nil || string(back) != r[0].(string) {
+			return nil, fmt.Errorf("Go's round trip failed")
+		}
+		return []string{escapeField(b.String())}, nil
+	}
 	var out []string
 	for _, binary := range []bool{false, true} {
 		var b strings.Builder

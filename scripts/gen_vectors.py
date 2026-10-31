@@ -25,7 +25,7 @@ TABLES = [
     "consume_token", "consume_value", "consume_media_param",
     "parse_media_type", "bad_media_type", "format_media_type",
     "encode_word", "encoded_word_length", "decode_word", "decode_header", "charset_decoder",
-    "qp_reader", "qp_writer",
+    "qp_reader", "qp_writer", "qp_testmsg",
     "name_accessors", "multipart_parse", "set_boundary", "file_disposition",
 ]
 
