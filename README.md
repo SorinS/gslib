@@ -376,9 +376,19 @@ command-line tools were the references.
 |---|---|
 | `scripts/flate_testdata.py` | every file of Go's `compress/flate/testdata` and `compress/gzip/testdata`, decoded by us and by Go, fed whole, a byte at a time and in pieces: the same output and verdict |
 | `scripts/flate_differential.py --count N --seed S` | raw/zlib/gzip streams made by Python's zlib (every level and strategy, small windows, sync and full flushes, dictionaries, gzip header fields long and short, reserved flags, several members), a quarter corrupted, fed 1 byte up into rooms of 1 byte up: output and error class equal to Go's |
-| `scripts/deflate_differential.py --count N --seed S` | our compressor at every level, raw/zlib/gzip, with dictionaries, written in pieces from 1 byte with flushes: read back exactly by Go and by Python's zlib, every flush point decodable, sizes against Go's |
+| `scripts/deflate_differential.py --count N --seed S` | our compressor at every level, raw/zlib/gzip, with dictionaries, written in pieces from 1 byte with flushes: read back exactly by Go, Python's zlib and `gzip -dc`, every flush point decodable, sizes against Go's |
+| `scripts/lzw_differential.py --count N --seed S` | encodings byte-identical to Go's Writer; Go's, corrupted and random streams decoded with Go's output and verdict |
+| `scripts/bzip2_differential.py --count N --seed S` | streams from Python's bz2 and the bzip2 program (a third corrupted) decoded with Go's verdicts; our streams read by Python, Go and `bzip2 -dc` |
+| `scripts/zip_differential.py --count N --seed S` | archives from Python's zipfile, the zip CLI, Go's writer and ours (and corrupted copies) read by Go and by us, path check off and on; ours read by zipfile and `unzip -t`, and byte-identical to Go's where Go's bytes are defined |
+| `scripts/tar_differential.py --count N --seed S` | Go's testdata, mutated archives, archives from Python's tarfile, GNU tar, bsdtar and hand-built sparse ones, read by Go and by us; random headers written by Go's Writer and ours (identical bytes); ours read and extracted by tarfile, GNU tar and bsdtar |
 
-Results (macOS, arm64):
+Results (macOS, arm64). Every `test/*.goose` passes at -O0, -O2, --debug
+and native. Independent reruns at fresh seeds after each module landed:
+lzw seed 77 (3,000 encodings, 9,108 decodings, 0 mismatches), bzip2 seed 78
+(3,001 streams, 0 differ from Go; 750 encodings, 0 failures), tar seed 79
+(9,007 read comparisons, 1,000 written archives identical to Go's, 0
+failures), zip seed 81 (1,559 archives three ways, 0 differ; 139 written
+byte-identical to Go's). The per-module sections give the full numbers.
 
 * `test/checksum.goose`, `test/flate.goose` (Go's TestStreams, Huffman
   code and truncation tests, the `.golden` streams, Go's gunzipTests and
