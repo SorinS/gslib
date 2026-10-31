@@ -8,7 +8,8 @@ that is random, repetitive, text-like and empty; wraps them as raw DEFLATE,
 zlib (with and without a dictionary) and gzip (with the optional FEXTRA,
 FNAME, FCOMMENT and FHCRC fields, reserved flag bits, names past Go's
 limit, several members in a row); and corrupts a quarter of them (a flipped
-bit, a cut end, a wrong CRC-32, Adler-32 or length, trailing bytes).
+bit, a cut end, a wrong CRC-32, Adler-32 or length, trailing bytes), and
+replaces some with noise.
 tools/flateverdict.goose decodes each, fed in chunks of 1 byte upward into
 output buffers of 1 byte upward, and its result must be Go's (gooracle
 inflate): the same bytes, or the same class of error after the same
@@ -209,6 +210,11 @@ def main():
         bad = rng.random() < 0.25
         if bad:
             s = corrupt(rng, s)
+        if rng.random() < 0.03:
+            # Noise: after a valid header, or none.
+            noise = rng.randbytes(rng.choice([1, 10, 100, 3000]))
+            s = (s[:rng.choice([0, 2, 10])] if fmt != "raw" else b"") + noise
+            bad = True
         chunk = rng.choice([1, 2, 3, 7, 64, 1000, 65536, 1 << 20])
         room = rng.choice([1, 2, 3, 100, 258, 4096, 65536, 1 << 20])
         cases.append((fmt, chunk, room, s, zdict, bad))
