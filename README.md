@@ -14,7 +14,7 @@ owns, fed as the data comes.
 | `compress.zlib` | zlib (RFC 1950), preset dictionaries | yes | yes |
 | `compress.lzw` | Go's compress/lzw (GIF, TIFF and PDF orders) | yes | yes |
 | `compress.bzip2` | bzip2 | yes | yes |
-| `compress.xz` | xz, LZMA2, .lzma | (pending) | (pending) |
+| `compress.xz` | xz, LZMA2, .lzma (checks, BCJ and Delta filters) | yes | yes |
 | `compress.zip` | zip archives (ZIP64, data descriptors, Go's checks) | yes | yes |
 | `compress.tar` | tar archives (USTAR, PAX, GNU, sparse) | yes | yes |
 
@@ -214,7 +214,76 @@ verdict tool with checked arithmetic). Natively, decoding runs about as fast
 as the bzip2 program on random data and text, and compressing at -9 within
 about 25% of it.
 
-<!-- xz -->
+## compress.xz (and lzma.goose)
+
+```goose
+var d = compress::xz_reader();            // lzma_reader() for .lzma, lzma2_reader(dict_size) for raw LZMA2
+let used, made, st = compress::xz_read(d, input, out);
+compress::xz_done(d)  /  compress::xz_finish(d)
+compress::xz_set_memlimit(d, 1 << 30);    // default XZ_DEFAULT_MEMLIMIT, 256 MiB of dictionary
+compress::xz_set_single_stream(d, true);  // stop after the first stream (xz --single-stream)
+compress::xz_decode(data, out, limit)     // a whole .xz file, any number of streams; lzma_decode for .lzma
+
+var w = compress::xz_writer(6);           // xz_writer_opts(level, check, block_size, filter, opt)
+compress::xz_write(w, data, out);  compress::xz_flush(w, out);  compress::xz_close(w, out);
+compress::xz_encode(data, out, 6)         // lzma_encode (.lzma, size in the header), lzma2_encode (raw)
+compress::lzma_writer(level, size)        // -1: unknown size, ended by the end marker
+```
+
+**Reading** follows the .xz format 1.2.1 and liblzma's checks: stream
+header and footer (flags, CRC-32, backward size), block headers (sizes,
+filter flags, reserved bits, padding, CRC-32), block padding, the index
+(records against the blocks decoded, padding, CRC-32), several streams with
+stream padding. It verifies the None, CRC-32, CRC-64 and SHA-256 checks
+(SHA-256 is implemented in the module); reserved check IDs are decoded
+without verification, as xz does (`xz_check_unverified`). LZMA2's chunk
+rules (dictionary and state resets, new properties, uncompressed chunks, a
+chunk that must end exactly with its compressed size). Filters: Delta and
+the x86, PowerPC, IA-64, ARM, ARM-Thumb, SPARC and ARM64 BCJ converters, up
+to four in a chain. .lzma: known size (an end marker after it allowed) or
+unknown (end marker required), lc + lp <= 4 as liblzma requires. State:
+about 80 KB, plus the dictionary, grown as output is made up to the
+declared size; above the memory limit is `ERR_LIMIT`.
+
+**Writing**: levels 0-9 are xz's presets: 0-3 liblzma's fast mode (HC4
+match finder), 4-9 its normal mode (BT4 binary tree and the price-driven
+optimal parse), with xz's dictionary sizes (256 KiB to 64 MiB), nice
+lengths and depths. LZMA2 chunks of up to 2 MiB in; chunks that do not
+compress are written uncompressed. Checks None/CRC-32/CRC-64
+(default)/SHA-256, optional block size, one optional Delta or BCJ filter;
+a flush ends the LZMA2 chunk so everything so far decodes. Memory is about
+xz's (some 650 MB for `xz_writer(9)`; `xz_encode` sizes the dictionary to
+the input). On a 6.6 MB source tar: level 1 2,614,332 bytes (xz -1:
+2,598,924), level 6 2,237,520 (xz -6: 2,235,036), about 1.7x xz's
+single-threaded time at -6; decoding about 2.2x xz's time.
+
+Departures from xz/liblzma: .lzma headers are read as liblzma's .lzma
+decoder reads them (the xz command line also refuses dictionary sizes that
+are not 2^n or 2^n + 2^(n-1), and known sizes of 2^38 or more); a 256 MiB
+default dictionary limit (liblzma has none); bytes after a .lzma stream or
+a single stream are not taken, and garbage after an .xz stream is
+`ERR_TRAILING` (xz: data error; Python ignores it); blocks are checked
+against the index by counts, sums and a CRC-64 hash of the records rather
+than liblzma's SHA-256; normal-mode chunks end at 40 KiB of output
+(liblzma: about 60 KiB); a flush leaves a BCJ filter's last few
+unconverted bytes until more input or the end. Not done: the RISC-V BCJ
+filter (`ERR_UNSUPPORTED`), more than one filter when writing,
+multithreaded compression, faster range decoding.
+
+Tests: `test/xz.goose` decodes xz Utils' own test files (tests/files,
+public domain), good, bad and unsupported, plus .lzma and raw LZMA2
+files, whole and a byte at a time, against what xz makes of them
+(`test/vectors/xz/expect.txt`), and SHA-256 against FIPS vectors.
+`test/lzma.goose` writes at every level, check, block size and filter,
+with flushes and pieces, and reads it back. `python3
+scripts/xz_differential.py [--count N] [--seed N]`: streams from Python's
+lzma and the xz CLI (presets 0-9 and -e, lc/lp/pb, filter chains, several
+blocks and streams, .lzma, raw LZMA2, about 30% corrupted), fed from 1 byte
+in and 1 byte of room, against `xz -dc`: about 23,500 cases over 10 seeds,
+0 differ. `--encode`: about 10,000 of our streams (every level, check,
+block size, filter and flush pattern, inputs to 5 MB) read back by
+`xz -dc`, Python and us: 0 failures; sizes 100.0% of xz's at -1 and -6.
+
 ## compress.zip
 
 Go's archive/zip, both ways. The reader takes the whole archive in memory
@@ -380,6 +449,7 @@ command-line tools were the references.
 | `scripts/lzw_differential.py --count N --seed S` | encodings byte-identical to Go's Writer; Go's, corrupted and random streams decoded with Go's output and verdict |
 | `scripts/bzip2_differential.py --count N --seed S` | streams from Python's bz2 and the bzip2 program (a third corrupted) decoded with Go's verdicts; our streams read by Python, Go and `bzip2 -dc` |
 | `scripts/zip_differential.py --count N --seed S` | archives from Python's zipfile, the zip CLI, Go's writer and ours (and corrupted copies) read by Go and by us, path check off and on; ours read by zipfile and `unzip -t`, and byte-identical to Go's where Go's bytes are defined |
+| `scripts/xz_differential.py [--encode] --count N --seed S` | streams from Python's lzma and the xz CLI (corrupted too) against `xz -dc`; ours read back by xz, Python and us, sizes against xz |
 | `scripts/tar_differential.py --count N --seed S` | Go's testdata, mutated archives, archives from Python's tarfile, GNU tar, bsdtar and hand-built sparse ones, read by Go and by us; random headers written by Go's Writer and ours (identical bytes); ours read and extracted by tarfile, GNU tar and bsdtar |
 
 Results (macOS, arm64). Every `test/*.goose` passes at -O0, -O2, --debug
@@ -436,7 +506,17 @@ Speed, built native (Apple M-series), 3.1 MB of text:
 
 ## Not done
 
-* (filled in as the modules land)
+* zip: the fs.FS view (Open by path, ReadDir, duplicate names), registering
+  other compression methods, AddFS/FileInfoHeader (Goose's stdlib has no
+  file-system API to build them on).
+* tar: writing sparse files (Go's sparse writer is disabled too),
+  FileInfoHeader; the insecure-path checks use Unix path rules only.
+* xz: the RISC-V BCJ filter, more than one filter when writing,
+  multithreaded compression.
+* bzip2: multithreaded compression; recovering after a bad block.
+* deflate: Go's exact bytes (not promised by Go); level 9 is about 3% larger
+  than Go 1.27's on synthetic data (zlib's matcher, not Go's).
+* Testing on Linux and Windows: everything here ran on macOS (arm64).
 
 ## Credits
 
