@@ -7,7 +7,8 @@ empty; up to 300 KB) at every level (-2 HuffmanOnly, -1, 0-9), as raw
 DEFLATE, zlib and gzip, with and without a preset dictionary (raw and
 zlib), written by tools/deflateverdict.goose in pieces of 1 byte upward
 with Flush at random intervals: Go's readers (gooracle inflate) and
-Python's zlib must give back exactly the input, and at each Flush the
+Python's zlib (and, for up to 300 gzip streams, the gzip program) must
+give back exactly the input, and at each Flush the
 stream so far must decode (zlib's decompressobj, no flush of its own) to
 everything written so far. Go's own compressor compresses the same inputs
 (gooracle deflate, without the flushes), and the totals per level are
@@ -20,6 +21,7 @@ import argparse
 import collections
 import os
 import random
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -147,6 +149,7 @@ def main():
         go_sizes = [len(l) // 2 for l in p.stdout.splitlines()]
     sizes = collections.defaultdict(lambda: [0, 0, 0, 0])   # level: ours, Go's, input, cases (no flushes)
     flush_checks = 0
+    cli_checks = 0
     for i, ((fmt, level, chunk, flush, data, zdict), line, s, g) in enumerate(zip(cases, ours, streams, gos)):
         if line.startswith("err"):
             continue
@@ -171,6 +174,11 @@ def main():
                     problems.append(f"after the flush at {n} bytes, the stream decodes to "
                                     f"{'an error' if got is None else len(got)}")
                     break
+        if fmt == "gzip" and cli_checks < 300 and shutil.which("gzip"):
+            cli_checks += 1
+            p = subprocess.run(["gzip", "-dc"], input=s, capture_output=True)
+            if p.returncode != 0 or p.stdout != data:
+                problems.append("gzip -dc does not read it back")
         if problems:
             failures += 1
             if args.v or failures <= 20:
@@ -187,7 +195,8 @@ def main():
         o, g, n, c = sizes[level]
         if c:
             print(f"{level:5} {c:7} {n:10} {o:10} {g:10}   {o / g if g else 0:.4f}")
-    print(f"{len(cases)} streams, {flush_checks} flush points checked: {failures} failures")
+    print(f"{len(cases)} streams, {flush_checks} flush points checked, {cli_checks} read by gzip -dc too: "
+          f"{failures} failures")
     sys.exit(1 if failures else 0)
 
 

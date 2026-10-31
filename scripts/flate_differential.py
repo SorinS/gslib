@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """DEFLATE, zlib and gzip decoding: compress.flate/zlib/gzip against Go.
 
-Makes streams with Python's zlib (every level, the strategies that give
+Makes streams with Python's zlib and the gzip program (every level, the strategies that give
 stored, fixed-Huffman, Huffman-only, RLE and dynamic blocks, small windows
 and memory levels, many sync and full flushes, preset dictionaries) of data
 that is random, repetitive, text-like and empty; wraps them as raw DEFLATE,
@@ -197,7 +197,11 @@ def main():
         zdict = None
         if fmt in ("zlib", "raw") and rng.random() < 0.25:
             zdict = payload(rng)[:rng.choice([1, 100, 32768, 40000])] or b"x"
-        if fmt in ("gzip", "gzip1"):
+        if fmt in ("gzip", "gzip1") and rng.random() < 0.05 and shutil.which("gzip"):
+            # The gzip program's own output (with its name and time).
+            s = subprocess.run(["gzip", "-c", f"-{rng.randrange(1, 10)}"], input=data, capture_output=True,
+                               check=True).stdout
+        elif fmt in ("gzip", "gzip1"):
             s = gzip_member(rng, data)
             if rng.random() < 0.2:
                 s += gzip_member(rng, payload(rng))
