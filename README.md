@@ -62,6 +62,7 @@ gslib.goose, gslib.build              the package's entry and its sidecar
 <group>/<lib>/scripts                 its test runners, differentials, interop
 <group>/<lib>/README.md               its documentation
 scripts/run_all.py            every library's unit tests
+Makefile                      the programs, checks and tests
 ```
 
 Each library came from a repository of its own (bigmongoose, asn1goose,
@@ -82,11 +83,28 @@ also get a 1 MB stack, which some tests overflow.
 `net/http/data/public_suffix_list.dat` is publicsuffix.org's list (MPL 2.0),
 built into programs that call `http::psl_builtin`.
 
+## Building
+
+```bash
+make            # the targets, with what each does
+make build      # the programs into ../bin (BIN=dir for another): goose-http, goose-httpd,
+                # goose-ssh, goose-sshd, goose-scp, goose-sftp-server, goose-ssh-keygen,
+                # goose-ldapsearch, goose-ldapadd, goose-ldapmodify and the other ldap tools
+make check      # type-check every tool and example
+```
+
+The compiler is `GOOSE`, else `goose` on the PATH, else
+`../goose.git/build/goose`.
+
 ## Tests
 
 ```bash
-python3 scripts/run_all.py [--native] [--only http,tls]   # every library's unit tests
-cd net/http && python3 scripts/interop.py                       # each library's own: see its README
+make test                 # every library's unit tests (make test-http: one library's)
+make test-native          # also built with the C compiler
+make interop              # live: OpenSSL, Go, OpenSSH, OpenLDAP, curl, nghttp2, h2spec
+make differential         # against Go's net/http, net/url and x/net hpack, zlib, openssl
+make test-all             # check, test, interop and differential
+python3 scripts/run_all.py [--native] [--only http,tls]   # what make test runs
 ```
 
 Each library's README lists its differentials (against Go, Python's zlib
