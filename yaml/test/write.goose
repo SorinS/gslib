@@ -5,7 +5,8 @@
 // and the trees it refuses. This program never parses, so it also shows
 // that writing alone compiles.
 import std;
-import yaml from "..";
+import gslib from "../..";
+import gslib.yaml;
 
 var failures = 0;
 var checks = 0;

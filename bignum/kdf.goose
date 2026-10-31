@@ -9,13 +9,13 @@
 namespace bignum;
 
 import std;
-import hmac;
-import sha256;
-import sha512;
-import sha1;
-import sha3;
-import md5;
-import blake2;
+import bignum.hmac;
+import bignum.sha256;
+import bignum.sha512;
+import bignum.sha1;
+import bignum.sha3;
+import bignum.md5;
+import bignum.blake2;
 
 // The hash states PBKDF2 runs, by type: absorb, and finish into out
 // (hash_len bytes).

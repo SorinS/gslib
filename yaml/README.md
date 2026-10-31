@@ -70,7 +70,8 @@ package is needed.
   write.
 
 ```goose
-import yaml from "../yamlgoose.git";
+import gslib from "SorinS/gslib@v0.1";   // or a path to gslib.git
+import gslib.yaml;
 
 var doc: yaml::Node[>..] = [];
 var decoded: u8[>..] = [];

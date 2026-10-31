@@ -8,8 +8,9 @@
 // and reject any change. Then the largest key taken, 8192 bits
 // (vectors/rsa8192.txt): openssl's signatures and ciphertext.
 import std;
-import bignum from "..";
-import bignum.rsa;
+import gslib from "../..";
+import gslib.bignum;
+import gslib.bignum.rsa;
 
 var failures = 0;
 var checks = 0;

@@ -7,14 +7,14 @@
 namespace bignum;
 
 import std;
-import ct;
-import salsa20;
-import chacha20;
-import x25519;
-import ed25519;
-import blake2;
-import hmac;
-import entropy;
+import bignum.ct;
+import bignum.salsa20;
+import bignum.chacha20;
+import bignum.x25519;
+import bignum.ed25519;
+import bignum.blake2;
+import bignum.hmac;
+import bignum.entropy;
 
 let SECRETBOX_OVERHEAD: i64 = 16;
 let BOX_ANONYMOUS_OVERHEAD: i64 = 48;

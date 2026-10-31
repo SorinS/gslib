@@ -2,11 +2,12 @@
 
 ASN.1 DER (X.690) for the Goose language: a strict reader that never
 copies, typed decoders, a writer, PEM, and a dump. It has no dependencies.
-It is the base of [x509](../x509goose.git), and works as well for keys,
+It is the base of [x509](../x509), and works as well for keys,
 CSRs, CMS or anything else in DER.
 
 ```goose
-import asn1 from "../asn1goose.git";
+import gslib from "SorinS/gslib@v0.1";   // or a path to gslib.git
+import gslib.asn1;
 
 let ders, ok = asn1::pem_decode(text, "CERTIFICATE");
 for der in ders {

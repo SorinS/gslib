@@ -2,10 +2,10 @@
 
 LDAPv3 (RFC 4511) for the Goose language, a client as Go's
 [go-ldap](https://github.com/go-ldap/ldap) (v3.4.4) has it, on
-[asn1](../asn1goose.git) for the BER and [bignum](../bigmongoose.git)
+[asn1](../asn1) for the BER and [bignum](../bignum)
 for DIGEST-MD5. Nothing here does I/O: a connection writes the requests
 to a byte builder and is fed the bytes that arrive; the caller owns the
-socket, and TLS ([tlsgoose](../tlsgoose.git) in `tools/`).
+socket, and TLS ([tlsgoose](../tls) in `tools/`).
 
 - **`ldap`**: the protocol's numbers; result codes with go-ldap's names
   (`result_name`) and its error text (`error_text`: `LDAP Result Code 49
@@ -33,10 +33,9 @@ socket, and TLS ([tlsgoose](../tlsgoose.git) in `tools/`).
   writes them; change records read as its ldapmodify reads them.
 
 ```goose
-import ldap from "../ldapgoose.git";
-import asn1 from "../asn1goose.git";        // ldap needs them; the root declares them
-import bignum from "../bigmongoose.git";
-import ldap.conn;
+import gslib from "SorinS/gslib@v0.1";   // or a path to gslib.git
+import gslib.ldap;
+import gslib.ldap.conn;
 
 var c = ldap::client();
 var out: u8[>..] = [];

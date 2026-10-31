@@ -9,8 +9,8 @@
 namespace bignum;
 
 import std;
-import ct;
-import aes;
+import bignum.ct;
+import bignum.aes;
 
 struct AesGcm { aes: Aes, h1: u64, h0: u64 }
 

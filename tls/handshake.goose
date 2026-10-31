@@ -32,8 +32,8 @@ namespace tls;
 import std;
 import os;
 import tls;
-import schedule;
-import record;
+import tls.schedule;
+import tls.record;
 import bignum;
 import bignum.x25519;
 import bignum.ec;
@@ -47,9 +47,9 @@ import x509;
 import x509.verify;
 import x509.pool;
 import x509.keys;
-import session;
-import ech;
-import handshake12;
+import tls.session;
+import tls.ech;
+import tls.handshake12;
 
 // Named groups and the signature schemes this package signs and verifies.
 let GROUP_SECP256R1: u16 = 0x0017;

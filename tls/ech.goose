@@ -14,8 +14,8 @@ namespace tls;
 
 import std;
 import tls;
-import schedule;
-import record;
+import tls.schedule;
+import tls.record;
 import bignum;
 import bignum.hmac;
 import bignum.hpke;

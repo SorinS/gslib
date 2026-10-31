@@ -6,7 +6,7 @@
 
 `scale` multiplies the number of runs of each test (default 1). The
 compiler is --goose, else $GOOSE, else `goose` on PATH, else
-../goose.git/build/goose beside this repository. Exit status 1 if a test
+../goose.git/build/goose beside gslib.git. Exit status 1 if a test
 found a leak, or the control (BigInt's modpow) was not caught.
 """
 
@@ -22,7 +22,7 @@ ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 
 def find_goose(arg):
     for cand in [arg, os.environ.get("GOOSE"), shutil.which("goose"),
-                 os.path.join(ROOT, "..", "goose.git", "build", "goose")]:
+                 os.path.join(ROOT, "..", "..", "goose.git", "build", "goose")]:
         if cand and os.path.isfile(cand):
             return cand
     sys.exit("no goose compiler found: pass --goose or set GOOSE")

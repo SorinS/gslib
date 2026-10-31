@@ -4,14 +4,15 @@
 // go-ldap gets wrong, which this refuses or reads as RFC 4514 and 4515
 // say; and DIGEST-MD5 against RFC 2831's example.
 import std;
-import ldap from "..";
-import asn1 from "../../asn1goose.git";
-import bignum from "../../bigmongoose.git";
-import ldap.ldif;
-import ldap.url;
-import ldap.dn;
-import ldap.filter;
-import ldap.conn;
+import gslib from "../..";
+import gslib.ldap;
+import gslib.asn1;
+import gslib.bignum;
+import gslib.ldap.ldif;
+import gslib.ldap.url;
+import gslib.ldap.dn;
+import gslib.ldap.filter;
+import gslib.ldap.conn;
 
 var failures = 0;
 var checks = 0;

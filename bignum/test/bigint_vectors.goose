@@ -1,7 +1,8 @@
 // Differential test: every case in vectors/bigint.txt (made by
 // scripts/gen_vectors.py from Python's integers) against bignum.
 import std;
-import bignum from "..";
+import gslib from "../..";
+import gslib.bignum;
 
 var failures = 0;
 var cases = 0;

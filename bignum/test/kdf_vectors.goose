@@ -6,10 +6,11 @@
 // and without a secret and associated data, over 1 to 4 lanes and memory
 // that crosses segment and address-block boundaries.
 import std;
-import bignum from "..";
-import bignum.blake2;
-import bignum.kdf;
-import bignum.argon2;
+import gslib from "../..";
+import gslib.bignum;
+import gslib.bignum.blake2;
+import gslib.bignum.kdf;
+import gslib.bignum.argon2;
 
 var failures = 0;
 var checks = 0;

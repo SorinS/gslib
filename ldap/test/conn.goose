@@ -10,11 +10,12 @@
 // notification, one too long, or the transport ending with requests
 // outstanding.
 import std;
-import ldap from "..";
-import asn1 from "../../asn1goose.git";
-import bignum from "../../bigmongoose.git";
-import ldap.conn;
-import ldap.filter;
+import gslib from "../..";
+import gslib.ldap;
+import gslib.asn1;
+import gslib.bignum;
+import gslib.ldap.conn;
+import gslib.ldap.filter;
 
 var failures = 0;
 var checks = 0;

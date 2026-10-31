@@ -18,14 +18,13 @@ CertificateVerify signatures.
 | `x509.ocsp` | OCSP (RFC 6960): `ocsp_create_request`, `ocsp_parse_request`, `ocsp_parse_response`, `ocsp_check_response`, `ocsp_create_response`, `ocsp_error_response` |
 | `x509.pkcs12` | `pkcs12_decode`: PKCS #12 files to their key and certificates |
 | `x509.create` | `Template`, `create_certificate`, `name_der`, SAN and name-constraint builders, `create_csr`, `parse_csr`, `check_csr`, `create_crl` | It builds on
-[asn1](../asn1goose.git) for DER and [bignum](../bigmongoose.git) for the
+[asn1](../asn1) for DER and [bignum](../bignum) for the
 cryptography.
 
 ```goose
-import x509 from "../x509goose.git";
-import asn1 from "../asn1goose.git";        // x509 needs both; the root declares them
-import bignum from "../bigmongoose.git";
-import x509.verify;
+import gslib from "SorinS/gslib@v0.1";   // or a path to gslib.git
+import gslib.x509;
+import gslib.x509.verify;
 
 let err = x509::verify_chain(leaf_der, intermediates_der, roots_der, now, "example.com");
 if err != x509::OK { print("certificate refused: ", x509::error_text(err)); }
@@ -244,8 +243,8 @@ is SHA-256, as in openssl.
 ## Creating certificates, requests and CRLs
 
 ```goose
-import x509.keys;
-import x509.create;
+import gslib.x509.keys;
+import gslib.x509.create;
 
 let key = x509::generate_key(x509::KEY_EC_P256);
 var t, ok = x509::template("CN=www.example.com,O=Example", now, now + 90 * 86400);

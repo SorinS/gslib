@@ -107,7 +107,7 @@ def rate(fn):
 def main():
     global SECS
     ap = argparse.ArgumentParser()
-    ap.add_argument("--goose", default=os.path.join(ROOT, "..", "goose.git", "build", "goose"))
+    ap.add_argument("--goose", default=os.path.join(ROOT, "..", "..", "goose.git", "build", "goose"))
     ap.add_argument("--seconds", type=float, default=1)
     ap.add_argument("prefix", nargs="?", default="")
     args = ap.parse_args()

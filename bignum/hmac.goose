@@ -8,13 +8,13 @@
 namespace bignum;
 
 import std;
-import sha256;
-import sha512;
-import sha1;
-import sha3;
-import md5;
-import blake2;
-import ct;
+import bignum.sha256;
+import bignum.sha512;
+import bignum.sha1;
+import bignum.sha3;
+import bignum.md5;
+import bignum.blake2;
+import bignum.ct;
 
 let HASH_MD5: i64 = 128;
 let HASH_SHA1: i64 = 160;

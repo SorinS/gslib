@@ -6,9 +6,10 @@
 // encodings included. Then hedged signing here, and the refusals: another
 // context or message, a context past 255 bytes, wrong lengths.
 import std;
-import bignum from "..";
-import bignum.mldsa;
-import bignum.sha3;
+import gslib from "../..";
+import gslib.bignum;
+import gslib.bignum.mldsa;
+import gslib.bignum.sha3;
 
 var failures = 0;
 var checks = 0;

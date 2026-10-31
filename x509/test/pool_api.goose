@@ -7,11 +7,12 @@
 // wherever they come from.
 import std;
 import os;
-import x509 from "..";
-import asn1 from "../../asn1goose.git";
-import bignum from "../../bigmongoose.git";
-import x509.pool;
-import x509.verify;
+import gslib from "../..";
+import gslib.x509;
+import gslib.asn1;
+import gslib.bignum;
+import gslib.x509.pool;
+import gslib.x509.verify;
 
 var failures = 0;
 var checks = 0;

@@ -16,10 +16,10 @@ namespace bignum;
 
 import std;
 import bignum;
-import ct;
-import mont;
-import hmac;
-import entropy;
+import bignum.ct;
+import bignum.mont;
+import bignum.hmac;
+import bignum.entropy;
 
 // The field prime p and group order n with their Montgomery constants, and
 // p - 2, n - 2 for inversion by Fermat. b, gx and gy are in Montgomery form.

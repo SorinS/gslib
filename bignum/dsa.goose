@@ -15,12 +15,12 @@ namespace bignum;
 
 import std;
 import bignum;
-import ct;
-import mont;
-import hmac;
-import rsa;
-import ec;
-import entropy;
+import bignum.ct;
+import bignum.mont;
+import bignum.hmac;
+import bignum.rsa;
+import bignum.ec;
+import bignum.entropy;
 
 // A key: the domain parameters p, q, g, the public y, and the private x
 // (empty for a public key), big-endian, p g y as wide as p and x as q.

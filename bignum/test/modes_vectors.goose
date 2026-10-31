@@ -5,10 +5,11 @@
 // in place; single blocks; MD5 around its padding boundary and HMAC-MD5;
 // RC4 with keys of 1 to 256 bytes. Then PKCS #7 padding, good and bad.
 import std;
-import bignum from "..";
-import bignum.modes;
-import bignum.hmac;
-import bignum.rc4;
+import gslib from "../..";
+import gslib.bignum;
+import gslib.bignum.modes;
+import gslib.bignum.hmac;
+import gslib.bignum.rc4;
 
 var failures = 0;
 var checks = 0;

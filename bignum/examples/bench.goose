@@ -4,7 +4,8 @@
 //   goose build examples/bench.goose && examples/bench
 import std;
 import os;
-import bignum from "..";
+import gslib from "../..";
+import gslib.bignum;
 
 fn random_limbs(r: rng&, n: i64) -> u32[>..] {
     var out: u32[>..] = [];

@@ -5,7 +5,8 @@
 // and strings outside their character sets. Then the writer's encodings
 // of edge values.
 import std;
-import asn1 from "..";
+import gslib from "../..";
+import gslib.asn1;
 
 var failures = 0;
 var checks = 0;

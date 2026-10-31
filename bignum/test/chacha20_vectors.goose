@@ -4,8 +4,9 @@
 // openssl), Poly1305 with the largest key and message limbs, and the AEAD
 // opened with each part tampered with in turn.
 import std;
-import bignum from "..";
-import bignum.chacha20;
+import gslib from "../..";
+import gslib.bignum;
+import gslib.bignum.chacha20;
 
 var failures = 0;
 var checks = 0;

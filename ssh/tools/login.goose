@@ -9,8 +9,8 @@ namespace login;
 
 import std;
 import os;
-import ssh.keys;
-import ssh.conn;
+import gslib.ssh.keys;
+import gslib.ssh.conn;
 import .sysnet;
 
 struct Options {

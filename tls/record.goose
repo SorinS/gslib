@@ -10,7 +10,7 @@ namespace tls;
 
 import std;
 import tls;
-import schedule;
+import tls.schedule;
 import bignum;
 import bignum.gcm;
 import bignum.chacha20;

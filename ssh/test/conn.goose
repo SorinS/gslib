@@ -10,14 +10,15 @@
 //   requests, close; 3 MB each way through the windows; a rekey in the
 //   middle of it, both sides' accounts, and data after it; strict KEX on.
 import std;
-import ssh from "..";
-import bignum from "../../bigmongoose.git";
-import asn1 from "../../asn1goose.git";
-import x509 from "../../x509goose.git";
-import ssh.keys;
-import ssh.cipher;
-import ssh.kex;
-import ssh.conn;
+import gslib from "../..";
+import gslib.ssh;
+import gslib.bignum;
+import gslib.asn1;
+import gslib.x509;
+import gslib.ssh.keys;
+import gslib.ssh.cipher;
+import gslib.ssh.kex;
+import gslib.ssh.conn;
 
 var failures = 0;
 var checks = 0;

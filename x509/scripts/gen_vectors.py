@@ -386,7 +386,7 @@ def main():
 
         # The RFC 8448 server certificate and its CertificateVerify, from
         # the tls package's vectors when they are beside this repository.
-        rfc = os.path.join(ROOT, "..", "tlsgoose.git", "test", "vectors", "rfc8448.txt")
+        rfc = os.path.join(ROOT, "..", "tls", "test", "vectors", "rfc8448.txt")
         if os.path.exists(rfc):
             v = dict(l.split() for l in open(rfc).read().splitlines())
             cert_msg = bytes.fromhex(v["server.construct_a_certificate_handshake_message.certificate"])

@@ -4,9 +4,10 @@
 // 4897 corrects it).
 
 import std;
-import bignum from "../../bigmongoose.git";
-import http from "..";
-import http.auth;
+import gslib from "../..";
+import gslib.bignum;
+import gslib.http;
+import gslib.http.auth;
 
 var failures = 0;
 

@@ -3,7 +3,8 @@
 // other than ff, integers with redundant leading octets; the same input
 // refused as DER, and BER's indefinite length refused either way.
 import std;
-import asn1 from "..";
+import gslib from "../..";
+import gslib.asn1;
 
 var failures = 0;
 var checks = 0;

@@ -16,15 +16,15 @@
 namespace bignum;
 
 import std;
-import ct;
-import sha3;
-import hmac;
-import gcm;
-import chacha20;
-import x25519;
-import ec;
-import mlkem;
-import entropy;
+import bignum.ct;
+import bignum.sha3;
+import bignum.hmac;
+import bignum.gcm;
+import bignum.chacha20;
+import bignum.x25519;
+import bignum.ec;
+import bignum.mlkem;
+import bignum.entropy;
 
 let HPKE_MODE_BASE: i64 = 0;
 let HPKE_MODE_PSK: i64 = 1;

@@ -5,8 +5,9 @@
 // each other a byte at a time.
 
 import std;
-import http from "..";
-import http.conn1;
+import gslib from "../..";
+import gslib.http;
+import gslib.http.conn1;
 
 var checks = 0;
 var failures = 0;

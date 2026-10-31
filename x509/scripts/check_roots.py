@@ -73,7 +73,7 @@ def expected(env):
 
 def main():
     goose = sys.argv[sys.argv.index("--goose") + 1] if "--goose" in sys.argv else \
-        os.environ.get("GOOSE") or shutil.which("goose") or os.path.join(ROOT, "..", "goose.git", "build", "goose")
+        os.environ.get("GOOSE") or shutil.which("goose") or os.path.join(ROOT, "..", "..", "goose.git", "build", "goose")
     base = {k: v for k, v in os.environ.items() if k not in ("SSL_CERT_FILE", "SSL_CERT_DIR")}
     runs = [("environment as it is", dict(os.environ)),
             ("SSL_CERT_FILE and SSL_CERT_DIR", {**base, "SSL_CERT_FILE": os.path.join(VEC, "roots.pem"),

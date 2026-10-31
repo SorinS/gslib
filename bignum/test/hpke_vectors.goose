@@ -8,8 +8,9 @@
 // KEM, and the refusals: tampered messages and encapsulated keys, wrong
 // info or PSK, inconsistent modes.
 import std;
-import bignum from "..";
-import bignum.hpke;
+import gslib from "../..";
+import gslib.bignum;
+import gslib.bignum.hpke;
 
 var failures = 0;
 var checks = 0;

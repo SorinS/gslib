@@ -10,8 +10,8 @@
 namespace x509;
 
 import std;
-import asn1 from "../asn1goose.git";
-import bignum from "../bigmongoose.git";
+import asn1;
+import bignum;
 import bignum.rsa;
 import bignum.ec;
 import bignum.ed25519;

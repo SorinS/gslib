@@ -27,13 +27,14 @@
 // replaces), a TLS 1.3 one in TLS 1.3's.
 import std;
 import os;
-import tls from "..";
-import bignum from "../../bigmongoose.git";
-import asn1 from "../../asn1goose.git";
-import x509 from "../../x509goose.git";
-import tls.handshake;
-import tls.session;
-import x509.pool;
+import gslib from "../..";
+import gslib.tls;
+import gslib.bignum;
+import gslib.asn1;
+import gslib.x509;
+import gslib.tls.handshake;
+import gslib.tls.session;
+import gslib.x509.pool;
 
 fn hex(b: const u8[:]) -> u8[>..] {
     var o: u8[>..] = [];

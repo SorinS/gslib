@@ -20,15 +20,16 @@
 
 import std;
 import os;
-import http from "..";
-import http.conn1;
-import http.hpack;
-import http.h2;
-import bignum from "../../bigmongoose.git";
-import asn1 from "../../asn1goose.git";
-import x509 from "../../x509goose.git";
-import tls from "../../tlsgoose.git";
-import tls.handshake;
+import gslib from "../..";
+import gslib.http;
+import gslib.http.conn1;
+import gslib.http.hpack;
+import gslib.http.h2;
+import gslib.bignum;
+import gslib.asn1;
+import gslib.x509;
+import gslib.tls;
+import gslib.tls.handshake;
 import sysnet;
 
 let IDLE_MS: i32 = 30000;

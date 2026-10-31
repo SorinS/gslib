@@ -11,9 +11,9 @@
 namespace bignum;
 
 import std;
-import ct;
-import sha3;
-import entropy;
+import bignum.ct;
+import bignum.sha3;
+import bignum.entropy;
 
 let MLKEM_Q: u32 = 3329;
 

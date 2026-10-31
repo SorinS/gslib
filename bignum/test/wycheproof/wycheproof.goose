@@ -14,20 +14,21 @@
 
 import std;
 import os;
-import bignum from "../..";
-import bignum.gcm;
-import bignum.chacha20;
-import bignum.modes;
-import bignum.hmac;
-import bignum.ec;
-import bignum.ed25519;
-import bignum.x25519;
-import bignum.rsa;
-import bignum.dsa;
-import bignum.mlkem;
-import bignum.mldsa;
-import bignum.kdf;
-import bignum.aes;
+import gslib from "../../..";
+import gslib.bignum;
+import gslib.bignum.gcm;
+import gslib.bignum.chacha20;
+import gslib.bignum.modes;
+import gslib.bignum.hmac;
+import gslib.bignum.ec;
+import gslib.bignum.ed25519;
+import gslib.bignum.x25519;
+import gslib.bignum.rsa;
+import gslib.bignum.dsa;
+import gslib.bignum.mlkem;
+import gslib.bignum.mldsa;
+import gslib.bignum.kdf;
+import gslib.bignum.aes;
 
 var valid_ok = 0;
 var valid_bad = 0;

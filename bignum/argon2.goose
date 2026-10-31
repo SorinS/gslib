@@ -13,7 +13,7 @@
 namespace bignum;
 
 import std;
-import blake2;
+import bignum.blake2;
 
 let ARGON2D: i64 = 0;
 let ARGON2I: i64 = 1;

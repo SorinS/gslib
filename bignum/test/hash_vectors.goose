@@ -5,10 +5,11 @@
 // vectors/hash2.txt: SHA-1, SHA-224, SHA-512/224, SHA-512/256, SHA-3 and
 // SHAKE at lengths around every block and rate, and HMAC over them.
 import std;
-import bignum from "..";
-import bignum.hmac;
-import bignum.sha1;
-import bignum.sha3;
+import gslib from "../..";
+import gslib.bignum;
+import gslib.bignum.hmac;
+import gslib.bignum.sha1;
+import gslib.bignum.sha3;
 
 var failures = 0;
 var checks = 0;

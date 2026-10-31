@@ -4,13 +4,14 @@
 // byte as the RFC prints them, open again to the same plaintext, and fail
 // when changed. Values come from vectors/rfc8448.txt (scripts/rfc8448.py).
 import std;
-import tls from "..";
-import bignum from "../../bigmongoose.git";
-import asn1 from "../../asn1goose.git";
-import x509 from "../../x509goose.git";
-import tls.schedule;
-import tls.record;
-import bignum.x25519;
+import gslib from "../..";
+import gslib.tls;
+import gslib.bignum;
+import gslib.asn1;
+import gslib.x509;
+import gslib.tls.schedule;
+import gslib.tls.record;
+import gslib.bignum.x25519;
 
 var failures = 0;
 var checks = 0;

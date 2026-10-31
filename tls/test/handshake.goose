@@ -5,12 +5,13 @@
 // close_notify, and the failures a client must report: an untrusted root,
 // a wrong name, a changed record, no common suite or group.
 import std;
-import tls from "..";
-import bignum from "../../bigmongoose.git";
-import asn1 from "../../asn1goose.git";
-import x509 from "../../x509goose.git";
-import tls.handshake;
-import x509.pool;
+import gslib from "../..";
+import gslib.tls;
+import gslib.bignum;
+import gslib.asn1;
+import gslib.x509;
+import gslib.tls.handshake;
+import gslib.x509.pool;
 
 var failures = 0;
 var checks = 0;

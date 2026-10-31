@@ -3,10 +3,11 @@
 // it, and its self-signature must check where the algorithm is one this
 // package supports (SHA-1 ones are refused as unsupported).
 import std;
-import x509 from "..";
-import asn1 from "../../asn1goose.git";
-import bignum from "../../bigmongoose.git";
-import x509.verify;
+import gslib from "../..";
+import gslib.x509;
+import gslib.asn1;
+import gslib.bignum;
+import gslib.x509.verify;
 
 var failures = 0;
 var checks = 0;

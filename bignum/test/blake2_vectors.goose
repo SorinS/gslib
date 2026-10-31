@@ -6,11 +6,12 @@
 // x/crypto and crypto/* agree with every line. Then ECDSA over a BLAKE2
 // digest, and PKCS #1 v1.5 refusing BLAKE2.
 import std;
-import bignum from "..";
-import bignum.blake2;
-import bignum.kdf;
-import bignum.rsa;
-import bignum.ec;
+import gslib from "../..";
+import gslib.bignum;
+import gslib.bignum.blake2;
+import gslib.bignum.kdf;
+import gslib.bignum.rsa;
+import gslib.bignum.ec;
 
 var failures = 0;
 var checks = 0;

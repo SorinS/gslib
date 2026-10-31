@@ -127,7 +127,7 @@ def run(cmd, stdin=b"", env=None, timeout=120):
 
 def main():
     goose = sys.argv[sys.argv.index("--goose") + 1] if "--goose" in sys.argv else \
-        os.environ.get("GOOSE") or shutil.which("goose") or os.path.join(ROOT, "..", "goose.git", "build", "goose")
+        os.environ.get("GOOSE") or shutil.which("goose") or os.path.join(ROOT, "..", "..", "goose.git", "build", "goose")
     t = tempfile.mkdtemp()
     k = lambda name: os.path.join(t, name)
     for tool, out in (("ssh.goose", "goose-ssh"), ("sshd.goose", "goose-sshd"), ("keygen.goose", "goose-ssh-keygen"),

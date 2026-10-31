@@ -2,8 +2,9 @@
 // bytes, across the padding boundaries, then longer ones; each also fed in
 // uneven pieces, and MGF1 against RFC 8017's definition.
 import std;
-import bignum from "..";
-import bignum.sha256;
+import gslib from "../..";
+import gslib.bignum;
+import gslib.bignum.sha256;
 
 fn unhex(s: const u8[:]) -> u8[>..] {
     var out: u8[>..] = [];

@@ -38,16 +38,17 @@
 
 import std;
 import os;
-import bignum from "../../bigmongoose.git";
-import asn1 from "../../asn1goose.git";
-import x509 from "../../x509goose.git";
-import tls from "../../tlsgoose.git";
-import tls.handshake;
-import http from "..";
-import http.url;
-import http.cookie;
-import http.client;
-import http.fetch;
+import gslib from "../..";
+import gslib.bignum;
+import gslib.asn1;
+import gslib.x509;
+import gslib.tls;
+import gslib.tls.handshake;
+import gslib.http;
+import gslib.http.url;
+import gslib.http.cookie;
+import gslib.http.client;
+import gslib.http.fetch;
 
 extern fn upfile_open(path: const u8[:]) -> i64;
 extern fn upfile_size(fd: i64) -> i64;

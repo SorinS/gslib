@@ -10,7 +10,7 @@ namespace x509;
 import std;
 import x509;
 import asn1;
-import keys;
+import x509.keys;
 import bignum;
 import bignum.sha1;
 import bignum.entropy;

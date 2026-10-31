@@ -8,12 +8,13 @@
 // main, which goose_init runs.
 
 import std;
-import bignum from "../..";
-import bignum.mont;
-import bignum.rsa;
-import bignum.x25519;
-import bignum.ec;
-import bignum.ed25519;
+import gslib from "../../..";
+import gslib.bignum;
+import gslib.bignum.mont;
+import gslib.bignum.rsa;
+import gslib.bignum.x25519;
+import gslib.bignum.ec;
+import gslib.bignum.ed25519;
 
 var rsa_key = bignum::RsaPrivateKey { n: [], e: [], d: [], p: [], q: [], dp: [], dq: [], qinv: [] };
 var m512: u32[..16] = [];           // an odd 512-bit modulus, with its R^2 and -1/m

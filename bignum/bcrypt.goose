@@ -7,10 +7,10 @@
 namespace bignum;
 
 import std;
-import ct;
-import blowfish;
-import sha512;
-import entropy;
+import bignum.ct;
+import bignum.blowfish;
+import bignum.sha512;
+import bignum.entropy;
 
 let BCRYPT_MIN_COST: i64 = 4;
 let BCRYPT_MAX_COST: i64 = 31;

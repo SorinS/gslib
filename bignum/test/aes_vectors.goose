@@ -3,8 +3,9 @@
 // and decryption at each key size, and CTR mode, including counters that
 // carry across words and wrap the whole block.
 import std;
-import bignum from "..";
-import bignum.aes;
+import gslib from "../..";
+import gslib.bignum;
+import gslib.bignum.aes;
 
 var failures = 0;
 var checks = 0;

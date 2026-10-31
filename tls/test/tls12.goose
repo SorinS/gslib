@@ -11,15 +11,16 @@
 //   keys TLS 1.2 cannot use (ML-DSA);
 // - keyUsage against what the key does, in TLS 1.3 and 1.2.
 import std;
-import tls from "..";
-import bignum from "../../bigmongoose.git";
-import asn1 from "../../asn1goose.git";
-import x509 from "../../x509goose.git";
-import tls.handshake;
-import tls.session;
-import tls.record;
-import x509.create;
-import x509.keys;
+import gslib from "../..";
+import gslib.tls;
+import gslib.bignum;
+import gslib.asn1;
+import gslib.x509;
+import gslib.tls.handshake;
+import gslib.tls.session;
+import gslib.tls.record;
+import gslib.x509.create;
+import gslib.x509.keys;
 
 var failures = 0;
 var checks = 0;

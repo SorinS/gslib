@@ -7,9 +7,10 @@
 // scripts/hpack_differential.py checks against Go's hpack package.
 
 import std;
-import http from "..";
-import http.hpack;
-import http.h1;
+import gslib from "../..";
+import gslib.http;
+import gslib.http.hpack;
+import gslib.http.h1;
 
 var failures = 0;
 

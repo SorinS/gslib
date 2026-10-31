@@ -8,10 +8,10 @@ namespace x509;
 import std;
 import x509;
 import asn1;
-import constraints;
-import policy;
-import crl;
-import pool;
+import x509.constraints;
+import x509.policy;
+import x509.crl;
+import x509.pool;
 
 // Checks that apply to any certificate on a path: dates and extensions.
 fn check_common(c: const Cert&, now: i64) -> i64 {

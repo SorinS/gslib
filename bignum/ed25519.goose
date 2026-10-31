@@ -11,11 +11,11 @@
 namespace bignum;
 
 import std;
-import ct;
-import mont;
-import sha512;
-import x25519;
-import entropy;
+import bignum.ct;
+import bignum.mont;
+import bignum.sha512;
+import bignum.x25519;
+import bignum.entropy;
 
 struct EdPoint { x: Fe, y: Fe, z: Fe, t: Fe }
 

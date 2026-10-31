@@ -6,8 +6,9 @@
 // leftmost N bits. Then keys and signatures made here, generated
 // parameters, and refusals.
 import std;
-import bignum from "..";
-import bignum.dsa;
+import gslib from "../..";
+import gslib.bignum;
+import gslib.bignum.dsa;
 
 var failures = 0;
 var checks = 0;

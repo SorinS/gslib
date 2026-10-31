@@ -1,0 +1,20 @@
+// gslib's sidecar. Its C is http.client's sockets (http/src/httpnet.c),
+// built only into programs that call them. bignum.entropy opens libc
+// through an extern "c" block; on Linux libc.so is a linker script, so the
+// library itself is named.
+c_sources = ["http/src/httpnet.c"];
+c_libs_windows = ["ws2_32"];
+dylibs_linux = ["c=libc.so.6"];
+
+// Programs of each library (tests, tools, examples), not the package's own
+// modules: the JIT's symbol table does not look for externs there.
+exclude = [
+    "bignum/examples", "bignum/test", "bignum/tools",
+    "asn1/test",
+    "x509/test", "x509/tools",
+    "tls/test", "tls/tools",
+    "ssh/test", "ssh/tools",
+    "ldap/test", "ldap/tools",
+    "yaml/test",
+    "http/test", "http/tools",
+];

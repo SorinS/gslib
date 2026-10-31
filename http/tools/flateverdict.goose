@@ -8,8 +8,9 @@
 
 import std;
 import os;
-import http from "..";
-import http.flate;
+import gslib from "../..";
+import gslib.http;
+import gslib.http.flate;
 
 fn hexval(c: u8) -> i64 {
     if c >= '0' && c <= '9' { return c - '0'; }

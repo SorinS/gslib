@@ -4,8 +4,9 @@
 // opened again after flipping a bit of the tag, the ciphertext, the AAD or
 // the nonce, which must fail and leave nothing behind.
 import std;
-import bignum from "..";
-import bignum.gcm;
+import gslib from "../..";
+import gslib.bignum;
+import gslib.bignum.gcm;
 
 var failures = 0;
 var checks = 0;

@@ -25,7 +25,7 @@ namespace http;
 
 import std;
 import http;
-import url;
+import http.url;
 
 // --- Set-Cookie (RFC 6265 §5.2) --------------------------------------------
 

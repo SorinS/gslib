@@ -18,7 +18,7 @@ import bignum.hmac;
 import bignum.ffdh;
 import bignum.entropy;
 import x509;
-import keys;
+import ssh.keys;
 
 // Go's default key exchanges, in its order, and all this package takes.
 let KEX_DEFAULT: const u8[:] = "mlkem768x25519-sha256,curve25519-sha256,curve25519-sha256@libssh.org,ecdh-sha2-nistp256,ecdh-sha2-nistp384,ecdh-sha2-nistp521,diffie-hellman-group14-sha256,diffie-hellman-group14-sha1";

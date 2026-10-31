@@ -7,7 +7,7 @@
 namespace bignum;
 
 import std;
-import ct;
+import bignum.ct;
 
 fn rotl32(x: u32, n: u32) -> u32 { (x << n) | (x >> (32 - n)) }
 

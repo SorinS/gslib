@@ -19,10 +19,10 @@ namespace tls;
 
 import std;
 import tls;
-import schedule;
-import record;
-import session;
-import handshake;
+import tls.schedule;
+import tls.record;
+import tls.session;
+import tls.handshake;
 import bignum;
 import bignum.rsa;
 import asn1;

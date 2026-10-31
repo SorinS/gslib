@@ -2,8 +2,9 @@
 // the raw operations' input checks, and signatures and ciphertexts that
 // must not verify or decrypt under another key.
 import std;
-import bignum from "..";
-import bignum.rsa;
+import gslib from "../..";
+import gslib.bignum;
+import gslib.bignum.rsa;
 
 var failures = 0;
 var checks = 0;

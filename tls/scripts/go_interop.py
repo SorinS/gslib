@@ -255,7 +255,7 @@ def go_client_ech(exe, gobin, kem, groups=(), reject=False, want_group=None):
 
 def main():
     goose = sys.argv[sys.argv.index("--goose") + 1] if "--goose" in sys.argv else \
-        os.environ.get("GOOSE") or shutil.which("goose") or os.path.join(ROOT, "..", "goose.git", "build", "goose")
+        os.environ.get("GOOSE") or shutil.which("goose") or os.path.join(ROOT, "..", "..", "goose.git", "build", "goose")
     tmp = tempfile.mkdtemp()
     exe = os.path.join(tmp, "peer")
     gobin = os.path.join(tmp, "gointerop")

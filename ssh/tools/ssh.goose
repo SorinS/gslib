@@ -34,12 +34,13 @@
 // the connection instead.
 import std;
 import os;
-import ssh from "..";
-import bignum from "../../bigmongoose.git";
-import asn1 from "../../asn1goose.git";
-import x509 from "../../x509goose.git";
-import ssh.keys;
-import ssh.conn;
+import gslib from "../..";
+import gslib.ssh;
+import gslib.bignum;
+import gslib.asn1;
+import gslib.x509;
+import gslib.ssh.keys;
+import gslib.ssh.conn;
 import .sysnet;
 import .relay;
 import .login;

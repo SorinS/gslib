@@ -9,7 +9,7 @@ namespace relay;
 
 import std;
 import os;
-import ssh.conn;
+import gslib.ssh.conn;
 import .sysnet;
 
 let FWD_LOCAL: i64 = 1;          // client, -L: connections become direct-tcpip channels to host:hostport

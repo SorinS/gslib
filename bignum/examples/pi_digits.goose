@@ -6,7 +6,8 @@
 //   goose examples/pi_digits.goose -- 2000
 import std;
 import os;
-import bignum from "..";
+import gslib from "../..";
+import gslib.bignum;
 
 // atan(1/x) * scale
 fn atan_inv(x: u32, scale) -> bignum::BigInt {

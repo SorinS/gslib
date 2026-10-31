@@ -19,7 +19,7 @@
 namespace http;
 
 import std;
-import hpacktab;
+import http.hpacktab;
 
 let HPACK_MAX: i64 = 4096;
 let HPACK_MAX_ENTRIES: i64 = 128;      // HPACK_MAX / 32

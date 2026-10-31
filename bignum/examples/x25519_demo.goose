@@ -5,9 +5,10 @@
 //   goose examples/x25519_demo.goose
 import std;
 import os;
-import bignum from "..";
-import bignum.x25519;
-import bignum.ct;
+import gslib from "../..";
+import gslib.bignum;
+import gslib.bignum.x25519;
+import gslib.bignum.ct;
 
 fn hex(b: const u8[:]) -> u8[>..] {
     var out: u8[>..] = [];

@@ -14,11 +14,12 @@
 // does, or on a packet longer than SFTP_MAX_PACKET or before INIT.
 import std;
 import os;
-import ssh from "..";
-import bignum from "../../bigmongoose.git";
-import asn1 from "../../asn1goose.git";
-import x509 from "../../x509goose.git";
-import ssh.sftp;
+import gslib from "../..";
+import gslib.ssh;
+import gslib.bignum;
+import gslib.asn1;
+import gslib.x509;
+import gslib.ssh.sftp;
 import .sysnet;
 import .fs;
 

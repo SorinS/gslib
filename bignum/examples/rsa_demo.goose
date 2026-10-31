@@ -4,8 +4,9 @@
 //   goose examples/rsa_demo.goose [bits]
 import std;
 import os;
-import bignum from "..";
-import bignum.rsa;
+import gslib from "../..";
+import gslib.bignum;
+import gslib.bignum.rsa;
 
 fn hex(b: const u8[:]) -> u8[>..] {
     var out: u8[>..] = [];

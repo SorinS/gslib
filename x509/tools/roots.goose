@@ -5,11 +5,12 @@
 //   goose tools/roots.goose
 import std;
 import os;
-import x509 from "..";
-import asn1 from "../../asn1goose.git";
-import bignum from "../../bigmongoose.git";
-import bignum.hmac;
-import x509.pool;
+import gslib from "../..";
+import gslib.x509;
+import gslib.asn1;
+import gslib.bignum;
+import gslib.bignum.hmac;
+import gslib.x509.pool;
 
 fn main() {
     let p, ok = x509::load_system_roots();

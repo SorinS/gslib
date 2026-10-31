@@ -4,8 +4,9 @@
 // messages, signatures and keys, S >= L, and non-canonical encodings must
 // not.
 import std;
-import bignum from "..";
-import bignum.ed25519;
+import gslib from "../..";
+import gslib.bignum;
+import gslib.bignum.ed25519;
 
 var failures = 0;
 var checks = 0;

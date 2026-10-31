@@ -5,7 +5,8 @@
 // checked as yaml.v3's decoder checks it, or the same error.
 import std;
 import os;
-import yaml from "..";
+import gslib from "../..";
+import gslib.yaml;
 
 var failures = 0;
 var checks = 0;

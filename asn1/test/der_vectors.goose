@@ -6,7 +6,8 @@
 // rewritten by put_header, must come out the same; each document must
 // survive PEM and back.
 import std;
-import asn1 from "..";
+import gslib from "../..";
+import gslib.asn1;
 
 var failures = 0;
 var checks = 0;

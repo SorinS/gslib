@@ -8,12 +8,13 @@
 // responders made here must be valid at the time checked and allow
 // digitalSignature.
 import std;
-import x509 from "..";
-import asn1 from "../../asn1goose.git";
-import bignum from "../../bigmongoose.git";
-import x509.keys;
-import x509.ocsp;
-import x509.create;
+import gslib from "../..";
+import gslib.x509;
+import gslib.asn1;
+import gslib.bignum;
+import gslib.x509.keys;
+import gslib.x509.ocsp;
+import gslib.x509.create;
 
 var failures = 0;
 var checks = 0;

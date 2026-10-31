@@ -11,12 +11,13 @@
 // binder must fail the handshake. A client that verifies must offer only a
 // session that was verified and whose chain its roots still accept.
 import std;
-import tls from "..";
-import bignum from "../../bigmongoose.git";
-import asn1 from "../../asn1goose.git";
-import x509 from "../../x509goose.git";
-import tls.handshake;
-import tls.session;
+import gslib from "../..";
+import gslib.tls;
+import gslib.bignum;
+import gslib.asn1;
+import gslib.x509;
+import gslib.tls.handshake;
+import gslib.tls.session;
 
 var failures = 0;
 var checks = 0;

@@ -6,11 +6,12 @@
 // `openssl verify` agreed (pass or fail) when the vectors were made; the
 // RFC 8448 server's CertificateVerify must verify under its certificate.
 import std;
-import x509 from "..";
-import asn1 from "../../asn1goose.git";
-import bignum from "../../bigmongoose.git";
-import x509.verify;
-import x509.crl;
+import gslib from "../..";
+import gslib.x509;
+import gslib.asn1;
+import gslib.bignum;
+import gslib.x509.verify;
+import gslib.x509.crl;
 
 var failures = 0;
 var checks = 0;

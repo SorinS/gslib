@@ -11,12 +11,13 @@
 //
 //   goose build -o bench tools/bench.goose && ./bench [prefix] [ms]
 import std;
-import tls from "..";
-import bignum from "../../bigmongoose.git";
-import asn1 from "../../asn1goose.git";
-import x509 from "../../x509goose.git";
-import tls.handshake;
-import tls.session;
+import gslib from "../..";
+import gslib.tls;
+import gslib.bignum;
+import gslib.asn1;
+import gslib.x509;
+import gslib.tls.handshake;
+import gslib.tls.session;
 
 var secs: f64 = 1.0;
 var only: u8[>..] = [];

@@ -26,11 +26,11 @@ namespace bignum;
 
 import std;
 import bignum;
-import ct;
-import mont;
-import sha256;
-import hmac;
-import entropy;
+import bignum.ct;
+import bignum.mont;
+import bignum.sha256;
+import bignum.hmac;
+import bignum.entropy;
 
 // Little-endian limbs, normalized: n, p and q have no zero top limb, and
 // each exponent and qinv is padded to its modulus' width (d to n's, dp and

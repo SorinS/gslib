@@ -289,7 +289,7 @@ def main():
         print(json.dumps(run_case(json.loads(sys.argv[2]))))
         return
     goose = sys.argv[sys.argv.index("--goose") + 1] if "--goose" in sys.argv else \
-        os.environ.get("GOOSE") or shutil.which("goose") or os.path.join(ROOT, "..", "goose.git", "build", "goose")
+        os.environ.get("GOOSE") or shutil.which("goose") or os.path.join(ROOT, "..", "..", "goose.git", "build", "goose")
     tmp = tempfile.mkdtemp()
     exe = os.path.join(tmp, "peer")
     subprocess.run([goose, "build", "-o", exe, os.path.join(ROOT, "tools", "peer.goose")], check=True,

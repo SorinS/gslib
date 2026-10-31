@@ -28,8 +28,8 @@ namespace http;
 
 import std;
 import http;
-import h1;
-import hpack;
+import http.h1;
+import http.hpack;
 
 let H2_PREFACE: const u8[:] = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 let H2_MAX_STREAMS: i64 = 256;

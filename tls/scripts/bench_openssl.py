@@ -28,7 +28,7 @@ ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 def default_goose():
     if os.environ.get("GOOSE"):
         return os.environ["GOOSE"]
-    return shutil.which("goose") or os.path.join(ROOT, "..", "goose.git", "build", "goose")
+    return shutil.which("goose") or os.path.join(ROOT, "..", "..", "goose.git", "build", "goose")
 
 
 def pem(der, label):

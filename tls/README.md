@@ -2,8 +2,8 @@
 
 TLS 1.3 (RFC 8446) and TLS 1.2 (RFC 5246) for the Goose language: client
 and server connections, the key schedules and the record layer. It builds on
-[bignum](../bigmongoose.git) for the cryptography,
-[x509](../x509goose.git) for certificates and [asn1](../asn1goose.git)
+[bignum](../bignum) for the cryptography,
+[x509](../x509) for certificates and [asn1](../asn1)
 for keys. Nothing here does I/O: a connection is fed the bytes that
 arrive, and hands back the bytes to send and the application data
 received. The caller owns the socket, or the pipe, or the test harness.
@@ -39,10 +39,10 @@ reset, which can reach the peer before it has read the alert
   AES-CBC with HMAC.
 
 ```goose
-import tls from "../tlsgoose.git";
-import bignum from "../bigmongoose.git";      // tls needs it; the root declares it
-import tls.schedule;
-import tls.record;
+import gslib from "SorinS/gslib@v0.1";   // or a path to gslib.git
+import gslib.tls;
+import gslib.tls.schedule;
+import gslib.tls.record;
 
 let s, ok = tls::suite(tls::TLS_AES_128_GCM_SHA256);
 var sch = tls::schedule(s.hash, "");            // no PSK
@@ -60,7 +60,7 @@ let ctype, plaintext, alert = tls::open_record(inn, rec);   // alert != 0: send 
 ## Connections
 
 ```goose
-import tls.handshake;
+import gslib.tls.handshake;
 
 var cfg = tls::client_config("example.com", "");   // the system's roots, as Go with no RootCAs
 // or: tls::client_config("example.com", roots_der)  (DER certificates concatenated)

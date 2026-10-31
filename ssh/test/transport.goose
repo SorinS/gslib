@@ -6,12 +6,13 @@
 // - every key exchange gives both sides the same K, and the derived keys
 //   are as long as asked and differ by letter.
 import std;
-import ssh from "..";
-import bignum from "../../bigmongoose.git";
-import asn1 from "../../asn1goose.git";
-import x509 from "../../x509goose.git";
-import ssh.cipher;
-import ssh.kex;
+import gslib from "../..";
+import gslib.ssh;
+import gslib.bignum;
+import gslib.asn1;
+import gslib.x509;
+import gslib.ssh.cipher;
+import gslib.ssh.kex;
 
 var failures = 0;
 var checks = 0;

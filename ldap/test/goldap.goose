@@ -5,12 +5,13 @@
 // to the same text, escaped the same; every DN read to the same String()
 // or refused, and compared as Equal, EqualFold and AncestorOf compare.
 import std;
-import ldap from "..";
-import asn1 from "../../asn1goose.git";
-import bignum from "../../bigmongoose.git";
-import ldap.filter;
-import ldap.dn;
-import ldap.conn;
+import gslib from "../..";
+import gslib.ldap;
+import gslib.asn1;
+import gslib.bignum;
+import gslib.ldap.filter;
+import gslib.ldap.dn;
+import gslib.ldap.conn;
 
 var failures = 0;
 var checks = 0;

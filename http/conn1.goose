@@ -23,7 +23,7 @@ namespace http;
 
 import std;
 import http;
-import h1;
+import http.h1;
 
 let EV_NEED_MORE: u8 = 0;
 let EV_REQUEST: u8 = 1;        // a server's: a request head

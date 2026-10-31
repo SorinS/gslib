@@ -1,8 +1,9 @@
 // RFC 7748 test vectors: §5.2 (two single calls and the 1 and 1000
 // iteration chain) and §6.1 (Alice and Bob's key agreement).
 import std;
-import bignum from "..";
-import bignum.x25519;
+import gslib from "../..";
+import gslib.bignum;
+import gslib.bignum.x25519;
 
 fn unhex(s: const u8[:]) -> u8[32] {
     assert(s.len == 64);

@@ -2,8 +2,9 @@
 // wider numbers and exact products, for random odd moduli of 1 to 12 limbs
 // and all-ones ones, with exponents of several widths, zero among them.
 import std;
-import bignum from "..";
-import bignum.mont;
+import gslib from "../..";
+import gslib.bignum;
+import gslib.bignum.mont;
 
 var failures = 0;
 var checks = 0;

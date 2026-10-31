@@ -1,8 +1,8 @@
 # ssh
 
 SSH (RFC 4251-4254) for the Goose language, as Go's
-`golang.org/x/crypto/ssh` has it, on [bignum](../bigmongoose.git) for the
-cryptography and [x509](../x509goose.git) and [asn1](../asn1goose.git) for
+`golang.org/x/crypto/ssh` has it, on [bignum](../bignum) for the
+cryptography and [x509](../x509) and [asn1](../asn1) for
 key files. Nothing here does I/O.
 
 Five programs come with it: `goose-ssh`, a client, `goose-sshd`, a

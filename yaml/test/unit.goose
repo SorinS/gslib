@@ -3,7 +3,8 @@
 // directives, streams of documents, UTF-16, the errors and where they put
 // the fault, the decoder's checks, and reading into the caller's types.
 import std;
-import yaml from "..";
+import gslib from "../..";
+import gslib.yaml;
 
 var failures = 0;
 var checks = 0;

@@ -7,12 +7,13 @@
 // key must sign a certificate here that checks, and TLS signatures under
 // its scheme.
 import std;
-import x509 from "..";
-import asn1 from "../../asn1goose.git";
-import bignum from "../../bigmongoose.git";
-import x509.keys;
-import x509.create;
-import x509.verify;
+import gslib from "../..";
+import gslib.x509;
+import gslib.asn1;
+import gslib.bignum;
+import gslib.x509.keys;
+import gslib.x509.create;
+import gslib.x509.verify;
 
 var failures = 0;
 var checks = 0;

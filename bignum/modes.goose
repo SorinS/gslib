@@ -16,9 +16,9 @@
 namespace bignum;
 
 import std;
-import ct;
-import aes;
-import des;
+import bignum.ct;
+import bignum.aes;
+import bignum.des;
 
 fn cipher_block_len(k: const Aes&) -> i64 { 16 }
 fn cipher_encrypt(k: const Aes&, b: const u8[:]) -> u8[16] { aes_encrypt_block(k, b) }

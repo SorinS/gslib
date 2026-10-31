@@ -29,7 +29,7 @@ namespace ldap;
 
 import std;
 import ldap;
-import filter;
+import ldap.filter;
 import asn1;
 import bignum;
 import bignum.md5;

@@ -3,8 +3,9 @@
 // queries and forms, IP addresses, Punycode (Go's cookiejar vectors).
 
 import std;
-import http from "..";
-import http.url;
+import gslib from "../..";
+import gslib.http;
+import gslib.http.url;
 
 var failures = 0;
 

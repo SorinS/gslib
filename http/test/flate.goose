@@ -3,9 +3,10 @@
 // scripts/flate_differential.py compares thousands more with zlib.
 
 import std;
-import http from "..";
-import http.url;
-import http.flate;
+import gslib from "../..";
+import gslib.http;
+import gslib.http.url;
+import gslib.http.flate;
 
 var failures = 0;
 

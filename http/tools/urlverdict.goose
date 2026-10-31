@@ -6,8 +6,9 @@
 
 import std;
 import os;
-import http from "..";
-import http.url;
+import gslib from "../..";
+import gslib.http;
+import gslib.http.url;
 
 fn unhex(s: const u8[:]) -> u8[>..] {
     var out: u8[>..] = [];

@@ -15,9 +15,9 @@
 namespace bignum;
 
 import std;
-import ct;
-import sha3;
-import entropy;
+import bignum.ct;
+import bignum.sha3;
+import bignum.entropy;
 
 let MLDSA_Q: u32 = 8380417;
 let MLDSA_QINV_NEG: u32 = 4236238847;          // -q^-1 mod 2^32

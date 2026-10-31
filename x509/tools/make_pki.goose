@@ -11,11 +11,12 @@
 //   goose tools/make_pki.goose -- <dir> <intermediate-key.der>
 import std;
 import os;
-import x509 from "..";
-import asn1 from "../../asn1goose.git";
-import bignum from "../../bigmongoose.git";
-import x509.keys;
-import x509.create;
+import gslib from "../..";
+import gslib.x509;
+import gslib.asn1;
+import gslib.bignum;
+import gslib.x509.keys;
+import gslib.x509.create;
 
 fn save(dir: const u8[:], name: const u8[:], label: const u8[:], der: const u8[:]) {
     var pem: u8[>..] = [];

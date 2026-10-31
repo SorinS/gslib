@@ -5,10 +5,11 @@
 // goose-httpd (scripts/h2spec.py); interop.py the rest.
 
 import std;
-import http from "..";
-import http.hpack;
-import http.h1;
-import http.h2;
+import gslib from "../..";
+import gslib.http;
+import gslib.http.hpack;
+import gslib.http.h1;
+import gslib.http.h2;
 
 var failures = 0;
 

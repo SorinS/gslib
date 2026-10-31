@@ -69,7 +69,8 @@ language, written in Goose: a foundation for cryptography.
 
 ```goose
 import std;
-import bignum from "../bigmongoose.git";       // a path, or a git source once published
+import gslib from "SorinS/gslib@v0.1";   // or a path to gslib.git
+import gslib.bignum;
 
 fn main() {
     let a, ok = bignum::parse("123456789012345678901234567890");
@@ -81,17 +82,19 @@ fn main() {
 ```
 
 ```goose
-import bignum from "../bigmongoose.git";
-import bignum.x25519;
+import gslib from "SorinS/gslib@v0.1";   // or a path to gslib.git
+import gslib.bignum;
+import gslib.bignum.x25519;
 
 let sk, pk = bignum::x25519_keypair();
 let secret, ok = bignum::x25519_shared(sk, peer_pk);   // ok is false for a low-order peer
 ```
 
 ```goose
-import bignum from "../bigmongoose.git";
-import bignum.rsa;
-import bignum.gcm;
+import gslib from "SorinS/gslib@v0.1";   // or a path to gslib.git
+import gslib.bignum;
+import gslib.bignum.rsa;
+import gslib.bignum.gcm;
 
 let key = bignum::rsa_generate(2048);
 let pub = bignum::rsa_public(key);
@@ -105,10 +108,11 @@ let opened, ok2 = bignum::aes_gcm_open(key32, nonce12, aad, sealed);  // ok2 fal
 ```
 
 ```goose
-import bignum from "../bigmongoose.git";
-import bignum.ec;
-import bignum.ed25519;
-import bignum.hmac;
+import gslib from "SorinS/gslib@v0.1";   // or a path to gslib.git
+import gslib.bignum;
+import gslib.bignum.ec;
+import gslib.bignum.ed25519;
+import gslib.bignum.hmac;
 
 let c = bignum::p256();                                  // or bignum::p384()
 let sk, pk = bignum::ec_keypair(c);                      // pk is 04 || x || y

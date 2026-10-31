@@ -13,11 +13,12 @@
 // - authorized_keys lines with options and comments, and keys written in
 //   OpenSSH's format read back.
 import std;
-import ssh from "..";
-import bignum from "../../bigmongoose.git";
-import asn1 from "../../asn1goose.git";
-import x509 from "../../x509goose.git";
-import ssh.keys;
+import gslib from "../..";
+import gslib.ssh;
+import gslib.bignum;
+import gslib.asn1;
+import gslib.x509;
+import gslib.ssh.keys;
 
 var failures = 0;
 var checks = 0;

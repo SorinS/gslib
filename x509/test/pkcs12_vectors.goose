@@ -6,11 +6,12 @@
 // passwords. Each decodes to openssl's key and certificates; a wrong
 // password and a changed byte are refused.
 import std;
-import x509 from "..";
-import asn1 from "../../asn1goose.git";
-import bignum from "../../bigmongoose.git";
-import x509.keys;
-import x509.pkcs12;
+import gslib from "../..";
+import gslib.x509;
+import gslib.asn1;
+import gslib.bignum;
+import gslib.x509.keys;
+import gslib.x509.pkcs12;
 
 var failures = 0;
 var checks = 0;

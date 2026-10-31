@@ -1,7 +1,7 @@
 # httpgoose
 
 HTTP for Goose: HTTP/1.1 and HTTP/2, with HTTPS through
-[tlsgoose](../tlsgoose.git). The protocol code does no I/O: it parses and
+[tlsgoose](../tls). The protocol code does no I/O: it parses and
 writes byte strings, and the caller owns the sockets.
 
 | Module | What |
@@ -19,8 +19,9 @@ writes byte strings, and the caller owns the sockets.
 | `http.conn1` | HTTP/1.1 connections, server and client: events for heads, body data and ends; requests answered in order; keep-alive and close; HEAD, 1xx, 204, 304; 100-continue; body limits (413) |
 
 ```goose
-import http from "../httpgoose.git";
-import http.h1;
+import gslib from "SorinS/gslib@v0.1";   // or a path to gslib.git
+import gslib.http;
+import gslib.http.h1;
 
 let lim = http::default_limits();
 let h, n = http::parse_request(buf, lim);      // n > 0: the head's length; 0: need more; < 0: -status
@@ -36,7 +37,7 @@ nothing in the package keeps a large buffer inside a struct.
 A server connection, the caller keeping the bytes that arrive:
 
 ```goose
-import http.conn1;
+import gslib.http.conn1;
 
 var c = http::server_conn(http::server_options());
 let ev, h = http::server_read(c, buf, body, trailer, out);

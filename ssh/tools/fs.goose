@@ -5,7 +5,7 @@
 namespace fs;
 
 import std;
-import ssh.sftp;
+import gslib.ssh.sftp;
 
 extern fn fs_open(path: const u8[:], pflags: u32, mode: u32) -> i32;
 extern fn fs_close(fd: i32) -> i32;

@@ -5,12 +5,13 @@
 // records at their boundaries: every short length, the longest padding,
 // and padding or MACs that are wrong.
 import std;
-import tls from "..";
-import bignum from "../../bigmongoose.git";
-import asn1 from "../../asn1goose.git";
-import x509 from "../../x509goose.git";
-import tls.schedule;
-import tls.record;
+import gslib from "../..";
+import gslib.tls;
+import gslib.bignum;
+import gslib.asn1;
+import gslib.x509;
+import gslib.tls.schedule;
+import gslib.tls.record;
 
 var failures = 0;
 var checks = 0;

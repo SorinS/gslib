@@ -8,19 +8,20 @@
 // at 40, 64 and 128 effective bits, from openssl. Then RFC 2268's RC2
 // vectors and RFC 2144's CAST-128 one.
 import std;
-import bignum from "..";
-import bignum.md4;
-import bignum.ripemd160;
-import bignum.salsa20;
-import bignum.nacl;
-import bignum.bcrypt;
-import bignum.blowfish;
-import bignum.cast5;
-import bignum.twofish;
-import bignum.tea;
-import bignum.rc2;
-import bignum.aes;
-import bignum.modes;
+import gslib from "../..";
+import gslib.bignum;
+import gslib.bignum.md4;
+import gslib.bignum.ripemd160;
+import gslib.bignum.salsa20;
+import gslib.bignum.nacl;
+import gslib.bignum.bcrypt;
+import gslib.bignum.blowfish;
+import gslib.bignum.cast5;
+import gslib.bignum.twofish;
+import gslib.bignum.tea;
+import gslib.bignum.rc2;
+import gslib.bignum.aes;
+import gslib.bignum.modes;
 
 var failures = 0;
 var checks = 0;

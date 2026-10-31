@@ -245,7 +245,7 @@ WANTED = ("aes_gcm_test", "chacha20_poly1305_test", "xchacha20_poly1305_test", "
 
 def find_goose(arg):
     for cand in [arg, os.environ.get("GOOSE"), shutil.which("goose"),
-                 os.path.join(ROOT, "..", "goose.git", "build", "goose")]:
+                 os.path.join(ROOT, "..", "..", "goose.git", "build", "goose")]:
         if cand and os.path.isfile(cand):
             return cand
     sys.exit("no goose compiler found: pass --goose or set GOOSE")

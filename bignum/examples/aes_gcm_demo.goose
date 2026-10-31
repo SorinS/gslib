@@ -4,9 +4,10 @@
 //   goose examples/aes_gcm_demo.goose
 import std;
 import os;
-import bignum from "..";
-import bignum.gcm;
-import bignum.entropy;
+import gslib from "../..";
+import gslib.bignum;
+import gslib.bignum.gcm;
+import gslib.bignum.entropy;
 
 fn hex(b: const u8[:]) -> u8[>..] {
     var out: u8[>..] = [];

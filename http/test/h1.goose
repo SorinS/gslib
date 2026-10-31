@@ -3,8 +3,9 @@
 // byte at a time, and writing messages.
 
 import std;
-import http from "..";
-import http.h1;
+import gslib from "../..";
+import gslib.http;
+import gslib.http.h1;
 
 var checks = 0;
 var failures = 0;

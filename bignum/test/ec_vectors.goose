@@ -5,8 +5,9 @@
 // and fail when anything changes. Then points that are not on the curve,
 // or not encoded right, and scalars out of range.
 import std;
-import bignum from "..";
-import bignum.ec;
+import gslib from "../..";
+import gslib.bignum;
+import gslib.bignum.ec;
 
 var failures = 0;
 var checks = 0;

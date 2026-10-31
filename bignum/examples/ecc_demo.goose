@@ -5,10 +5,11 @@
 //   goose examples/ecc_demo.goose
 import std;
 import os;
-import bignum from "..";
-import bignum.ec;
-import bignum.ed25519;
-import bignum.hmac;
+import gslib from "../..";
+import gslib.bignum;
+import gslib.bignum.ec;
+import gslib.bignum.ed25519;
+import gslib.bignum.hmac;
 
 fn hex(b: const u8[:]) -> u8[>..] {
     var out: u8[>..] = [];

@@ -9,8 +9,8 @@
 namespace bignum;
 
 import std;
-import ct;
-import entropy;
+import bignum.ct;
+import bignum.entropy;
 
 struct Fe { v: i64[10] }
 

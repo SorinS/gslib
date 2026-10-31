@@ -13,11 +13,11 @@ namespace x509;
 import std;
 import os;
 import x509;
-import keys;
+import x509.keys;
 import asn1;
 import bignum;
 import bignum.hmac;
-import verify;
+import x509.verify;
 
 // Certificate status, and the responseStatus of an OCSPResponse.
 let OCSP_GOOD: i64 = 0;

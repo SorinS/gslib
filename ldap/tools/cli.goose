@@ -12,16 +12,16 @@ namespace cli;
 import std;
 import os;
 import base64;
-import ldap;
-import ldap.conn;
-import ldap.url;
-import ldap.filter;
-import asn1;
-import x509;
-import tls;
-import tls.handshake;
-import bignum;
-import bignum.entropy;
+import gslib.ldap;
+import gslib.ldap.conn;
+import gslib.ldap.url;
+import gslib.ldap.filter;
+import gslib.asn1;
+import gslib.x509;
+import gslib.tls;
+import gslib.tls.handshake;
+import gslib.bignum;
+import gslib.bignum.entropy;
 import .sysnet;
 
 // OpenLDAP's ldap_err2string.

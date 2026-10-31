@@ -1,7 +1,8 @@
 // The API's edges: conversions at the limits, in-place forms (aliased
 // too), bytes, parse errors, and the identities between operations.
 import std;
-import bignum from "..";
+import gslib from "../..";
+import gslib.bignum;
 
 fn eqs(a, s: const u8[:]) -> bool { bignum::to_str(a) == s }
 

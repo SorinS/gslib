@@ -9,7 +9,7 @@
 namespace bignum;
 
 import std;
-import ct;
+import bignum.ct;
 
 // -1/m mod 2^32 for odd m0, by Newton's iteration (each step doubles the
 // correct low bits; m0 is its own inverse mod 8).

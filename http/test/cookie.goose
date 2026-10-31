@@ -5,9 +5,10 @@
 // algorithm, and cookie files.
 
 import std;
-import http from "..";
-import http.url;
-import http.cookie;
+import gslib from "../..";
+import gslib.http;
+import gslib.http.url;
+import gslib.http.cookie;
 
 var failures = 0;
 

@@ -5,12 +5,13 @@
 // key, OAEP over SHA-1, SHA-2 and SHA-3 and PKCS #1 v1.5 encryption,
 // decrypted by openssl, with malformed padding refused.
 import std;
-import bignum from "..";
-import bignum.chacha20;
-import bignum.sha3;
-import bignum.sha512;
-import bignum.ed25519;
-import bignum.rsa;
+import gslib from "../..";
+import gslib.bignum;
+import gslib.bignum.chacha20;
+import gslib.bignum.sha3;
+import gslib.bignum.sha512;
+import gslib.bignum.ed25519;
+import gslib.bignum.rsa;
 
 var failures = 0;
 var checks = 0;

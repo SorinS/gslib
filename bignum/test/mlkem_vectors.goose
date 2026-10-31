@@ -5,8 +5,9 @@
 // openssl gives. Then encapsulation here, round trips, and malformed keys
 // and ciphertexts.
 import std;
-import bignum from "..";
-import bignum.mlkem;
+import gslib from "../..";
+import gslib.bignum;
+import gslib.bignum.mlkem;
 
 var failures = 0;
 var checks = 0;

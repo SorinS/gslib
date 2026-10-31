@@ -5,7 +5,8 @@
 //   goose examples/factorial.goose -- 5000
 import std;
 import os;
-import bignum from "..";
+import gslib from "../..";
+import gslib.bignum;
 
 // The product of xs by binary splitting, so the multiplies are balanced
 // and the large ones go through Karatsuba. Bottom-up: neighbours pair

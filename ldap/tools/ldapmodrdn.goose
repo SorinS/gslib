@@ -8,15 +8,16 @@
 import std;
 import os;
 import base64;
-import ldap from "..";
-import asn1 from "../../asn1goose.git";
-import bignum from "../../bigmongoose.git";
-import x509 from "../../x509goose.git";
-import tls from "../../tlsgoose.git";
-import ldap.conn;
-import ldap.ldif;
-import ldap.dn;
-import ldap.filter;
+import gslib from "../..";
+import gslib.ldap;
+import gslib.asn1;
+import gslib.bignum;
+import gslib.x509;
+import gslib.tls;
+import gslib.ldap.conn;
+import gslib.ldap.ldif;
+import gslib.ldap.dn;
+import gslib.ldap.filter;
 import .sysnet;
 import .cli;
 

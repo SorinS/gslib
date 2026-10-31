@@ -3,8 +3,9 @@
 // of 32 to 512 bytes; a shared secret both ways; base^x mod p for random
 // bases; then the range check, and keys made here agreeing.
 import std;
-import bignum from "..";
-import bignum.ffdh;
+import gslib from "../..";
+import gslib.bignum;
+import gslib.bignum.ffdh;
 
 var failures = 0;
 var checks = 0;

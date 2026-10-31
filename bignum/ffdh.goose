@@ -8,9 +8,9 @@ namespace bignum;
 
 import std;
 import bignum;
-import mont;
-import ct;
-import entropy;
+import bignum.mont;
+import bignum.ct;
+import bignum.entropy;
 
 // The primes, from RFC 3526's formula 2^n - 2^(n-64) - 1 + 2^64 *
 // (floor(2^(n-130) pi) + offset): group 14 (2048 bits), 15 (3072), 16 (4096).

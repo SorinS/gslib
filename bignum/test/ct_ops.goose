@@ -1,8 +1,9 @@
 // bignum.ct against BigInt, on random fixed-width operands and the values
 // at the edges of a width (0, 1, m - 1, all ones).
 import std;
-import bignum from "..";
-import bignum.ct;
+import gslib from "../..";
+import gslib.bignum;
+import gslib.bignum.ct;
 
 var failures = 0;
 var checks = 0;

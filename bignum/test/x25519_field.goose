@@ -2,8 +2,9 @@
 // and edge-case encodings (0, 1, p - 1, p, p + 1, 2^255 - 1, all ones),
 // through each operation and through the ladder's add/sub-then-multiply.
 import std;
-import bignum from "..";
-import bignum.x25519;
+import gslib from "../..";
+import gslib.bignum;
+import gslib.bignum.x25519;
 
 var failures = 0;
 var checks = 0;

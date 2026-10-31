@@ -54,7 +54,7 @@ BODIES = [b"", b"hello", b"5\r\nhello\r\n0\r\n\r\n", b"5;e=1\r\nhello\r\n0\r\n\r
 
 def find_goose(arg):
     for cand in [arg, os.environ.get("GOOSE"), shutil.which("goose"),
-                 os.path.join(ROOT, "..", "goose.git", "build", "goose")]:
+                 os.path.join(ROOT, "..", "..", "goose.git", "build", "goose")]:
         if cand and os.path.isfile(cand):
             return cand
     sys.exit("no goose compiler found: pass --goose or set GOOSE")

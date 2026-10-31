@@ -10,7 +10,7 @@ builds and runs the tests with the C compiler.
     python3 scripts/run_tests.py [--goose PATH] [--native] [--update] [-k NAME]
 
 The compiler is --goose, else $GOOSE, else `goose` on PATH, else
-../goose.git/build/goose beside this repository.
+../goose.git/build/goose beside gslib.git.
 """
 
 import argparse
@@ -26,7 +26,7 @@ EXAMPLE_ARGS = {"pi_digits": ["500"], "factorial": ["1000"], "rsa_demo": ["1024"
 
 def find_goose(arg):
     for cand in [arg, os.environ.get("GOOSE"), shutil.which("goose"),
-                 os.path.join(ROOT, "..", "goose.git", "build", "goose")]:
+                 os.path.join(ROOT, "..", "..", "goose.git", "build", "goose")]:
         if cand and os.path.isfile(cand):
             return cand
     sys.exit("no goose compiler found: pass --goose or set GOOSE")

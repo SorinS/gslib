@@ -17,13 +17,14 @@
 import std;
 import os;
 import math;
-import bignum from "../..";
-import bignum.ct;
-import bignum.mont;
-import bignum.rsa;
-import bignum.x25519;
-import bignum.ec;
-import bignum.ed25519;
+import gslib from "../../..";
+import gslib.bignum;
+import gslib.bignum.ct;
+import gslib.bignum.mont;
+import gslib.bignum.rsa;
+import gslib.bignum.x25519;
+import gslib.bignum.ec;
+import gslib.bignum.ed25519;
 
 let LIMIT = 10.0;
 

@@ -12,8 +12,8 @@
 namespace ldap;
 
 import std;
-import asn1 from "../asn1goose.git";
-import bignum from "../bigmongoose.git";
+import asn1;
+import bignum;
 
 // protocolOp tags (RFC 4511 §4.2-4.14): [APPLICATION n], as identifier octets.
 let OP_BIND_REQUEST: u32 = 0x60;

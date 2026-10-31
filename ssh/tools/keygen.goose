@@ -18,11 +18,12 @@
 // $SSH_ASKPASS).
 import std;
 import os;
-import ssh from "..";
-import bignum from "../../bigmongoose.git";
-import asn1 from "../../asn1goose.git";
-import x509 from "../../x509goose.git";
-import ssh.keys;
+import gslib from "../..";
+import gslib.ssh;
+import gslib.bignum;
+import gslib.asn1;
+import gslib.x509;
+import gslib.ssh.keys;
 import .sysnet;
 
 fn usage() -> i32 {

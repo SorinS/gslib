@@ -29,14 +29,14 @@ namespace http;
 import std;
 import os;
 import http;
-import h1;
-import conn1;
-import url;
-import cookie;
-import auth;
-import flate;
-import client;
-import tls from "../tlsgoose.git";
+import http.h1;
+import http.conn1;
+import http.url;
+import http.cookie;
+import http.auth;
+import http.flate;
+import http.client;
+import tls;
 import tls.handshake;
 
 // --- Settings --------------------------------------------------------------

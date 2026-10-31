@@ -9,9 +9,9 @@
 namespace ssh;
 
 import std;
-import bignum from "../bigmongoose.git";
-import asn1 from "../asn1goose.git";
-import x509 from "../x509goose.git";
+import bignum;
+import asn1;
+import x509;
 
 // Message numbers (RFC 4250 §4.1).
 let MSG_DISCONNECT: u8 = 1;
