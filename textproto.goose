@@ -254,7 +254,14 @@ fn read_mime_header_at(data: const u8[:], pos: i64, eof: bool, max_memory: i64, 
         key.clear();
         if !reader_key(key, kv[..colon]) { detail.append(kv); return mime::ERR_MALFORMED_LINE, c.pos; }
         let v = kv[colon + 1..];
-        for b in v { if !is_value_byte(b) { detail.append(kv); return mime::ERR_MALFORMED_LINE, c.pos; } }
+        for b in v {
+            if !is_value_byte(b) {
+                // Go canonicalizes the key in place first: its message has the key so
+                detail.append(key);
+                detail.append(kv[colon..]);
+                return mime::ERR_MALFORMED_LINE, c.pos;
+            }
+        }
         hdrs--;
         if hdrs < 0 { h.fields.clear(); return mime::ERR_MESSAGE_TOO_LARGE, c.pos; }
         var a = 0;
