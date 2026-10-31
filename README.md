@@ -77,9 +77,10 @@ compressgoose), and `git log --follow -- <group>/<lib>` shows that history.
 
 ## Requirements
 
-A compiler from goose.git 704214cc on: http's client keeps its state in a
-`root struct`. The tests ran with v2026.3-254-gd402d2c7 on macOS and
-v2026.3-252-g2ed1a63d on Linux.
+goose.git's master from 683ebc94 (v2026.3-154) on: http's client keeps
+its state in a `root struct`. The tests ran with master as it is,
+v2026.3-252-g2ed1a63d, on Linux, and on macOS with v2026.3-254-gd402d2c7,
+master and one fix of TinyCC's arm64 code (dfe35659, for `goose run`).
 
 On Windows, programs that need random bytes (keys, TLS, SSH) fail to
 start until the compiler offers them: bignum reaches `getentropy` through

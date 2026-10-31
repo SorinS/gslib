@@ -97,7 +97,8 @@ of trailer.
 
 `http.client` and `http.fetch` keep a client's parts (its pool, buffers,
 TLS settings, cookie jar) in a `root struct`, which needs a compiler from
-goose.git 704214cc on (v2026.3-252 is what the tests ran with). The
+goose.git's master from 683ebc94 (v2026.3-154) on (v2026.3-252 is what
+the tests ran with). The
 parsers and the other modules need none of it, and no C.
 
 ## Tools
