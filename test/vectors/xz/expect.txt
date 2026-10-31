@@ -1,0 +1,77 @@
+# MODE FILE VERDICT [SIZE CRC32]: what xz -dc (xz files) or liblzma through Python (.lzma, raw LZMA2) makes of each file;
+# the error codes are ours (compress.goose) for the refusals xz gives. Made by xz 5.8.4 / Python 3.15 lzma.
+xz bad-0-backward_size.xz err -2
+xz bad-0-empty-truncated.xz short
+xz bad-0-footer_magic.xz err -2
+xz bad-0-header_magic.xz err -1
+xz bad-0-nonempty_index.xz err -2
+xz bad-0cat-alone.xz err -4
+xz bad-0cat-header_magic.xz err -4
+xz bad-0catpad-empty.xz err -2
+xz bad-0pad-empty.xz short
+xz bad-1-block_header-1.xz err -2
+xz bad-1-block_header-2.xz err -2
+xz bad-1-block_header-3.xz err -2
+xz bad-1-block_header-4.xz err -2
+xz bad-1-block_header-5.xz err -2
+xz bad-1-block_header-6.xz err -2
+xz bad-1-check-crc32.xz err -3
+xz bad-1-check-crc64.xz err -3
+xz bad-1-check-sha256.xz err -3
+xz bad-1-lzma2-1.xz err -2
+xz bad-1-lzma2-2.xz err -2
+xz bad-1-lzma2-3.xz err -2
+xz bad-1-lzma2-4.xz err -2
+xz bad-1-lzma2-5.xz err -2
+xz bad-1-lzma2-6.xz err -2
+xz bad-1-lzma2-7.xz err -2
+xz bad-1-lzma2-8.xz err -2
+xz bad-1-stream_flags-1.xz err -2
+xz bad-1-stream_flags-2.xz err -2
+xz bad-1-stream_flags-3.xz err -2
+xz bad-1-vli-1.xz err -2
+xz bad-1-vli-2.xz err -2
+xz bad-2-compressed_data_padding.xz err -2
+xz bad-2-index-1.xz err -2
+xz bad-2-index-2.xz err -2
+xz bad-2-index-3.xz err -2
+xz bad-2-index-4.xz err -2
+xz bad-2-index-5.xz err -2
+xz bad-2-lzma2-corrupt.xz err -3
+xz good-0-empty.xz ok 0 00000000
+xz good-0cat-empty.xz ok 0 00000000
+xz good-0catpad-empty.xz ok 0 00000000
+xz good-0pad-empty.xz ok 0 00000000
+xz good-1-3delta-lzma2.xz ok 457 db4847fb
+xz good-1-block_header-1.xz ok 13 15a2a343
+xz good-1-block_header-2.xz ok 13 15a2a343
+xz good-1-block_header-3.xz ok 13 15a2a343
+xz good-1-check-crc32.xz ok 13 15a2a343
+xz good-1-check-crc64.xz ok 13 15a2a343
+xz good-1-check-none.xz ok 13 15a2a343
+xz good-1-check-sha256.xz ok 13 15a2a343
+xz good-1-delta-lzma2.tiff.xz ok 929138 f7c66eb5
+xz good-1-lzma2-1.xz ok 457 db4847fb
+xz good-1-lzma2-2.xz ok 457 db4847fb
+xz good-1-lzma2-3.xz ok 457 db4847fb
+xz good-1-lzma2-4.xz ok 457 db4847fb
+xz good-1-lzma2-5.xz ok 0 00000000
+xz good-1-sparc-lzma2.xz ok 1240 cc270da1
+xz good-1-x86-lzma2-offset-2048.xz ok 1388 a3679091
+xz good-1-x86-lzma2.xz ok 1388 a3679091
+xz good-2-lzma2.xz ok 13 15a2a343
+xz unsupported-block_header.xz err -6
+xz unsupported-check.xz ok 13 15a2a343
+xz unsupported-filter_flags-1.xz err -6
+xz unsupported-filter_flags-2.xz err -6
+xz unsupported-filter_flags-3.xz err -6
+xz words.xz ok 89413 61c67883
+lzma alone-eopm.lzma ok 1206 51516aa0
+lzma alone-known-eopm.lzma ok 1206 51516aa0
+lzma bad-alone-known-long.lzma err -2
+lzma bad-alone-known-short.lzma err -2
+lzma bad-alone-lclp.lzma err -1
+lzma bad-alone-props.lzma err -1
+lzma bad-alone-truncated.lzma short
+lzma empty.lzma ok 0 00000000
+lzma2:65536 raw-lzma2-64k.bin ok 1206 51516aa0
