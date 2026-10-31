@@ -1,0 +1,6 @@
+// mime's sidecar: the C library that rand.goose's extern "c" block opens
+// for getentropy(3) (multipart's random boundaries). "c" is libc.dylib on
+// macOS as it stands; Linux's libc.so is a linker script, so name the
+// library itself.
+dylibs_linux = ["c=libc.so.6"];
+exclude = ["test", "tools", "scripts"];

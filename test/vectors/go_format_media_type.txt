@@ -1,0 +1,20 @@
+# format_media_type: 19 rows of formatTests in $GOROOT/src/mime, by tools/mimeoracle.sh vectors -table format_media_type
+noslash|1|X|Y|noslash; x=Y|=>|noslash; x=Y
+foo bar/baz|\N||=>|
+foo/bar baz|\N||=>|
+attachment|1|filename|\xc4\x84\xc4\x84\xc5\xbd\xc5\xbd\xc4\x8c\xc4\x8c\xc5\xa0\xc5\xa0|attachment; filename*=utf-8''%C4%84%C4%84%C5%BD%C5%BD%C4%8C%C4%8C%C5%A0%C5%A0|=>|attachment; filename*=utf-8''%C4%84%C4%84%C5%BD%C5%BD%C4%8C%C4%8C%C5%A0%C5%A0
+attachment|1|filename|\xc3\x81\xc3\x81\xc3\x8a\xc3\x8a\xc3\x87\xc3\x87\xc3\x8e\xc3\x8e|attachment; filename*=utf-8''%C3%81%C3%81%C3%8A%C3%8A%C3%87%C3%87%C3%8E%C3%8E|=>|attachment; filename*=utf-8''%C3%81%C3%81%C3%8A%C3%8A%C3%87%C3%87%C3%8E%C3%8E
+attachment|1|filename|\xe6\x95\xb0\xe6\x8d\xae\xe7\xbb\x9f\xe8\xae\xa1.png|attachment; filename*=utf-8''%E6%95%B0%E6%8D%AE%E7%BB%9F%E8%AE%A1.png|=>|attachment; filename*=utf-8''%E6%95%B0%E6%8D%AE%E7%BB%9F%E8%AE%A1.png
+foo/BAR|\N|foo/bar|=>|foo/bar
+foo/BAR|1|X|Y|foo/bar; x=Y|=>|foo/bar; x=Y
+foo/BAR|1|space|With space|foo/bar; space="With space"|=>|foo/bar; space="With space"
+foo/BAR|1|quote|With "quote|foo/bar; quote="With \x5c"quote"|=>|foo/bar; quote="With \x5c"quote"
+foo/BAR|1|bslash|With \x5cbackslash|foo/bar; bslash="With \x5c\x5cbackslash"|=>|foo/bar; bslash="With \x5c\x5cbackslash"
+foo/BAR|1|both|With \x5cbackslash and "quote|foo/bar; both="With \x5c\x5cbackslash and \x5c"quote"|=>|foo/bar; both="With \x5c\x5cbackslash and \x5c"quote"
+foo/BAR|1||empty attribute||=>|
+foo/BAR|1|bad attribute|baz||=>|
+foo/BAR|1|nonascii|not an ascii character: \xc3\xa4|foo/bar; nonascii*=utf-8''not%20an%20ascii%20character%3A%20%C3%A4|=>|foo/bar; nonascii*=utf-8''not%20an%20ascii%20character%3A%20%C3%A4
+foo/BAR|1|ctl|newline: \x0a nil: \x00|foo/bar; ctl*=utf-8''newline%3A%20%0A%20nil%3A%20%00|=>|foo/bar; ctl*=utf-8''newline%3A%20%0A%20nil%3A%20%00
+foo/bar|3|a|av|b|bv|c|cv|foo/bar; a=av; b=bv; c=cv|=>|foo/bar; a=av; b=bv; c=cv
+foo/bar|2|0|'|9|'|foo/bar; 0='; 9='|=>|foo/bar; 0='; 9='
+foo|1|bar||foo; bar=""|=>|foo; bar=""

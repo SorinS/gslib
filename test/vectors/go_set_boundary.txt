@@ -1,0 +1,12 @@
+# set_boundary: 11 rows of TestWriterSetBoundary.tests in $GOROOT/src/mime/multipart, by tools/mimeoracle.sh vectors -table set_boundary
+abc|1|=>||multipart/form-data; boundary=abc
+|0|=>|mime: invalid boundary length|
+ung\xc3\xbcltig|0|=>|mime: invalid boundary character|
+!|0|=>|mime: invalid boundary character|
+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx|1|=>||multipart/form-data; boundary=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx|0|=>|mime: invalid boundary length|
+bad!ascii!|0|=>|mime: invalid boundary character|
+my-separator|1|=>||multipart/form-data; boundary=my-separator
+with space|1|=>||multipart/form-data; boundary="with space"
+badspace |0|=>|mime: invalid boundary character|
+(boundary)|1|=>||multipart/form-data; boundary="(boundary)"

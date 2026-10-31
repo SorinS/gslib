@@ -1,0 +1,5 @@
+# consume_token: 4 rows of TestConsumeToken.tests in $GOROOT/src/mime, by tools/mimeoracle.sh vectors -table consume_token
+3|foo bar|foo| bar
+3|bar|bar|
+3|||
+3| foo|| foo

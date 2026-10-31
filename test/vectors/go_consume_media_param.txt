@@ -1,0 +1,12 @@
+# consume_media_param: 11 rows of TestConsumeMediaParam.tests in $GOROOT/src/mime, by tools/mimeoracle.sh vectors -table consume_media_param
+4| ; foo=bar|foo|bar|
+4|; foo=bar|foo|bar|
+4|;foo=bar|foo|bar|
+4|;FOO=bar|foo|bar|
+4|;foo="bar"|foo|bar|
+4|;foo="bar"; |foo|bar|; 
+4|;foo="bar"; foo=baz|foo|bar|; foo=baz
+4| ; boundary=----CUT;|boundary|----CUT|;
+4| ; key=value;  blah="value";name="foo" |key|value|;  blah="value";name="foo" 
+4|;  blah="value";name="foo" |blah|value|;name="foo" 
+4|;name="foo" |name|foo| 

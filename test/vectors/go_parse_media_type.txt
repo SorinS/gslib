@@ -1,0 +1,84 @@
+# parse_media_type: 83 rows of parseMediaTypeTests in $GOROOT/src/mime, by tools/mimeoracle.sh vectors -table parse_media_type
+form-data; name="foo"|form-data|1|name|foo|=>||form-data|1|name|foo
+ form-data ; name=foo|form-data|1|name|foo|=>||form-data|1|name|foo
+FORM-DATA;name="foo"|form-data|1|name|foo|=>||form-data|1|name|foo
+ FORM-DATA ; name="foo"|form-data|1|name|foo|=>||form-data|1|name|foo
+ FORM-DATA ; name="foo"|form-data|1|name|foo|=>||form-data|1|name|foo
+form-data; key=value;  blah="value";name="foo" |form-data|3|blah|value|key|value|name|foo|=>||form-data|3|blah|value|key|value|name|foo
+foo; key=val1; key=the-key-appears-again-which-is-bogus||0|=>|mime: duplicate parameter name||0
+application/x-stuff; title*=us-ascii'en-us'This%20is%20%2A%2A%2Afun%2A%2A%2A|application/x-stuff|1|title|This is ***fun***|=>||application/x-stuff|1|title|This is ***fun***
+message/external-body; access-type=URL; URL*0="ftp://";URL*1="cs.utk.edu/pub/moore/bulk-mailer/bulk-mailer.tar"|message/external-body|2|access-type|URL|url|ftp://cs.utk.edu/pub/moore/bulk-mailer/bulk-mailer.tar|=>||message/external-body|2|access-type|URL|url|ftp://cs.utk.edu/pub/moore/bulk-mailer/bulk-mailer.tar
+application/x-stuff; title*0*=us-ascii'en'This%20is%20even%20more%20; title*1*=%2A%2A%2Afun%2A%2A%2A%20; title*2="isn't it!"|application/x-stuff|1|title|This is even more ***fun*** isn't it!|=>||application/x-stuff|1|title|This is even more ***fun*** isn't it!
+attachment|attachment|0|=>||attachment|0
+ATTACHMENT|attachment|0|=>||attachment|0
+attachment; filename="foo.html"|attachment|1|filename|foo.html|=>||attachment|1|filename|foo.html
+attachment; filename="0000000000111111111122222"|attachment|1|filename|0000000000111111111122222|=>||attachment|1|filename|0000000000111111111122222
+attachment; filename="00000000001111111111222222222233333"|attachment|1|filename|00000000001111111111222222222233333|=>||attachment|1|filename|00000000001111111111222222222233333
+attachment; filename="f\x5coo.html"|attachment|1|filename|f\x5coo.html|=>||attachment|1|filename|f\x5coo.html
+attachment; filename="\x5c"quoting\x5c" tested.html"|attachment|1|filename|"quoting" tested.html|=>||attachment|1|filename|"quoting" tested.html
+attachment; filename="Here's a semicolon;.html"|attachment|1|filename|Here's a semicolon;.html|=>||attachment|1|filename|Here's a semicolon;.html
+attachment; foo="bar"; filename="foo.html"|attachment|2|filename|foo.html|foo|bar|=>||attachment|2|filename|foo.html|foo|bar
+attachment; foo="\x5c"\x5c\x5c";filename="foo.html"|attachment|2|filename|foo.html|foo|"\x5c|=>||attachment|2|filename|foo.html|foo|"\x5c
+attachment; FILENAME="foo.html"|attachment|1|filename|foo.html|=>||attachment|1|filename|foo.html
+attachment; filename=foo.html|attachment|1|filename|foo.html|=>||attachment|1|filename|foo.html
+attachment; filename=foo.html ;|attachment|1|filename|foo.html|=>||attachment|1|filename|foo.html
+attachment; filename='foo.html'|attachment|1|filename|'foo.html'|=>||attachment|1|filename|'foo.html'
+attachment; filename="foo-\xc3\xa4.html"|attachment|1|filename|foo-\xc3\xa4.html|=>||attachment|1|filename|foo-\xc3\xa4.html
+attachment; filename="foo-\xc3\x83\xc2\xa4.html"|attachment|1|filename|foo-\xc3\x83\xc2\xa4.html|=>||attachment|1|filename|foo-\xc3\x83\xc2\xa4.html
+attachment; filename="foo-%41.html"|attachment|1|filename|foo-%41.html|=>||attachment|1|filename|foo-%41.html
+attachment; filename="50%.html"|attachment|1|filename|50%.html|=>||attachment|1|filename|50%.html
+attachment; filename="foo-%\x5c41.html"|attachment|1|filename|foo-%\x5c41.html|=>||attachment|1|filename|foo-%\x5c41.html
+attachment; name="foo-%41.html"|attachment|1|name|foo-%41.html|=>||attachment|1|name|foo-%41.html
+attachment; name="\xc3\xa4-%41.html"|attachment|1|name|\xc3\xa4-%41.html|=>||attachment|1|name|\xc3\xa4-%41.html
+attachment; filename="foo-%c3%a4-%e2%82%ac.html"|attachment|1|filename|foo-%c3%a4-%e2%82%ac.html|=>||attachment|1|filename|foo-%c3%a4-%e2%82%ac.html
+attachment; filename ="foo.html"|attachment|1|filename|foo.html|=>||attachment|1|filename|foo.html
+filename=foo.html||0|=>|mime: expected slash after first token||0
+x=y; filename=foo.html||0|=>|mime: expected slash after first token||0
+"foo; filename=bar;baz"; filename=qux||0|=>|mime: no media type||0
+filename=foo.html, filename=bar.html||0|=>|mime: expected slash after first token||0
+; filename=foo.html||0|=>|mime: no media type||0
+: inline; attachment; filename=foo.html||0|=>|mime: no media type||0
+inline; attachment; filename=foo.html||0|=>|mime: invalid media parameter|inline|0
+attachment; inline; filename=foo.html||0|=>|mime: invalid media parameter|attachment|0
+attachment; filename="foo.html".txt||0|=>|mime: invalid media parameter|attachment|0
+attachment; filename="bar||0|=>|mime: invalid media parameter|attachment|0
+attachment; filename=foo"bar;baz"qux||0|=>|mime: invalid media parameter|attachment|0
+attachment; filename=foo.html, attachment; filename=bar.html||0|=>|mime: invalid media parameter|attachment|0
+attachment; foo=foo filename=bar||0|=>|mime: invalid media parameter|attachment|0
+attachment; filename=bar foo=foo||0|=>|mime: invalid media parameter|attachment|0
+attachment filename=bar||0|=>|mime: expected slash after first token||0
+filename=foo.html; attachment||0|=>|mime: expected slash after first token||0
+attachment; xfilename=foo.html|attachment|1|xfilename|foo.html|=>||attachment|1|xfilename|foo.html
+attachment; creation-date="Wed, 12 Feb 1997 16:29:51 -0500"|attachment|1|creation-date|Wed, 12 Feb 1997 16:29:51 -0500|=>||attachment|1|creation-date|Wed, 12 Feb 1997 16:29:51 -0500
+attachment; modification-date="Wed, 12 Feb 1997 16:29:51 -0500"|attachment|1|modification-date|Wed, 12 Feb 1997 16:29:51 -0500|=>||attachment|1|modification-date|Wed, 12 Feb 1997 16:29:51 -0500
+foobar|foobar|0|=>||foobar|0
+attachment; example="filename=example.txt"|attachment|1|example|filename=example.txt|=>||attachment|1|example|filename=example.txt
+attachment; filename*=UTF-8''foo-%c3%a4-%e2%82%ac.html|attachment|1|filename|foo-\xc3\xa4-\xe2\x82\xac.html|=>||attachment|1|filename|foo-\xc3\xa4-\xe2\x82\xac.html
+attachment; filename*=''foo-%c3%a4-%e2%82%ac.html|attachment|0|=>||attachment|0
+attachment; filename*=UTF-8''foo-a%cc%88.html|attachment|1|filename|foo-a\xcc\x88.html|=>||attachment|1|filename|foo-a\xcc\x88.html
+attachment; filename*= UTF-8''foo-%c3%a4.html|attachment|1|filename|foo-\xc3\xa4.html|=>||attachment|1|filename|foo-\xc3\xa4.html
+attachment; filename* =UTF-8''foo-%c3%a4.html|attachment|1|filename|foo-\xc3\xa4.html|=>||attachment|1|filename|foo-\xc3\xa4.html
+attachment; filename*="UTF-8''foo-%c3%a4.html"|attachment|1|filename|foo-\xc3\xa4.html|=>||attachment|1|filename|foo-\xc3\xa4.html
+attachment; filename*="foo%20bar.html"|attachment|0|=>||attachment|0
+attachment; filename*=UTF-8'foo-%c3%a4.html|attachment|0|=>||attachment|0
+attachment; filename*=UTF-8''foo%|attachment|0|=>||attachment|0
+attachment; filename*=UTF-8''f%oo.html|attachment|0|=>||attachment|0
+attachment; filename*=UTF-8''A-%2541.html|attachment|1|filename|A-%41.html|=>||attachment|1|filename|A-%41.html
+attachment; filename*0="foo."; filename*1="html"|attachment|1|filename|foo.html|=>||attachment|1|filename|foo.html
+attachment; filename*0*=UTF-8''foo-%c3%a4; filename*1=".html"|attachment|1|filename|foo-\xc3\xa4.html|=>||attachment|1|filename|foo-\xc3\xa4.html
+attachment; filename*0="foo"; filename*01="bar"|attachment|1|filename|foo|=>||attachment|1|filename|foo
+attachment; filename*0="foo"; filename*2="bar"|attachment|1|filename|foo|=>||attachment|1|filename|foo
+attachment; filename*1="foo."; filename*2="html"|attachment|0|=>||attachment|0
+attachment; filename*1="bar"; filename*0="foo"|attachment|1|filename|foobar|=>||attachment|1|filename|foobar
+attachment; filename="foo-ae.html"; filename*=UTF-8''foo-%c3%a4.html|attachment|1|filename|foo-\xc3\xa4.html|=>||attachment|1|filename|foo-\xc3\xa4.html
+attachment; filename*=UTF-8''foo-%c3%a4.html; filename="foo-ae.html"|attachment|1|filename|foo-\xc3\xa4.html|=>||attachment|1|filename|foo-\xc3\xa4.html
+attachment; filename*0*=ISO-8859-15''euro-sign%3d%a4; filename*=ISO-8859-1''currency-sign%3d%a4|attachment|0|=>||attachment|0
+attachment; foobar=x; filename="foo.html"|attachment|2|filename|foo.html|foobar|x|=>||attachment|2|filename|foo.html|foobar|x
+form-data; firstname="\xd0\x91\xd1\x80\xd1\x8d\xd0\xb4"; lastname="\xd0\xa4\xd0\xb8\xd1\x86\xd0\xbf\xd0\xb0\xd1\x82\xd1\x80\xd0\xb8\xd0\xba"|form-data|2|firstname|\xd0\x91\xd1\x80\xd1\x8d\xd0\xb4|lastname|\xd0\xa4\xd0\xb8\xd1\x86\xd0\xbf\xd0\xb0\xd1\x82\xd1\x80\xd0\xb8\xd0\xba|=>||form-data|2|firstname|\xd0\x91\xd1\x80\xd1\x8d\xd0\xb4|lastname|\xd0\xa4\xd0\xb8\xd1\x86\xd0\xbf\xd0\xb0\xd1\x82\xd1\x80\xd0\xb8\xd0\xba
+foo; bar=""|foo|1|bar||=>||foo|1|bar|
+form-data; name="file"; filename="C:\x5cdev\x5cgo\x5crobots.txt"|form-data|2|filename|C:\x5cdev\x5cgo\x5crobots.txt|name|file|=>||form-data|2|filename|C:\x5cdev\x5cgo\x5crobots.txt|name|file
+form-data; name="file"; filename="C:\x5c\xe6\x96\xb0\xe5\xbb\xba\xe6\x96\x87\xe4\xbb\xb6\xe5\xa4\xb9\x5c\xe4\xb8\xad\xe6\x96\x87\xe7\xac\xac\xe4\xba\x8c\xe6\xac\xa1\xe6\xb5\x8b\xe8\xaf\x95.mp4"|form-data|2|filename|C:\x5c\xe6\x96\xb0\xe5\xbb\xba\xe6\x96\x87\xe4\xbb\xb6\xe5\xa4\xb9\x5c\xe4\xb8\xad\xe6\x96\x87\xe7\xac\xac\xe4\xba\x8c\xe6\xac\xa1\xe6\xb5\x8b\xe8\xaf\x95.mp4|name|file|=>||form-data|2|filename|C:\x5c\xe6\x96\xb0\xe5\xbb\xba\xe6\x96\x87\xe4\xbb\xb6\xe5\xa4\xb9\x5c\xe4\xb8\xad\xe6\x96\x87\xe7\xac\xac\xe4\xba\x8c\xe6\xac\xa1\xe6\xb5\x8b\xe8\xaf\x95.mp4|name|file
+message/external-body; access-type=URL;\x0a\x09\x09URL*0="ftp://";\x0a\x09\x09URL*1="cs.utk.edu/pub/moore/bulk-mailer/bulk-mailer.tar";|message/external-body|2|access-type|URL|url|ftp://cs.utk.edu/pub/moore/bulk-mailer/bulk-mailer.tar|=>||message/external-body|2|access-type|URL|url|ftp://cs.utk.edu/pub/moore/bulk-mailer/bulk-mailer.tar
+text; charset=utf-8; charset=utf-8; format=fixed|text|2|charset|utf-8|format|fixed|=>||text|2|charset|utf-8|format|fixed
+text; charset=utf-8; format=flowed; charset=utf-8|text|2|charset|utf-8|format|flowed|=>||text|2|charset|utf-8|format|flowed
+attachment; filename={file}.png|attachment|1|filename|{file}.png|=>||attachment|1|filename|{file}.png

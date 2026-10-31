@@ -1,0 +1,9 @@
+# name_accessors: 8 rows of TestNameAccessors.tests in $GOROOT/src/mime/multipart, by tools/mimeoracle.sh vectors -table name_accessors
+3|form-data; name="foo"|foo||=>|foo|
+3| form-data ; name=foo|foo||=>|foo|
+3|FORM-DATA;name="foo"|foo||=>|foo|
+3| FORM-DATA ; name="foo"|foo||=>|foo|
+3| FORM-DATA ; name="foo"|foo||=>|foo|
+3| FORM-DATA ; name=foo|foo||=>|foo|
+3| FORM-DATA ; filename="foo.txt"; name=foo; baz=quux|foo|foo.txt|=>|foo|foo.txt
+3| not-form-data ; filename="bar.txt"; name=foo; baz=quux||bar.txt|=>||bar.txt
