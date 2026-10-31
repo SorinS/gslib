@@ -1,0 +1,6 @@
+*.o
+/tools/*/gooracle
+/tools/gooracle/gooracle
+__pycache__/
+/test/*-native
+.DS_Store
