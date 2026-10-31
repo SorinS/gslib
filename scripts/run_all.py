@@ -16,12 +16,14 @@ import sys
 import time
 
 ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
-LIBS = ["asn1", "bignum", "x509", "tls", "ssh", "ldap", "yaml", "http"]
+# Each library's directory, by its name.
+LIBS = {"asn1": "encoding/asn1", "bignum": "crypto/bignum", "x509": "crypto/x509", "tls": "crypto/tls",
+        "ssh": "crypto/ssh", "ldap": "net/ldap", "yaml": "encoding/yaml", "http": "net/http"}
 
 
 def main():
     args = sys.argv[1:]
-    libs = LIBS
+    libs = list(LIBS)
     if "--only" in args:
         i = args.index("--only")
         libs = [l for l in args[i + 1].split(",") if l]
@@ -33,8 +35,8 @@ def main():
     bad = []
     for lib in libs:
         t0 = time.time()
-        p = subprocess.run([sys.executable, os.path.join(ROOT, lib, "scripts", "run_tests.py"), *args],
-                           cwd=os.path.join(ROOT, lib), capture_output=True, text=True)
+        p = subprocess.run([sys.executable, os.path.join(ROOT, LIBS[lib], "scripts", "run_tests.py"), *args],
+                           cwd=os.path.join(ROOT, LIBS[lib]), capture_output=True, text=True)
         out = p.stdout + p.stderr
         m = re.search(r"(\d+) passed, (\d+) failed", out)
         passed, failed = (int(m.group(1)), int(m.group(2))) if m else (0, 0)
