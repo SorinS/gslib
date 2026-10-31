@@ -1,0 +1,8 @@
+# line_endings: 7 rows of TestVariousTextLineEndings.tests in $GOROOT/src/mime/multipart, by tools/mimeoracle.sh vectors -table line_endings
+1|Foo\x0aBar
+1|Foo\x0aBar\x0a
+1|Foo\x0d\x0aBar
+1|Foo\x0d\x0aBar\x0d\x0a
+1|Foo\x0dBar
+1|Foo\x0dBar\x0d
+1|\x00\x01\x02\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10

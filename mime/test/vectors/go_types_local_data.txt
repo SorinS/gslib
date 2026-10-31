@@ -1,0 +1,6 @@
+# types_local_data: 5 rows of TestTypeByExtension_LocalData.tests in $GOROOT/src/mime, by tools/mimeoracle.sh vectors -table types_local_data
+.Bar|x/bar; capital=1
+.bar|x/bar
+.foo|x/foo
+.sdlkfjskdlfj|
+.t1|

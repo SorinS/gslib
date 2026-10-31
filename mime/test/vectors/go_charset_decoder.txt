@@ -1,0 +1,7 @@
+# charset_decoder: 6 rows of TestCharsetDecoder.tests in $GOROOT/src/mime, by tools/mimeoracle.sh vectors -table charset_decoder
+=?utf-8?b?Q2Fmw6k=?=|Caf\xc3\xa9|\N|\N
+=?ISO-8859-1?Q?caf=E9?=|caf\xc3\xa9|\N|\N
+=?US-ASCII?Q?foo_bar?=|foo bar|\N|\N
+=?utf-8?Q?=?=|=?utf-8?Q?=?=|\N|\N
+=?utf-8?Q?=A?=|=?utf-8?Q?=A?=|\N|\N
+=?ISO-8859-15?Q?f=F5=F6?=  =?windows-1252?Q?b=E0r?=|f\xf5\xf6b\xe0r|2|iso-8859-15|windows-1252|2|f\xf5\xf6|b\xe0r

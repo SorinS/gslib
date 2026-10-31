@@ -1,0 +1,15 @@
+# encode_word: 14 rows of TestEncodeWord.tests in $GOROOT/src/mime, by tools/mimeoracle.sh vectors -table encode_word
+113|utf-8|Fran\xc3\xa7ois-J\xc3\xa9r\xc3\xb4me|=?utf-8?q?Fran=C3=A7ois-J=C3=A9r=C3=B4me?=|=>|=?utf-8?q?Fran=C3=A7ois-J=C3=A9r=C3=B4me?=
+98|utf-8|Caf\xc3\xa9|=?utf-8?b?Q2Fmw6k=?=|=>|=?utf-8?b?Q2Fmw6k=?=
+113|iso-8859-1|La Sele\xc3\xa7\xc3\xa3o|=?iso-8859-1?q?La_Sele=C3=A7=C3=A3o?=|=>|=?iso-8859-1?q?La_Sele=C3=A7=C3=A3o?=
+113|utf-8|||=>|
+113|utf-8|A|A|=>|A
+113|iso-8859-1|a|a|=>|a
+113|utf-8|123 456|123 456|=>|123 456
+113|utf-8|\x09 !"#$%&'()*+,-./ :;<>?@[\x5c]^_`{\x7c}~|\x09 !"#$%&'()*+,-./ :;<>?@[\x5c]^_`{\x7c}~|=>|\x09 !"#$%&'()*+,-./ :;<>?@[\x5c]^_`{\x7c}~
+113|utf-8|\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9|=?utf-8?q?=C3=A9=C3=A9=C3=A9=C3=A9=C3=A9=C3=A9=C3=A9=C3=A9=C3=A9=C3=A9?=|=>|=?utf-8?q?=C3=A9=C3=A9=C3=A9=C3=A9=C3=A9=C3=A9=C3=A9=C3=A9=C3=A9=C3=A9?=
+113|utf-8|\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9|=?utf-8?q?=C3=A9=C3=A9=C3=A9=C3=A9=C3=A9=C3=A9=C3=A9=C3=A9=C3=A9=C3=A9?= =?utf-8?q?=C3=A9?=|=>|=?utf-8?q?=C3=A9=C3=A9=C3=A9=C3=A9=C3=A9=C3=A9=C3=A9=C3=A9=C3=A9=C3=A9?= =?utf-8?q?=C3=A9?=
+113|iso-8859-1|\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9|=?iso-8859-1?q?=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9?=|=>|=?iso-8859-1?q?=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9=E9?=
+113|utf-8|\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80|=?utf-8?q?=80=80=80=80=80=80=80=80=80=80=80=80=80=80=80=80=80=80=80=80=80?= =?utf-8?q?=80?=|=>|=?utf-8?q?=80=80=80=80=80=80=80=80=80=80=80=80=80=80=80=80=80=80=80=80=80?= =?utf-8?q?=80?=
+98|iso-8859-1|\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9\xe9|=?iso-8859-1?b?6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp?=|=>|=?iso-8859-1?b?6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp?=
+98|utf-8|\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80|=?utf-8?b?gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA?= =?utf-8?b?gICA?=|=>|=?utf-8?b?gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA?= =?utf-8?b?gICA?=

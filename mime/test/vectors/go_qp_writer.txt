@@ -1,0 +1,30 @@
+# qp_writer: 29 rows of testWriter.tests in $GOROOT/src/mime/quotedprintable, by tools/mimeoracle.sh vectors -table qp_writer
+|||=>||
+foo bar|foo bar||=>|foo bar|foo bar
+foo bar=|foo bar=3D||=>|foo bar=3D|foo bar=3D
+foo bar\x0d|foo bar\x0d\x0a|foo bar=0D|=>|foo bar\x0d\x0a|foo bar=0D
+foo bar\x0d\x0d|foo bar\x0d\x0a\x0d\x0a|foo bar=0D=0D|=>|foo bar\x0d\x0a\x0d\x0a|foo bar=0D=0D
+foo bar\x0a|foo bar\x0d\x0a|foo bar=0A|=>|foo bar\x0d\x0a|foo bar=0A
+foo bar\x0d\x0a|foo bar\x0d\x0a|foo bar=0D=0A|=>|foo bar\x0d\x0a|foo bar=0D=0A
+foo bar\x0d\x0d\x0a|foo bar\x0d\x0a\x0d\x0a|foo bar=0D=0D=0A|=>|foo bar\x0d\x0a\x0d\x0a|foo bar=0D=0D=0A
+foo bar |foo bar=20||=>|foo bar=20|foo bar=20
+foo bar\x09|foo bar=09||=>|foo bar=09|foo bar=09
+foo bar  |foo bar =20||=>|foo bar =20|foo bar =20
+foo bar \x0a|foo bar=20\x0d\x0a|foo bar =0A|=>|foo bar=20\x0d\x0a|foo bar =0A
+foo bar \x0d|foo bar=20\x0d\x0a|foo bar =0D|=>|foo bar=20\x0d\x0a|foo bar =0D
+foo bar \x0d\x0a|foo bar=20\x0d\x0a|foo bar =0D=0A|=>|foo bar=20\x0d\x0a|foo bar =0D=0A
+foo bar  \x0a|foo bar =20\x0d\x0a|foo bar  =0A|=>|foo bar =20\x0d\x0a|foo bar  =0A
+foo bar  \x0a |foo bar =20\x0d\x0a=20|foo bar  =0A=20|=>|foo bar =20\x0d\x0a=20|foo bar  =0A=20
+\xc2\xa1Hola Se\xc3\xb1or!|=C2=A1Hola Se=C3=B1or!||=>|=C2=A1Hola Se=C3=B1or!|=C2=A1Hola Se=C3=B1or!
+\x09 !"#$%&'()*+,-./ :;<>?@[\x5c]^_`{\x7c}~|\x09 !"#$%&'()*+,-./ :;<>?@[\x5c]^_`{\x7c}~||=>|\x09 !"#$%&'()*+,-./ :;<>?@[\x5c]^_`{\x7c}~|\x09 !"#$%&'()*+,-./ :;<>?@[\x5c]^_`{\x7c}~
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa||=>|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=\x0d\x0aa||=>|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=\x0d\x0aa|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=\x0d\x0aa
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=3D||=>|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=3D|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=3D
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=\x0d\x0a=3D||=>|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=\x0d\x0a=3D|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=\x0d\x0a=3D
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=\x0d\x0a=3D||=>|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=\x0d\x0a=3D|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=\x0d\x0a=3D
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=\x0d\x0a=3D||=>|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=\x0d\x0a=3D|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=\x0d\x0a=3D
+                                                                         |                                                                        =20||=>|                                                                        =20|                                                                        =20
+                                                                          |                                                                         =\x0d\x0a=20||=>|                                                                         =\x0d\x0a=20|                                                                         =\x0d\x0a=20
+                                                                           |                                                                          =\x0d\x0a=20||=>|                                                                          =\x0d\x0a=20|                                                                          =\x0d\x0a=20
+                                                                            |                                                                           =\x0d\x0a=20||=>|                                                                           =\x0d\x0a=20|                                                                           =\x0d\x0a=20
+                                                                             |                                                                           =\x0d\x0a =20||=>|                                                                           =\x0d\x0a =20|                                                                           =\x0d\x0a =20

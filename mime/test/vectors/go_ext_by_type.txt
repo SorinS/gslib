@@ -1,0 +1,5 @@
+# ext_by_type: 4 rows of TestExtensionsByType.tests in $GOROOT/src/mime, by tools/mimeoracle.sh vectors -table ext_by_type
+image/gif|1|.gif|
+image/png|1|.png|
+foo/letter|2|.a|.b|
+x/unknown|\N|

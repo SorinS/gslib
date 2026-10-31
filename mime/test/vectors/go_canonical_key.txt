@@ -1,0 +1,15 @@
+# canonical_key: 14 rows of canonicalHeaderKeyTests in $GOROOT/src/net/textproto, by tools/mimeoracle.sh vectors -table canonical_key
+a-b-c|A-B-C|=>|A-B-C
+a-1-c|A-1-C|=>|A-1-C
+User-Agent|User-Agent|=>|User-Agent
+uSER-aGENT|User-Agent|=>|User-Agent
+user-agent|User-Agent|=>|User-Agent
+USER-AGENT|User-Agent|=>|User-Agent
+foo-bar_baz|Foo-Bar_baz|=>|Foo-Bar_baz
+foo-bar$baz|Foo-Bar$baz|=>|Foo-Bar$baz
+foo-bar~baz|Foo-Bar~baz|=>|Foo-Bar~baz
+foo-bar*baz|Foo-Bar*baz|=>|Foo-Bar*baz
+\xc3\xbcser-agenT|\xc3\xbcser-agenT|=>|\xc3\xbcser-agenT
+a B|a B|=>|a B
+C Ontent-Transfer-Encoding|C Ontent-Transfer-Encoding|=>|C Ontent-Transfer-Encoding
+foo bar|foo bar|=>|foo bar

@@ -1,0 +1,13 @@
+# header_malformed: 12 rows of TestReadMIMEHeaderMalformed.inputs in $GOROOT/src/net/textproto, by tools/mimeoracle.sh vectors -table header_malformed
+1|No colon first line\x0d\x0aFoo: foo\x0d\x0a\x0d\x0a|=>|malformed MIME header: missing colon: "No colon first line"|0
+1| No colon first line with leading space\x0d\x0aFoo: foo\x0d\x0a\x0d\x0a|=>|malformed MIME header initial line: " No colon first line with leading space"|0
+1|\x09No colon first line with leading tab\x0d\x0aFoo: foo\x0d\x0a\x0d\x0a|=>|malformed MIME header initial line: "\x5ctNo colon first line with leading tab"|0
+1| First: line with leading space\x0d\x0aFoo: foo\x0d\x0a\x0d\x0a|=>|malformed MIME header initial line: " First: line with leading space"|0
+1|\x09First: line with leading tab\x0d\x0aFoo: foo\x0d\x0a\x0d\x0a|=>|malformed MIME header initial line: "\x5ctFirst: line with leading tab"|0
+1|Foo: foo\x0d\x0aNo colon second line\x0d\x0a\x0d\x0a|=>|malformed MIME header: missing colon: "No colon second line"|1|Foo|1|foo
+1|Foo-\x0a\x09Bar: foo\x0d\x0a\x0d\x0a|=>|malformed MIME header: missing colon: "Foo-"|0
+1|Foo-\x0d\x0a\x09Bar: foo\x0d\x0a\x0d\x0a|=>|malformed MIME header: missing colon: "Foo-"|0
+1|Foo\x0d\x0a\x09: foo\x0d\x0a\x0d\x0a|=>|malformed MIME header: missing colon: "Foo"|0
+1|Foo-\x0a\x09Bar|=>|malformed MIME header: missing colon: "Foo-"|0
+1|Foo \x09Bar: foo\x0d\x0a\x0d\x0a|=>|malformed MIME header line: "Foo \x5ctBar: foo"|0
+1|: empty key\x0d\x0a\x0d\x0a|=>|malformed MIME header line: ": empty key"|0

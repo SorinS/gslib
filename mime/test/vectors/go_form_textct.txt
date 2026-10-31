@@ -1,0 +1,2 @@
+# form_textct: 1 rows of messageWithTextContentType in $GOROOT/src/mime/multipart, by tools/mimeoracle.sh vectors -table form_textct
+1|\x0a--MyBoundary\x0aContent-Disposition: form-data; name="texta"\x0aContent-Type: text/plain\x0a\x0afoo\x0a--MyBoundary\x0a|=>||1|texta|1|foo|0

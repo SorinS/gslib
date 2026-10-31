@@ -1,0 +1,2 @@
+# multipart_body: 1 rows of testMultipartBody.testBody in $GOROOT/src/mime/multipart, by tools/mimeoracle.sh vectors -table multipart_body
+1|\x0aThis is a multi-part message.  This line is ignored.\x0a--MyBoundary\x0aHeader1: value1\x0aHEADER2: value2\x0afoo-bar: baz\x0a\x0aMy value\x0aThe end.\x0a--MyBoundary\x0aname: bigsection\x0a\x0a[longline]\x0a--MyBoundary\x0aHeader1: value1b\x0aHEADER2: value2b\x0afoo-bar: bazb\x0a\x0aLine 1\x0aLine 2\x0aLine 3 ends in a newline, but just one.\x0a\x0a--MyBoundary\x0a\x0anever read data\x0a--MyBoundary--\x0a\x0a\x0auseless trailer\x0a

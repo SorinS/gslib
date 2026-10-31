@@ -1,0 +1,14 @@
+# decode_word: 13 rows of TestDecodeWord.tests in $GOROOT/src/mime, by tools/mimeoracle.sh vectors -table decode_word
+=?UTF-8?Q?=C2=A1Hola,_se=C3=B1or!?=|\xc2\xa1Hola, se\xc3\xb1or!|0|=>|\xc2\xa1Hola, se\xc3\xb1or!|
+=?UTF-8?Q?Fran=C3=A7ois-J=C3=A9r=C3=B4me?=|Fran\xc3\xa7ois-J\xc3\xa9r\xc3\xb4me|0|=>|Fran\xc3\xa7ois-J\xc3\xa9r\xc3\xb4me|
+=?UTF-8?q?ascii?=|ascii|0|=>|ascii|
+=?utf-8?B?QW5kcsOp?=|Andr\xc3\xa9|0|=>|Andr\xc3\xa9|
+=?ISO-8859-1?Q?Rapha=EBl_Dupont?=|Rapha\xc3\xabl Dupont|0|=>|Rapha\xc3\xabl Dupont|
+=?utf-8?b?IkFudG9uaW8gSm9zw6kiIDxqb3NlQGV4YW1wbGUub3JnPg==?=|"Antonio Jos\xc3\xa9" <jose@example.org>|0|=>|"Antonio Jos\xc3\xa9" <jose@example.org>|
+=?UTF-8?A?Test?=||1|=>||mime: invalid RFC 2047 encoded-word
+=?UTF-8?Q?A=B?=||1|=>||mime: invalid RFC 2047 encoded-word
+=?UTF-8?Q?=A?=||1|=>||mime: invalid RFC 2047 encoded-word
+=?UTF-8?A?A?=||1|=>||mime: invalid RFC 2047 encoded-word
+=????=||1|=>||mime: invalid RFC 2047 encoded-word
+=?UTF-8???=||1|=>||mime: invalid RFC 2047 encoded-word
+=?UTF-8?Q??=||0|=>||

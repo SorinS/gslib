@@ -1,0 +1,32 @@
+# qp_reader: 31 rows of TestReader.tests in $GOROOT/src/mime/quotedprintable, by tools/mimeoracle.sh vectors -table qp_reader
+||\N|=>||
+foo bar|foo bar|\N|=>|foo bar|
+foo bar=3D|foo bar=|\N|=>|foo bar=|
+foo bar=3d|foo bar=|\N|=>|foo bar=|
+foo bar=\x0a|foo bar|\N|=>|foo bar|
+foo bar\x0a|foo bar\x0a|\N|=>|foo bar\x0a|
+foo bar=0|foo bar=0|\N|=>|foo bar=0|
+foo bar=0D=0A|foo bar\x0d\x0a|\N|=>|foo bar\x0d\x0a|
+ A B        \x0d\x0a C | A B\x0d\x0a C|\N|=>| A B\x0d\x0a C|
+ A B =\x0d\x0a C | A B  C|\N|=>| A B  C|
+ A B =\x0a C | A B  C|\N|=>| A B  C|
+foo=\x0abar|foobar|\N|=>|foobar|
+foo\x00bar|foo|quotedprintable: invalid unescaped byte 0x00 in body|=>|foo|quotedprintable: invalid unescaped byte 0x00 in body
+foo bar\xff|foo bar\xff|\N|=>|foo bar\xff|
+=3D30\x0a|=30\x0a|\N|=>|=30\x0a|
+=00=FF0=\x0a|\x00\xff0|\N|=>|\x00\xff0|
+foo  \x0a|foo\x0a|\N|=>|foo\x0a|
+foo  \x0a\x0afoo =\x0a\x0afoo=20\x0a\x0a|foo\x0a\x0afoo \x0afoo \x0a\x0a|\N|=>|foo\x0a\x0afoo \x0afoo \x0a\x0a|
+foo\x0abar|foo\x0abar|\N|=>|foo\x0abar|
+foo\x0dbar|foo\x0dbar|\N|=>|foo\x0dbar|
+foo\x0d\x0abar|foo\x0d\x0abar|\N|=>|foo\x0d\x0abar|
+foo=\x0d\x0abar|foobar|\N|=>|foobar|
+foo=\x0abar|foobar|\N|=>|foobar|
+foo=\x0dbar|foo|quotedprintable: invalid hex byte 0x0d|=>|foo|quotedprintable: invalid hex byte 0x0d
+foo=\x0d\x0d\x0d \x0abar|foo|quotedprintable: invalid bytes after =: "\x5cr\x5cr\x5cr \x5cn"|=>|foo|quotedprintable: invalid bytes after =: "\x5cr\x5cr\x5cr \x5cn"
+foo=|foo|\N|=>|foo|
+=||quotedprintable: invalid bytes after =: ""|=>||quotedprintable: invalid bytes after =: ""
+Now's the time =\x0afor all folk to come=\x0a to the aid of their country.|Now's the time for all folk to come to the aid of their country.|\N|=>|Now's the time for all folk to come to the aid of their country.|
+accept UTF-8 right quotation mark: \xe2\x80\x99|accept UTF-8 right quotation mark: \xe2\x80\x99|\N|=>|accept UTF-8 right quotation mark: \xe2\x80\x99|
+foo= \x0d\x0abar|foobar|\N|=>|foobar|
+foo=\x09 \x0d\x0abar|foobar|\N|=>|foobar|

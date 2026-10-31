@@ -1,0 +1,14 @@
+# bad_media_type: 13 rows of badMediaTypeTests in $GOROOT/src/mime, by tools/mimeoracle.sh vectors -table bad_media_type
+bogus ;=========|bogus|mime: invalid media parameter|=>|mime: invalid media parameter|bogus|0
+application/pdf; x-mac-type="3F3F3F3F"; x-mac-creator="3F3F3F3F" name="a.pdf";|application/pdf|mime: invalid media parameter|=>|mime: invalid media parameter|application/pdf|0
+bogus/<script>alert</script>||mime: expected token after slash|=>|mime: expected token after slash||0
+bogus/bogus<script>alert</script>||mime: unexpected content after media subtype|=>|mime: unexpected content after media subtype||0
+"attachment"|attachment|mime: no media type|=>|mime: no media type||0
+attachment; filename=foo,bar.html|attachment|mime: invalid media parameter|=>|mime: invalid media parameter|attachment|0
+attachment; ;filename=foo|attachment|mime: invalid media parameter|=>|mime: invalid media parameter|attachment|0
+attachment; filename=foo bar.html|attachment|mime: invalid media parameter|=>|mime: invalid media parameter|attachment|0
+attachment; filename="foo.html"; filename="bar.html"|attachment|mime: duplicate parameter name|=>|mime: duplicate parameter name||0
+attachment; filename=foo[1](2).html|attachment|mime: invalid media parameter|=>|mime: invalid media parameter|attachment|0
+attachment; filename=foo-\xc3\xa4.html|attachment|mime: invalid media parameter|=>|mime: invalid media parameter|attachment|0
+attachment; filename=foo-\xc3\x83\xc2\xa4.html|attachment|mime: invalid media parameter|=>|mime: invalid media parameter|attachment|0
+attachment; filename *=UTF-8''foo-%c3%a4.html|attachment|mime: invalid media parameter|=>|mime: invalid media parameter|attachment|0

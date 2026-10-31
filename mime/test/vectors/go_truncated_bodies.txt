@@ -1,0 +1,3 @@
+# truncated_bodies: 2 rows of TestMultipartTruncated.body in $GOROOT/src/mime/multipart, by tools/mimeoracle.sh vectors -table truncated_bodies
+1|\x0aThis is a multi-part message.  This line is ignored.\x0a--MyBoundary\x0afoo-bar: baz\x0a\x0aOh no, premature EOF!\x0a|=>|1|1|Foo-Bar|1|baz|Oh no, premature EOF!|body: unexpected EOF
+1|\x0aThis is a multi-part message.  This line is ignored.\x0a--MyBoundary\x0afoo-bar: baz\x0a\x0aOh no, premature EOF!\x0a--MyBoundary-|=>|1|1|Foo-Bar|1|baz|Oh no, premature EOF!\x0d\x0a--MyBoundary-|body: unexpected EOF

@@ -1,0 +1,7 @@
+# file_disposition: 6 rows of TestFileContentDisposition.tests in $GOROOT/src/mime/multipart, by tools/mimeoracle.sh vectors -table file_disposition
+somefield|somefile.txt|form-data; name="somefield"; filename="somefile.txt"|=>|form-data; name="somefield"; filename="somefile.txt"
+field"withquotes"|somefile.txt|form-data; name="field\x5c"withquotes\x5c""; filename="somefile.txt"|=>|form-data; name="field\x5c"withquotes\x5c""; filename="somefile.txt"
+somefield|somefile"withquotes".txt|form-data; name="somefield"; filename="somefile\x5c"withquotes\x5c".txt"|=>|form-data; name="somefield"; filename="somefile\x5c"withquotes\x5c".txt"
+somefield\x5cwithbackslash|somefile.txt|form-data; name="somefield\x5c\x5cwithbackslash"; filename="somefile.txt"|=>|form-data; name="somefield\x5c\x5cwithbackslash"; filename="somefile.txt"
+somefield|somefile\x5cwithbackslash.txt|form-data; name="somefield"; filename="somefile\x5c\x5cwithbackslash.txt"|=>|form-data; name="somefield"; filename="somefile\x5c\x5cwithbackslash.txt"
+a\x0db\x0ac|e\x0df\x0ag|form-data; name="a%0Db%0Ac"; filename="e%0Df%0Ag"|=>|form-data; name="a%0Db%0Ac"; filename="e%0Df%0Ag"

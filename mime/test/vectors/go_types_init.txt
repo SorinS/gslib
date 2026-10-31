@@ -1,0 +1,4 @@
+# types_init: 3 rows of initMimeForTests.return in $GOROOT/src/mime, by tools/mimeoracle.sh vectors -table types_init
+.T1|application/test
+.png|image/png
+.t2|text/test; charset=utf-8
