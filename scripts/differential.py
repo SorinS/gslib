@@ -11,6 +11,9 @@ multipart bodies in pseudo-random pieces) answer each, and compares the
 answers byte for byte. Differences are reported by kind, with examples.
 
     python3 scripts/differential.py [-n CASES] [--seed S] [--kinds k,k] [--goose PATH]
+
+The kind "alltypes" asks for every extension and type of the system's
+tables (and Go's built-in one) rather than a random sample.
 """
 
 import argparse
@@ -399,6 +402,14 @@ def system_extensions():
                         if e.startswith("#"):
                             break
                         exts.add("." + e)
+    for path in ["/usr/local/share/mime/globs2", "/usr/share/mime/globs2"]:
+        if os.path.exists(path):
+            for line in open(path, encoding="latin-1"):
+                f = line.rstrip("\n").split(":")
+                if len(f) >= 3 and not f[0].startswith("#"):
+                    types.add(f[1])
+                    if f[2].startswith("*."):
+                        exts.add(f[2][1:])
     for line in open(os.path.join(ROOT, "types_builtin.goose")):
         if "KV { key:" in line:
             k = line.split('"')[1]
@@ -461,6 +472,12 @@ def main():
     goose = find_goose(args.goose)
     cases = []
     for k in args.kinds.split(","):
+        if k == "alltypes":  # every extension (and its upper case) and every type the system has
+            for e in EXTS:
+                cases += [["type", e.encode()], ["type", e.upper().encode()]]
+            for t in TYPES:
+                cases.append(["exts", t.encode()])
+            continue
         for _ in range(args.n * WEIGHT.get(k, 1)):
             cases.append(KINDS[k]())
     lines = "".join("|".join([c[0]] + [esc(x) for x in c[1:]]) + "\n" for c in cases)
