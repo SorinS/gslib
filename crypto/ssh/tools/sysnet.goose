@@ -17,8 +17,10 @@ extern fn net_poll_set(fds: const i32[:], ready: u8[:], timeout_ms: i32) -> i32;
 // The same, waiting instead for fds[i] to take a write where write[i] != 0.
 extern fn net_poll_rw(fds: const i32[:], write: const u8[:], ready: u8[:], timeout_ms: i32) -> i32;
 extern fn net_read(fd: i32, buf: u8[:]) -> i64;
+// All of data (waiting while a non-blocking fd is full), or -1.
 extern fn net_write(fd: i32, data: const u8[:]) -> i64;
-// One write of what fits: bytes written, 0 when a non-blocking fd is full, -1 on error.
+// One write of what fits: bytes written, 0 when the fd is full (a socket's
+// write never waits, another fd's unless non-blocking), -1 on error.
 extern fn net_write_some(fd: i32, data: const u8[:]) -> i64;
 extern fn net_close(fd: i32);
 extern fn net_shutdown_write(fd: i32);
@@ -44,7 +46,8 @@ extern fn proc_end(pid: i32) -> i32;
 extern fn proc_fork() -> i32;
 extern fn proc_reap();
 extern fn proc_exit(code: i32);
-// argv: each argument ended by a NUL. to_fd is its stdin, from_fd its stdout.
+// argv: each argument ended by a NUL. to_fd is its stdin (non-blocking),
+// from_fd its stdout.
 extern fn proc_pipe(argv: const u8[:], to_fd: i32&, from_fd: i32&) -> i32;
 extern fn proc_pipe_end(pid: i32) -> i32;
 

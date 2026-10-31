@@ -119,12 +119,17 @@ int64_t net_read(int32_t fd, net_buf buf) {
     return n < 0 ? -1 : (int64_t)n;
 }
 
-/* All of data, or -1. */
+/* All of data, or -1: on a non-blocking fd too, waiting while it is full. */
 int64_t net_write(int32_t fd, net_slice data) {
     int64_t off = 0;
     while (off < data.len) {
         ssize_t n = write(fd, data.data + off, (size_t)(data.len - off));
         if (n < 0 && errno == EINTR) continue;
+        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            struct pollfd p = { fd, POLLOUT, 0 };
+            if (poll(&p, 1, -1) < 0 && errno != EINTR) return -1;
+            continue;
+        }
         if (n <= 0) return -1;
         off += n;
     }
@@ -175,11 +180,15 @@ int32_t net_poll_set(net_fds fds, net_buf ready, int32_t timeout_ms) {
     return net_poll_rw(fds, none, ready, timeout_ms);
 }
 
-/* One write of what fits: how many bytes went, 0 when a non-blocking fd
-   is full, -1 on error (a closed reader among them). */
+/* One write of what fits: how many bytes went, 0 when the fd is full (a
+   socket's write never waits; any other fd's does unless it is
+   non-blocking), -1 on error (a closed reader among them). */
 int64_t net_write_some(int32_t fd, net_slice data) {
     ssize_t n;
-    do { n = write(fd, data.data, (size_t)data.len); } while (n < 0 && errno == EINTR);
+    do {
+        n = send(fd, data.data, (size_t)data.len, MSG_DONTWAIT);
+        if (n < 0 && errno == ENOTSOCK) n = write(fd, data.data, (size_t)data.len);
+    } while (n < 0 && errno == EINTR);
     if (n < 0) return errno == EAGAIN || errno == EWOULDBLOCK ? 0 : -1;
     return (int64_t)n;
 }
@@ -464,7 +473,8 @@ int32_t proc_end(int32_t pid) {
 /* A client's proxy (-J, ProxyCommand): argv, its arguments each ended by
    a NUL, run with its stdin and stdout on pipes and its stderr and terminal
    ours, in this directory. The pipes' ends through to_fd (its stdin) and
-   from_fd (its stdout), both blocking; the pid, or -1. */
+   from_fd (its stdout); to_fd is non-blocking (net_write waits on it,
+   net_write_some does not). The pid, or -1. */
 int32_t proc_pipe(net_slice argv, int32_t *to_fd, int32_t *from_fd) {
     char buf[65536];
     char *av[256];
@@ -492,6 +502,7 @@ int32_t proc_pipe(net_slice argv, int32_t *to_fd, int32_t *from_fd) {
     }
     close(pin[0]);
     close(pout[1]);
+    fcntl(pin[1], F_SETFL, fcntl(pin[1], F_GETFL) | O_NONBLOCK);
     *to_fd = pin[1];
     *from_fd = pout[0];
     return pid;

@@ -119,6 +119,26 @@ fn send_all(sock: i32, out: u8[>..]&) -> bool {
     return n >= 0;
 }
 
+// Past this much unsent, stdin waits.
+let OUT_BACKLOG: i64 = 262144;
+
+// Sends what the way to the server takes now, keeping the rest: a write
+// that waited could wait forever on a proxy that is itself waiting for us
+// to read what it wrote. false on error.
+fn send_some(fd: i32, out: u8[>..]&) -> bool {
+    if out.len == 0 { return true; }
+    let n = sysnet::net_write_some(fd, out);
+    if n < 0 { return false; }
+    if n == out.len { out.clear(); }
+    else if n > 0 {
+        var rest: u8[>..] = [];
+        rest.append(out[n..]);
+        out.clear();
+        out.append(rest);
+    }
+    return true;
+}
+
 fn run() -> i32 {
     sysnet::net_init();
     let a = args();
@@ -201,15 +221,19 @@ fn run() -> i32 {
     var remote: u8[>..] = [];
     var remote_pending: u8[>..] = [];
     while !s.done {
-        // Wait for the socket, stdin once the session runs, and the forwards.
-        let watch_stdin = s.opened && !s.stdin_eof && s.pending.len == 0;
+        // Wait for the socket, stdin once the session runs, the forwards,
+        // and, while some is unsent, the way to the server to take more.
+        let watch_stdin = s.opened && !s.stdin_eof && s.pending.len == 0 && out.len < OUT_BACKLOG;
         var fds: i32[>..] = [];
         fds.push(sock);
         fds.push(if watch_stdin { 0 } else { -1 });
         relay::poll_fds(rl, c, fds);
+        var write: u8[>..] = [];
+        write.resize(fds.len, 0);
+        if out.len > 0 { fds.push(t.wfd); write.push(1); }
         var flags: u8[>..] = [];
         flags.resize(fds.len, 0);
-        let nready = sysnet::net_poll_set(fds, flags, 500);
+        let nready = sysnet::net_poll_rw(fds, write, flags, 500);
         let ready = (if flags[0] != 0 { 1 } else { 0 }) | (if flags[1] != 0 { 2 } else { 0 });
         var events: u8[>..] = [];
         if (ready & 1) != 0 {
@@ -376,13 +400,13 @@ fn run() -> i32 {
         // The forwards' sockets.
         relay::service(rl, c, fds, flags, 2, out);
         // stdin into the channel, as its window allows.
-        if s.pending.len > 0 && s.opened && !ssh::closed(c) {
+        if s.pending.len > 0 && s.opened && !ssh::closed(c) && out.len < OUT_BACKLOG {
             let n = ssh::channel_send(c, s.ch, s.pending, out);
             var rest: u8[..65536] = [];
             rest.append(s.pending[n..]);
             s.pending = rest;
         }
-        if !send_all(t.wfd, out) { s.failed = true; break; }
+        if !send_some(t.wfd, out) { s.failed = true; break; }
         if ssh::failed(c) {
             s.failed = true;
             break;

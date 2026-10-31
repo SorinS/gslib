@@ -121,7 +121,11 @@ def wait_port(port, timeout=10):
 
 
 def run(cmd, stdin=b"", env=None, timeout=120):
-    p = subprocess.run(cmd, input=stdin, capture_output=True, env=env, timeout=timeout)
+    """rc None when it ran past timeout (killed): a hang is a failed check, not the end of the run."""
+    try:
+        p = subprocess.run(cmd, input=stdin, capture_output=True, env=env, timeout=timeout)
+    except subprocess.TimeoutExpired as e:
+        return None, e.stdout or b"", (e.stderr or b"") + b" [timed out]"
     return p.returncode, p.stdout, p.stderr
 
 
@@ -189,12 +193,9 @@ def main():
     # A FIFO with no writer: refused at once as not a regular file, not
     # waited on (open without O_NONBLOCK would block).
     os.mkfifo(k("fifo_host"), 0o600)
-    try:
-        rc, _, err = run([k("goose-sshd"), "-p", str(free_port()), "-h", k("fifo_host"), "-k", k("authorized_keys")],
-                         timeout=10)
-        check("sshd: a FIFO host key is refused at once", rc != 0 and b"not a regular file" in err, err.decode())
-    except subprocess.TimeoutExpired:
-        check("sshd: a FIFO host key is refused at once", False, "blocked for 10 s")
+    rc, _, err = run([k("goose-sshd"), "-p", str(free_port()), "-h", k("fifo_host"), "-k", k("authorized_keys")],
+                     timeout=10)
+    check("sshd: a FIFO host key is refused at once", rc is not None and rc != 0 and b"not a regular file" in err, err.decode())
     # A directory, and a key file too long to be one.
     os.mkdir(k("dir_host"), 0o700)
     rc, _, err = run([k("goose-sshd"), "-p", str(free_port()), "-h", k("dir_host"), "-k", k("authorized_keys")],
@@ -702,9 +703,12 @@ def proxy_cases(k, p_goose, p_openssh, p_go):
     check("goose-ssh -J two hops (goose-sshd, then OpenSSH sshd) to goose-sshd", rc == 0 and out == b"two\n", (rc, out, err))
     rc, out, err = run([*g, "-o", f"ProxyJump={USER}@{lo}:{p_goose}", "-p", str(p_openssh), lo, "echo", "pj"])
     check("goose-ssh -o ProxyJump=user@host:port", rc == 0 and out == b"pj\n", (rc, out, err))
+    # Both ways at once, through the proxy's pipes: three times, as a write
+    # that waits on the proxy deadlocks only some of the time.
     data = os.urandom(3 * 1024 * 1024)
-    rc, out, err = run([*g, "-J", f"{lo}:{p_goose}", "-p", str(p_openssh), lo, "cat"], stdin=data)
-    check("goose-ssh -J: 3 MB through cat", rc == 0 and out == data, (rc, len(out), err[-200:]))
+    for i in range(3):
+        rc, out, err = run([*g, "-J", f"{lo}:{p_goose}", "-p", str(p_openssh), lo, "cat"], stdin=data, timeout=60)
+        check(f"goose-ssh -J: 3 MB through cat ({i + 1})", rc == 0 and out == data, (rc, len(out), err[-200:]))
     with open(k("jump_src"), "wb") as f:
         f.write(data)
     rc, out, err = run([k("goose-scp"), *g[1:], "-J", f"{lo}:{p_goose}", "-P", str(p_openssh), k("jump_src"),
