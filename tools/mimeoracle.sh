@@ -2,7 +2,7 @@
 # Builds tools/mimeoracle (Go's mime packages as the oracle) offline and runs
 # it with these arguments; see tools/mimeoracle/main.go.
 #
-#	tools/mimeoracle.sh isprint > isprint.goose
+#	tools/mimeoracle.sh unicode > unicode.goose
 #	tools/mimeoracle.sh types > types_builtin.goose
 #	tools/mimeoracle.sh vectors -table mediatype
 #	tools/mimeoracle.sh serve < cases

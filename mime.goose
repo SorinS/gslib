@@ -15,7 +15,7 @@ namespace mime;
 
 import std;
 import dictionary;
-import isprint;
+import unicode;
 import rand;
 
 // --- Errors ------------------------------------------------------------------
@@ -274,6 +274,40 @@ fn append_unicode_lower(out: u8[>..]&, s: const u8[:]) {
         if r == 0x130 { out.push('i'); } else if r == 0x212A { out.push('k'); } else { out.push(0x80); }
         i += n;
     }
+}
+
+// strings.ToLower: every rune lowered by Go's tables, invalid bytes as U+FFFD.
+fn go_to_lower(out: u8[>..]&, s: const u8[:]) {
+    var i = 0;
+    while i < s.len {
+        let c = s[i];
+        if c < 0x80 { out.push(lower_byte(c)); i++; continue; }
+        let r, n = decode_rune(s, i);
+        push_rune(out, to_lower_rune(r));
+        i += n;
+    }
+}
+
+// strings.EqualFold(s, t) for a t of lower-case ASCII: Unicode simple case
+// folding puts only U+212A (Kelvin) with 'k' and U+017F (long s) with 's'
+// beside the ASCII letters.
+fn eq_fold(s: const u8[:], t: const u8[:]) -> bool {
+    var i = 0;
+    var j = 0;
+    while i < s.len {
+        if j >= t.len { return false; }
+        let c = s[i];
+        if c < 0x80 {
+            if lower_byte(c) != t[j] { return false; }
+            i++;
+        } else {
+            let r, n = decode_rune(s, i);
+            if !((r == 0x212A && t[j] == 'k') || (r == 0x17F && t[j] == 's')) { return false; }
+            i += n;
+        }
+        j++;
+    }
+    return j == t.len;
 }
 
 // --- Go's %q (strconv.Quote), for the error messages that quote input -----

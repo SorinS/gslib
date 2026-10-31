@@ -1,8 +1,8 @@
 // Go's mime, mime/quotedprintable, mime/multipart and net/textproto as the
 // oracle for mimegoose:
 //
-//	mimeoracle isprint
-//	    writes mime's isprint.goose: strconv.IsPrint's non-ASCII ranges, from Go itself
+//	mimeoracle unicode
+//	    writes mime's unicode.goose: strconv.IsPrint's and unicode.ToLower's tables, from Go itself
 //	mimeoracle types [-goroot dir]
 //	    writes mime's types_builtin.goose: Go's builtinTypesLower table, read from mime/type.go
 //	mimeoracle vectors -table name [-goroot dir]
@@ -25,7 +25,7 @@ import (
 
 const version = "1.0.0"
 
-const usage = `usage: mimeoracle isprint
+const usage = `usage: mimeoracle unicode
        mimeoracle types [-goroot dir]
        mimeoracle vectors -table name [-goroot dir]
        mimeoracle serve
@@ -67,7 +67,7 @@ func gorootFlag(fs *flag.FlagSet) *string {
 
 func main() {
 	modes := map[string]func([]string) error{
-		"isprint": isprintMode, "types": typesMode, "vectors": vectorsMode, "serve": serveMode,
+		"unicode": unicodeMode, "types": typesMode, "vectors": vectorsMode, "serve": serveMode,
 	}
 	if len(os.Args) == 2 && (os.Args[1] == "-version" || os.Args[1] == "--version") {
 		printVersion()
