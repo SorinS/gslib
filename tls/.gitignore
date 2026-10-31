@@ -1,0 +1,11 @@
+# executables `goose build` writes beside their sources
+examples/*
+!examples/*.goose
+test/*
+!test/*.goose
+!test/expected/
+!test/vectors/
+*.c
+!tools/bench_openssl.c
+__pycache__/
+__pycache__/
