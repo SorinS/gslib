@@ -21,8 +21,9 @@
 
 import std;
 import os;
-import compress from "..";
-import compress.zip;
+import gslib from "../..";
+import gslib.compress;
+import gslib.compress.zip;
 
 fn hexval(c: u8) -> i64 {
     if c >= '0' && c <= '9' { return c - '0'; }

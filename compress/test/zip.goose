@@ -13,11 +13,12 @@
 
 import std;
 import os;
-import compress from "..";
-import compress.flate;
-import compress.deflate;
-import compress.gzip;
-import compress.zip;
+import gslib from "../..";
+import gslib.compress;
+import gslib.compress.flate;
+import gslib.compress.deflate;
+import gslib.compress.gzip;
+import gslib.compress.zip;
 
 var failures = 0;
 

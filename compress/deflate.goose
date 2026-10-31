@@ -23,7 +23,8 @@
 namespace compress;
 
 import std;
-import .flate;
+import compress;
+import compress.flate;
 
 // --- Bits ------------------------------------------------------------------
 

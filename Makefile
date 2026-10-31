@@ -14,15 +14,15 @@ PYTHON  ?= python3
 GOOSE   ?= $(or $(shell command -v goose 2>/dev/null),$(abspath $(ROOT)/../goose.git/build/goose))
 export GOOSE
 
-LIBS    := asn1 bignum x509 tls ssh ldap yaml http
+LIBS    := asn1 bignum x509 tls ssh ldap yaml http compress
 
 # ------------------------------------------------------------------------------
 # Derived values
 # ------------------------------------------------------------------------------
 
 # A program is rebuilt when any of the package's sources changes.
-SOURCES := $(ROOT)/gslib.goose $(ROOT)/gslib.build \
-	$(shell find $(ROOT)/crypto $(ROOT)/encoding $(ROOT)/net \
+SOURCES := $(ROOT)/gslib.goose $(ROOT)/gslib.build $(ROOT)/compress.goose \
+	$(shell find $(ROOT)/crypto $(ROOT)/encoding $(ROOT)/net $(ROOT)/compress \
 		\( -name '*.goose' -o -name '*.c' -o -name '*.build' \) \
 		-not -path '*/test/*' -not -path '*/examples/*')
 
@@ -48,7 +48,8 @@ prog_source = $(word 2,$(subst :, ,$(1)))
 BINARIES    := $(foreach p,$(PROGRAMS),$(BIN)/$(call prog_name,$(p))) $(BIN)/goose-ldapadd
 
 # Every tool and example with a main, for check.
-CHECKED := $(shell cd $(ROOT) && grep -l '^fn main' */*/tools/*.goose */*/examples/*.goose)
+CHECKED := $(shell cd $(ROOT) && grep -l '^fn main' */*/tools/*.goose */*/examples/*.goose \
+	compress/tools/*.goose compress/examples/*.goose)
 
 # ------------------------------------------------------------------------------
 # Helpers
@@ -136,7 +137,7 @@ test-native: ## Run the unit tests, also built with the C compiler
 
 # test-asn1, test-bignum, ... (scripts/run_all.py refuses a name not in
 # LIBS). Not .PHONY: make looks for no pattern rule for a phony target.
-test-%: ## Run one library's unit tests: test-asn1 test-bignum test-x509 test-tls test-ssh test-ldap test-yaml test-http
+test-%: ## Run one library's unit tests: test-asn1 test-bignum test-x509 test-tls test-ssh test-ldap test-yaml test-http test-compress
 	$(call echo,"Running $* unit tests")
 	cd $(ROOT) && $(PYTHON) scripts/run_all.py --only $*
 
@@ -174,7 +175,10 @@ interop-ldap: ## LDAP against OpenLDAP and go-ldap
 	cd $(ROOT)/net/ldap && $(PYTHON) scripts/interop.py
 
 .PHONY: differential
-differential: ## Differentials: Go's net/http, net/url, x/net hpack; zlib; openssl; Go's root pool
+differential: differential-http differential-x509 differential-compress ## Run every differential
+
+.PHONY: differential-http
+differential-http: ## HTTP/1.1 parsing, URLs and HPACK against Go; gzip and deflate decoding against zlib
 	$(call echo,"HTTP/1.1 parsing against Go")
 	cd $(ROOT)/net/http && $(PYTHON) scripts/h1_differential.py
 	$(call echo,"URLs against Go")
@@ -183,10 +187,21 @@ differential: ## Differentials: Go's net/http, net/url, x/net hpack; zlib; opens
 	cd $(ROOT)/net/http && $(PYTHON) scripts/flate_differential.py
 	$(call echo,"HPACK against x/net")
 	cd $(ROOT)/net/http && $(PYTHON) scripts/hpack_differential.py
+
+.PHONY: differential-x509
+differential-x509: ## Created certificates against openssl and Go; system roots against Go's rules
 	$(call echo,"Created certificates against openssl and Go")
 	cd $(ROOT)/crypto/x509 && $(PYTHON) scripts/check_created.py
 	$(call echo,"System roots against Go's rules")
 	cd $(ROOT)/crypto/x509 && $(PYTHON) scripts/check_roots.py
+
+.PHONY: differential-compress
+differential-compress: ## compress against Go's compress/* and archive/*, zlib, bz2 and bzip2, xz
+	@cd $(ROOT)/compress && for d in flate_differential flate_testdata deflate_differential lzw_differential \
+			bzip2_differential xz_differential zip_differential tar_differential; do \
+		printf "\033[1m>> %s\033[0m\n" "compress: $$d"; \
+		$(PYTHON) scripts/$$d.py || exit 1; \
+	done
 
 .PHONY: test-all
 test-all: check test interop differential ## Run check, test, interop and differential

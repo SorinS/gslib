@@ -15,6 +15,7 @@ later.
 | `crypto/ssh` | SSH (RFC 4251-4254) without I/O, client and server, SFTP; goose-ssh, goose-sshd, goose-scp, goose-sftp-server, goose-ssh-keygen | [README](crypto/ssh/README.md) |
 | `net/ldap` | LDAP (RFC 4511): messages, filters, DNs, LDIF, URLs, connections; ldapsearch-style tools | [README](net/ldap/README.md) |
 | `encoding/yaml` | YAML 1.2 | [README](encoding/yaml/README.md) |
+| `compress` | Compression and archives, as Go's compress/* and archive/*, plus xz: DEFLATE, gzip, zlib, LZW, bzip2, xz and LZMA, zip, tar; reading and writing | [README](compress/README.md) |
 | `net/http` | HTTP/1.1 and HTTP/2, server and client: a client with Go's policy (redirects, cookies, credentials, proxies, gzip, TLS session resumption, streaming uploads, several responses at once), URLs, cookies, HPACK; goose-http and goose-httpd | [README](net/http/README.md) |
 
 ## Using it
@@ -35,7 +36,9 @@ fn main() {
 ```
 
 The libraries are grouped as Go groups its packages: `crypto/` (bignum,
-tls, x509, ssh), `encoding/` (asn1, yaml), `net/` (http, ldap). As in Go,
+tls, x509, ssh), `encoding/` (asn1, yaml), `net/` (http, ldap), and
+`compress/` at the top, as Go's compress is (zip and tar are in it too:
+they share its namespace, results and checksums). As in Go,
 the group is part of the import path but not of the name in code:
 `import gslib.net.http.fetch;`, then `http::get(...)`. Goose namespaces
 are one identifier, so each library keeps its own (`http::`, `tls::`,
@@ -43,7 +46,9 @@ are one identifier, so each library keeps its own (`http::`, `tls::`,
 `import gslib.<group>.<lib>.<m>;`, and its main module
 `gslib/<group>/<lib>.goose` is `import gslib.<group>.<lib>;`. Inside
 gslib the same modules are `import <group>.<lib>.<m>;`, which the
-compiler resolves within the package (packages.md §4.4). Only the
+compiler resolves within the package (packages.md §4.4). compress, with
+no group, is `import gslib.compress;` and `import gslib.compress.gzip;`,
+and `compress::` in code. Only the
 modules a program imports are compiled. The libraries need one another (http needs
 tls, x509, asn1 and bignum), and since they are one package, a program
 declares only gslib.
@@ -61,13 +66,14 @@ gslib.goose, gslib.build              the package's entry and its sidecar
 <group>/<lib>/test, tools, examples   its programs (excluded from the package in gslib.build)
 <group>/<lib>/scripts                 its test runners, differentials, interop
 <group>/<lib>/README.md               its documentation
+compress.goose, compress/             compress, laid out the same way at the top
 scripts/run_all.py            every library's unit tests
 Makefile                      the programs, checks and tests
 ```
 
 Each library came from a repository of its own (bigmongoose, asn1goose,
-x509goose, tlsgoose, sshgoose, ldapgoose, yamlgoose, httpgoose), and
-`git log --follow -- <group>/<lib>` shows that history.
+x509goose, tlsgoose, sshgoose, ldapgoose, yamlgoose, httpgoose,
+compressgoose), and `git log --follow -- <group>/<lib>` shows that history.
 
 ## Requirements
 

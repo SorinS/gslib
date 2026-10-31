@@ -26,6 +26,7 @@
 namespace compress;
 
 import std;
+import compress;
 
 let LZE_OBUF: i64 = 1 << 17;
 let LZE_CHUNK_U: i64 = (1 << 21) - 300 - 4096; // input in an LZMA2 chunk (2 MiB, less a parse)

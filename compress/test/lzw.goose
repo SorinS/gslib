@@ -5,8 +5,9 @@
 // scripts/lzw_differential.py compares thousands more with Go.
 
 import std;
-import compress from "..";
-import compress.lzw;
+import gslib from "../..";
+import gslib.compress;
+import gslib.compress.lzw;
 
 var failures = 0;
 

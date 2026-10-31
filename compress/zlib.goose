@@ -15,8 +15,9 @@
 namespace compress;
 
 import std;
-import .flate;
-import .deflate;
+import compress;
+import compress.flate;
+import compress.deflate;
 
 let ZL_HEADER: u8 = 0;
 let ZL_DICTID: u8 = 1;

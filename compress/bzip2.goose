@@ -40,6 +40,7 @@
 namespace compress;
 
 import std;
+import compress;
 
 // --- The CRC (CRC-32 with the bits taken most significant first) ----------
 

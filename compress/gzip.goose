@@ -24,8 +24,9 @@
 namespace compress;
 
 import std;
-import .flate;
-import .deflate;
+import compress;
+import compress.flate;
+import compress.deflate;
 
 
 let GZ_HEADER: u8 = 0;      // reading a member's header

@@ -4,9 +4,10 @@
 // has xz and Python's lzma read thousands more.
 
 import std;
-import compress from "..";
-import compress.xz;
-import compress.lzma;
+import gslib from "../..";
+import gslib.compress;
+import gslib.compress.xz;
+import gslib.compress.lzma;
 
 var failures = 0;
 

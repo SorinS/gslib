@@ -10,8 +10,9 @@
 
 import std;
 import os;
-import compress from "..";
-import compress.tar;
+import gslib from "../..";
+import gslib.compress;
+import gslib.compress.tar;
 
 fn hex_into(out: u8[>..]&, s: const u8[:]) {
     if s.len == 0 { out.push('-'); return; }

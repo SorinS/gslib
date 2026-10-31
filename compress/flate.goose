@@ -35,6 +35,7 @@
 namespace compress;
 
 import std;
+import compress;
 
 let INFLATE_WINDOW: i64 = 32768;
 

@@ -10,8 +10,9 @@
 
 import std;
 import os;
-import compress from "..";
-import compress.xz;
+import gslib from "../..";
+import gslib.compress;
+import gslib.compress.xz;
 
 fn run_case(mode: const u8[:], chunk: i64, room: i64, data: const u8[:], out: u8[>..]&) {
     var d = compress::xz_reader();

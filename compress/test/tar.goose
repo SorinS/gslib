@@ -16,8 +16,9 @@
 
 import std;
 import os;
-import compress from "..";
-import compress.tar;
+import gslib from "../..";
+import gslib.compress;
+import gslib.compress.tar;
 
 var failures = 0;
 

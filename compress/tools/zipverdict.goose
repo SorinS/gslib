@@ -13,9 +13,10 @@
 
 import std;
 import os;
-import compress from "..";
-import compress.gzip;
-import compress.zip;
+import gslib from "../..";
+import gslib.compress;
+import gslib.compress.gzip;
+import gslib.compress.zip;
 
 fn hex(out: u8[>..]&, s: const u8[:]) {
     for c in s { format_uint(out, c, 16, 2, '0'); }

@@ -44,8 +44,9 @@
 namespace compress;
 
 import std;
-import .flate;
-import .deflate;
+import compress;
+import compress.flate;
+import compress.deflate;
 
 let ZIP_STORE: u16 = 0;
 let ZIP_DEFLATE: u16 = 8;

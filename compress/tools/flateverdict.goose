@@ -14,10 +14,11 @@
 
 import std;
 import os;
-import compress from "..";
-import compress.flate;
-import compress.zlib;
-import compress.gzip;
+import gslib from "../..";
+import gslib.compress;
+import gslib.compress.flate;
+import gslib.compress.zlib;
+import gslib.compress.gzip;
 
 fn hexval(c: u8) -> i64 {
     if c >= '0' && c <= '9' { return c - '0'; }

@@ -23,6 +23,7 @@
 namespace compress;
 
 import std;
+import compress;
 
 let LZW_LSB: i64 = 0;   // least significant bits first (GIF)
 let LZW_MSB: i64 = 1;   // most significant bits first (TIFF, PDF)

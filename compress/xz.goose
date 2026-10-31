@@ -32,6 +32,7 @@
 namespace compress;
 
 import std;
+import compress;
 
 // --- SHA-256 (FIPS 180-4), for xz's check ----------------------------------
 

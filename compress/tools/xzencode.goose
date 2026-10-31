@@ -10,9 +10,10 @@
 
 import std;
 import os;
-import compress from "..";
-import compress.xz;
-import compress.lzma;
+import gslib from "../..";
+import gslib.compress;
+import gslib.compress.xz;
+import gslib.compress.lzma;
 
 fn num(s: const u8[:]) -> i64 {
     let v, ok = parse_int(s);

@@ -5,11 +5,12 @@
 // scripts/deflate_differential.py has Go and zlib read thousands more.
 
 import std;
-import compress from "..";
-import compress.flate;
-import compress.deflate;
-import compress.zlib;
-import compress.gzip;
+import gslib from "../..";
+import gslib.compress;
+import gslib.compress.flate;
+import gslib.compress.deflate;
+import gslib.compress.zlib;
+import gslib.compress.gzip;
 
 var failures = 0;
 

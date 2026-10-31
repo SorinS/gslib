@@ -1,4 +1,4 @@
-# compressgoose
+# compress
 
 Compression formats and archives for Goose, after Go's `compress/*` and
 `archive/*` packages, plus xz. Pure Goose: no C, and no files read or
@@ -19,8 +19,9 @@ owns, fed as the data comes.
 | `compress.tar` | tar archives (USTAR, PAX, GNU, sparse) | yes | yes |
 
 ```goose
-import compress from "../compressgoose.git";
-import compress.gzip;
+import gslib from "SorinS/gslib@v0.1";   // or a path to gslib.git
+import gslib.compress;
+import gslib.compress.gzip;
 
 var out: u8[>..] = [];
 compress::gzip_encode(data, out, 6);            // whole buffers

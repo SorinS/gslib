@@ -17,4 +17,5 @@ exclude = [
     "net/ldap/test", "net/ldap/tools",
     "encoding/yaml/test",
     "net/http/test", "net/http/tools",
+    "compress/test", "compress/tools", "compress/examples",
 ];

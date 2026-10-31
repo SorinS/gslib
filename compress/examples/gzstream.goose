@@ -7,8 +7,9 @@
 
 import std;
 import os;
-import compress from "..";
-import compress.gzip;
+import gslib from "../..";
+import gslib.compress;
+import gslib.compress.gzip;
 
 fn main() {
     let a = args();

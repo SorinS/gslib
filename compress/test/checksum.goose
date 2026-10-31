@@ -2,7 +2,8 @@
 // Python's binascii and xz's), in one piece and in pieces of every split.
 
 import std;
-import compress from "..";
+import gslib from "../..";
+import gslib.compress;
 
 var failures = 0;
 

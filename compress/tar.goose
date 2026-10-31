@@ -38,6 +38,7 @@
 namespace compress;
 
 import std;
+import compress;
 
 // --- Types and formats -----------------------------------------------------
 

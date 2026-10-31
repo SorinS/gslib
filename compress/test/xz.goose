@@ -8,8 +8,9 @@
 
 import std;
 import os;
-import compress from "..";
-import compress.xz;
+import gslib from "../..";
+import gslib.compress;
+import gslib.compress.xz;
 
 var failures = 0;
 
