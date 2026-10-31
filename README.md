@@ -238,16 +238,24 @@ Results (macOS, arm64):
   code and truncation tests, the `.golden` streams, Go's gunzipTests and
   zlibTests tables, header fields, errors, a 10 MB bomb through a 4 KB
   buffer), `test/deflate.goose`: pass at -O0, -O2, --debug and native.
-* flate_differential: 20,000 streams over seeds 1-5, about 1 in 4 refused by
-  Go: 0 differ from Go in output or error class (the one deliberate
-  difference, below, is accounted for in the script).
-* flate_testdata: 70 files, 0 differ.
-* deflate_differential: 8,000 streams over seeds 2-3, 342,000 flush points:
-  0 failures. Sizes, ours over Go's, per level on the same inputs (no
-  flushes): -2 1.001, 0 1.000, 1 0.81-0.83, 2 0.84-0.90, 3 0.91-0.94,
-  4 1.00, 5 0.97-1.01, 6 0.96-0.99, 7 1.00-1.01, 8 1.00, 9 1.05. Go 1.27's
-  levels 1-6 are a different design (klauspost's fast encoders) and
-  levels 7-9 look for 4-byte matches; ours is zlib's at every level.
+* flate_differential: 62,000 streams over 11 seeds (one run of 20,000
+  at seed 100), about 1 in 4 refused by Go, some of them the gzip
+  program's own output, some noise: 0 differ from Go in output or error
+  class (the one deliberate difference, below, is accounted for in the
+  script). zlib's own verdict differs from Go's on about 6%: gzip's
+  reserved flag bits (Go ignores them), names of 512 bytes or more (Go
+  refuses them), and bytes after a gzip stream.
+* flate_testdata: 70 files, 0 differ (the `.golden` and `.expect` files
+  are Go's bit writer's blocks without a final block: they decode to the
+  `.in` file and then end too soon, in Go and here).
+* deflate_differential: 21,500 streams over 5 seeds (one run of 10,000 at
+  seed 101), 960,000 flush points, 900 streams also read by `gzip -dc`: 0
+  failures. Sizes, ours over Go's, per level on the same inputs (no
+  flushes), at seed 101: -2 1.002, -1 1.006, 0 1.000, 1 0.903, 2 0.866,
+  3 0.912, 4 0.995, 5 1.001, 6 0.993, 7 0.991, 8 1.000, 9 1.030. Go 1.27's
+  levels 1-6 are a different design (klauspost's fast encoders) and its
+  levels 7-9 look for 4-byte matches; ours is zlib's at every level, and
+  within 0.1% of zlib's sizes on text.
 
 Speed, built native (Apple M-series), 3.1 MB of text:
 
@@ -256,7 +264,7 @@ Speed, built native (Apple M-series), 3.1 MB of text:
 | deflate level 1 | 101 MB/s | 119 MB/s | 77 MB/s |
 | deflate level 6 | 18 MB/s | 23 MB/s | 73 MB/s |
 | deflate level 9 | 8.3 MB/s | 10.3 MB/s | 15.8 MB/s |
-| inflate | 290 MB/s | 620 MB/s | 190 MB/s |
+| inflate | 280 MB/s | 620 MB/s | 190 MB/s |
 
 ## Departures from Go
 
