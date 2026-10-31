@@ -32,6 +32,7 @@
 namespace multipart;
 
 import std;
+import dictionary;
 import mime;
 import textproto;
 import quotedprintable;
@@ -75,8 +76,8 @@ root struct Reader {
     total: i64 = 0,                  // body bytes of the part read so far (before decoding)
     qp_on: bool = false,
     qp: quotedprintable::Reader = quotedprintable::Reader { .. },
-    hdr_scan: i64 = 0,               // where the search for the header's blank line has got to
-    hdr_try: i64 = 0,                // how many bytes there were at the last attempt
+    hr: textproto::HeaderReader = textproto::header_reader(0, 0, 0),   // the part's header, as it comes
+    seen: dictionary<u64, bool> = dictionary<u64, bool> {},
     cr_set: ByteSet = byte_set("\r"),    // the first byte of "\r\n--boundary", for find_any (memchr)
     lf_set: ByteSet = byte_set("\n"),
 }
@@ -102,8 +103,6 @@ fn init(r: Reader&, boundary: const u8[:]) {
     r.part_err_text.clear();
     r.total = 0;
     r.qp_on = false;
-    r.hdr_scan = 0;
-    r.hdr_try = 0;
 }
 
 fn dash_boundary(r: const Reader&) -> const u8[:] { r.b[2..r.b.len - 2] }
@@ -117,8 +116,7 @@ fn feed(r: Reader&, data: const u8[:]) {
         let rest = r.buf.len - r.pos;
         for i in rest { r.buf[i] = r.buf[r.pos + i]; }
         r.buf.resize(rest);
-        r.hdr_scan -= r.pos;
-        if r.hdr_scan < 0 { r.hdr_scan = 0; }
+        if r.state == S_HEADERS { textproto::shift(r.hr, r.pos); }
         r.pos = 0;
     }
     r.buf.append(data);
@@ -191,8 +189,9 @@ fn lines(r: Reader&) -> i64 {
         if is_boundary_delimiter_line(r, line) {
             r.parts_read++;
             r.state = S_HEADERS;
-            r.hdr_scan = r.pos;
-            r.hdr_try = 0;
+            r.hr = textproto::header_reader(r.pos, r.max_header_bytes, r.max_headers);
+            r.header.fields.clear();
+            r.seen.clear();
             return -1;
         }
         if is_final_boundary(r, line) { r.state = S_END; return EV_END; }
@@ -203,40 +202,11 @@ fn lines(r: Reader&) -> i64 {
     }
 }
 
-// Whether the bytes there are decide the part's header: the input has
-// ended, a blank line has come, or there are more bytes than the header
-// may have (tried again each time they double, so that a header that
-// fails early fails without waiting for all of them).
-fn header_decidable(r: Reader&) -> bool {
-    if r.eof { return true; }
-    let start = r.pos;
-    let b = r.buf;
-    if start < b.len && b[start] == '\n' { return true; }
-    if start + 1 < b.len && b[start] == '\r' && b[start + 1] == '\n' { return true; }
-    var i = ::max(r.hdr_scan, start);
-    while i < b.len {
-        if b[i] == '\n' {
-            if i + 1 >= b.len { break; }
-            if b[i + 1] == '\n' { return true; }
-            if b[i + 1] == '\r' {
-                if i + 2 >= b.len { break; }
-                if b[i + 2] == '\n' { return true; }
-            }
-        }
-        i++;
-    }
-    r.hdr_scan = i;
-    let have = b.len - start;
-    if have >= 4096 && have >= 2 * r.hdr_try { r.hdr_try = have; return true; }
-    return false;
-}
-
 // The part's header, then the part.
 fn headers(r: Reader&) -> i64 {
-    if !header_decidable(r) { return EV_NEED_MORE; }
-    let code, end = textproto::read_mime_header_at(r.buf, r.pos, r.eof, r.max_header_bytes, r.max_headers,
-                                                   r.header, r.detail);
+    let code = textproto::read_mime_header_step(r.buf, r.hr, r.eof, r.header, r.detail, r.seen, true);
     if code == textproto::NEED_MORE { return EV_NEED_MORE; }
+    let end = r.hr.pos;
     if code == mime::ERR_EOF { r.state = S_END; return EV_END; }       // Go's NextPart returns io.EOF
     if code == mime::ERR_MESSAGE_TOO_LARGE { return set_error(r, mime::ERR_MULTIPART_TOO_LARGE, ""); }
     if code != mime::OK {

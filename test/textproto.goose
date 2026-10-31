@@ -7,6 +7,7 @@
 // grows, a byte at a time, which must give the same.
 
 import std;
+import dictionary;
 import mime from "..";
 import mime.textproto;
 import tv;
@@ -57,6 +58,34 @@ fn read_text(input: const u8[:], bytewise: bool) -> u8[>..] {
     return out;
 }
 
+// The input fed a byte at a time to the resumable reader (gated, as the
+// multipart reader runs it) decides at the same byte as reading the
+// prefix from scratch does, with the same result.
+fn check_resumable(input: const u8[:]) {
+    var h1 = textproto::new_header();
+    var d1: u8[>..] = [];
+    var at1 = -1;
+    var code1 = 0;
+    for n in input.len + 1 {
+        let c, end = textproto::read_mime_header_at(input[..n], 0, n == input.len, textproto::MAX_INT64,
+                                                    textproto::MAX_INT64, h1, d1);
+        if c != textproto::NEED_MORE { at1 = n; code1 = c; break; }
+    }
+    var h2 = textproto::new_header();
+    var d2: u8[>..] = [];
+    var seen = dictionary<u64, bool> {};
+    var hr = textproto::header_reader(0, textproto::MAX_INT64, textproto::MAX_INT64);
+    var at2 = -1;
+    var code2 = 0;
+    for n in input.len + 1 {
+        let c = textproto::read_mime_header_step(input[..n], hr, n == input.len, h2, d2, seen, true);
+        if c != textproto::NEED_MORE { at2 = n; code2 = c; break; }
+    }
+    tv::check_int(str("decided at the same byte ", input), at2, at1);
+    tv::check_int(str("same result ", input), code2, code1);
+    tv::check(str("same fields ", input), h1.fields.len == h2.fields.len && d1 == d2);
+}
+
 fn results_text(r: tv::Row&) -> u8[>..] {
     r.to_results();
     var out: u8[>..] = [];
@@ -82,6 +111,7 @@ fn tables() {
             let go = results_text(r);
             tv::check_eq(str(name, " ", input), read_text(input, false), go);
             tv::check_eq(str(name, " bytewise ", input), read_text(input, true), go);
+            check_resumable(input);
         };
     }
 }

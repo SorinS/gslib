@@ -412,6 +412,43 @@ fn round_trip() {
     tv::check_int("round trip end", multipart::next(r, data), multipart::EV_END);
 }
 
+// A part's header fails as soon as the line that makes it fail (and the
+// byte after it, where a continuation could follow) has come, without the
+// end of the input, as Go's NextPart does.
+fn header_fails_early() {
+    let cases = ["--b\r\nBad line\r\n", "--b\r\nK\x01: v\r\nX", "--b\r\nA: 1\r\nB: 2\r\nC: 3\r\nD"];
+    let wants = ["malformed MIME header: missing colon: \"Bad line\"", "malformed MIME header line: \"K\\x01: v\"",
+                 "multipart: message too large"];
+    for i in cases.len {
+        for bytewise in [false, true] {
+            var r = multipart::Reader { .. };
+            multipart::init(r, "b");
+            if i == 2 { r.max_headers = 2; }
+            let body = cases[i];
+            var data: u8[>..] = [];
+            var ev = multipart::EV_NEED_MORE;
+            var fed = 0;
+            while ev == multipart::EV_NEED_MORE && fed < body.len {
+                let n = if bytewise { 1 } else { body.len };
+                multipart::feed(r, body[fed..fed + n]);
+                fed += n;
+                ev = multipart::next(r, data);
+            }
+            tv::check_int(str("fails early ", i, " ", bytewise), ev, multipart::EV_ERROR);
+            tv::check_int(str("fails at the last byte ", i, " ", bytewise), fed, body.len);
+            var m: u8[>..] = [];
+            multipart::message(r, m);
+            tv::check_eq(str("fails early message ", i), m, wants[i]);
+        }
+    }
+    // and a header line that may still go on waits
+    var r = multipart::Reader { .. };
+    multipart::init(r, "b");
+    multipart::feed(r, "--b\r\nK\x01: v\r\n");
+    var data: u8[>..] = [];
+    { let ev = multipart::next(r, data); tv::check_int("a possible continuation waits", ev, multipart::EV_NEED_MORE); }
+}
+
 // TestNoBoundary.
 fn no_boundary() {
     var r = multipart::Reader { .. };
@@ -438,5 +475,6 @@ fn main() {
     all_sizes();
     round_trip();
     no_boundary();
+    header_fails_early();
     tv::done("multipart");
 }

@@ -218,69 +218,157 @@ fn read_continued(data: const u8[:], c: Cursor&, lim0: i64, kv: u8[>..]&) -> i64
     return 1;
 }
 
+// readMIMEHeader as a reader that is resumed as its input grows: the
+// fields read so far stay read (in the Header the caller passes each time,
+// with the same `seen`), and a field is read again only when the bytes
+// that came can decide it.
+struct HeaderReader {
+    pos: i64,            // where the next field starts (after the blank line once done)
+    mem: i64,            // what is left of maxMemory (Go's accounting)
+    hdrs: i64,           // what is left of maxHeaders
+    started: bool,
+    // when to try the next field again (see field_ready)
+    scan: i64,
+    waiting: i64,        // a '\n' whose next byte has not come, or -1
+    nl_seen: bool,       // the field's first line has ended
+    tried: i64,          // the field's bytes at the last try
+}
+
+fn header_reader(pos: i64, max_memory: i64, max_headers: i64) -> HeaderReader {
+    HeaderReader { pos: pos, mem: max_memory - 400, hdrs: max_headers, started: false,
+                   scan: pos, waiting: -1, nl_seen: false, tried: 0 }
+}
+
+// The input moved by delta bytes (the caller dropped what was before it).
+fn shift(hr: HeaderReader&, delta: i64) {
+    hr.pos -= delta;
+    hr.scan -= delta;
+    if hr.waiting >= 0 { hr.waiting -= delta; }
+}
+
+// Whether the next field could be decided now: its first line has ended
+// (a missing colon, the blank line), its end is known (a line end then a
+// byte that is not a space or a tab), or its bytes have doubled since the
+// last try (a limit). Each field is so tried a few times, at a cost in
+// proportion to its size.
+fn field_ready(data: const u8[:], hr: HeaderReader&) -> bool {
+    var i = ::max(hr.scan, hr.pos);
+    while i < data.len {
+        if hr.waiting >= 0 {
+            let nb = data[hr.waiting + 1];
+            hr.waiting = -1;
+            if nb != ' ' && nb != '\t' { hr.scan = i; return true; }
+        }
+        if data[i] == '\n' {
+            hr.waiting = i;
+            i++;
+            if !hr.nl_seen { hr.nl_seen = true; hr.scan = i; return true; }
+            continue;
+        }
+        i++;
+    }
+    hr.scan = i;
+    let have = data.len - hr.pos;
+    return have >= 4096 && have >= 2 * hr.tried;
+}
+
+// One field read and checked, as readMIMEHeader's loop body does; 1 to go
+// on, else the result.
+fn take_field(kv: const u8[:], hr: HeaderReader&, h: Header&, detail: u8[>..]&, seen: dictionary<u64, bool>&,
+              key: u8[>..]&) -> i64 {
+    let colon = mime::index_byte(kv, ':');
+    key.clear();
+    if !reader_key(key, kv[..colon]) { detail.append(kv); return mime::ERR_MALFORMED_LINE; }
+    let v = kv[colon + 1..];
+    for b in v {
+        if !is_value_byte(b) {
+            // Go canonicalizes the key in place first: its message has the key so
+            detail.append(key);
+            detail.append(kv[colon..]);
+            return mime::ERR_MALFORMED_LINE;
+        }
+    }
+    hr.hdrs--;
+    if hr.hdrs < 0 { h.fields.clear(); return mime::ERR_MESSAGE_TOO_LARGE; }
+    var a = 0;
+    while a < v.len && (v[a] == ' ' || v[a] == '\t') { a++; }
+    let value = v[a..];
+    let kh = hash(key);
+    var known = false;
+    if seen.contains(kh) {
+        for f in h.fields { if f.key == key { known = true; break; } }
+    }
+    if !known {
+        hr.mem -= key.len;
+        hr.mem -= 200;
+        seen.insert(kh, true);
+    }
+    hr.mem -= value.len;
+    if hr.mem < 0 { return mime::ERR_MESSAGE_TOO_LARGE; }
+    h.fields.push(Field { key: key[..], value: value });
+    return 1;
+}
+
+// Reads on from hr. Returns mime::OK (hr.pos after the blank line),
+// NEED_MORE (feed more, call again with the same hr, h and seen),
+// mime::ERR_EOF (the fields before the end are in h, as Go returns them
+// with io.EOF), mime::ERR_MESSAGE_TOO_LARGE, or a malformed-line error
+// whose line is in detail. With gate false it tries whatever bytes there
+// are; with gate true only when field_ready says they may decide.
+fn read_mime_header_step(data: const u8[:], hr: HeaderReader&, eof: bool, h: Header&, detail: u8[>..]&,
+                         seen: dictionary<u64, bool>&, gate: bool) -> i64 {
+    if !hr.started {
+        if hr.pos >= data.len && !eof { return NEED_MORE; }
+        if hr.pos < data.len && (data[hr.pos] == ' ' || data[hr.pos] == '\t') {
+            var c = Cursor { pos: hr.pos, eof: eof };
+            var sp = Span { pos: 0, end: 0 };
+            let r = read_line(data, c, 80, sp);
+            if r == 0 { return NEED_MORE; }
+            hr.pos = c.pos;
+            if r == -2 { return mime::ERR_MESSAGE_TOO_LARGE; }
+            detail.clear();
+            detail.append(data[sp.pos..sp.end]);
+            return mime::ERR_MALFORMED_INITIAL_LINE;
+        }
+        hr.started = true;
+    }
+    var kv: u8[>..] = [];
+    var key: u8[>..] = [];
+    loop {
+        if gate && !eof && !field_ready(data, hr) { return NEED_MORE; }
+        hr.tried = data.len - hr.pos;
+        var c = Cursor { pos: hr.pos, eof: eof };
+        let r = read_continued(data, c, hr.mem, kv);
+        if r == 0 { return NEED_MORE; }
+        hr.pos = c.pos;
+        hr.scan = c.pos;
+        hr.waiting = -1;
+        hr.nl_seen = false;
+        hr.tried = 0;
+        if r == -1 { return mime::ERR_EOF; }
+        if r == -2 { return mime::ERR_MESSAGE_TOO_LARGE; }
+        if r == -3 { detail.clear(); detail.append(kv); return mime::ERR_MISSING_COLON; }
+        if kv.len == 0 { return mime::OK; }
+        detail.clear();
+        let t = take_field(kv, hr, h, detail, seen, key);
+        if t != 1 { return t; }
+    }
+}
+
 // readMIMEHeader(r, maxMemory, maxHeaders) on data from `pos`, with `eof`
-// saying whether data holds all of the input. The fields go into h.
-// Returns the code (mime::OK, NEED_MORE, mime::ERR_EOF,
-// mime::ERR_MESSAGE_TOO_LARGE, or a malformed-line error whose line is in
-// detail) and where the reader stopped. On ERR_EOF the fields read before
-// the end are in h, as Go returns them with io.EOF.
+// saying whether data holds all of the input, from the start each time.
+// The fields go into h. Returns the code (mime::OK, NEED_MORE,
+// mime::ERR_EOF, mime::ERR_MESSAGE_TOO_LARGE, or a malformed-line error
+// whose line is in detail) and where the reader stopped.
 fn read_mime_header_at(data: const u8[:], pos: i64, eof: bool, max_memory: i64, max_headers: i64,
                        h: Header&, detail: u8[>..]&) -> i64, i64 {
     h.fields.clear();
     detail.clear();
-    var c = Cursor { pos: pos, eof: eof };
-    var mem = max_memory - 400;
-    var hdrs = max_headers;
-    if pos >= data.len && !eof { return NEED_MORE, pos; }
-    if pos < data.len && (data[pos] == ' ' || data[pos] == '\t') {
-        var sp = Span { pos: 0, end: 0 };
-        let r = read_line(data, c, 80, sp);
-        if r == 0 { return NEED_MORE, pos; }
-        if r == -2 { return mime::ERR_MESSAGE_TOO_LARGE, c.pos; }
-        detail.append(data[sp.pos..sp.end]);
-        return mime::ERR_MALFORMED_INITIAL_LINE, c.pos;
-    }
-    var kv: u8[>..] = [];
-    var key: u8[>..] = [];
+    var hr = header_reader(pos, max_memory, max_headers);
     var seen = dictionary<u64, bool> {};
-    loop {
-        let r = read_continued(data, c, mem, kv);
-        if r == 0 { return NEED_MORE, pos; }
-        if r == -1 { return mime::ERR_EOF, c.pos; }
-        if r == -2 { return mime::ERR_MESSAGE_TOO_LARGE, c.pos; }
-        if r == -3 { detail.append(kv); return mime::ERR_MISSING_COLON, c.pos; }
-        if kv.len == 0 { return mime::OK, c.pos; }
-        let colon = mime::index_byte(kv, ':');
-        key.clear();
-        if !reader_key(key, kv[..colon]) { detail.append(kv); return mime::ERR_MALFORMED_LINE, c.pos; }
-        let v = kv[colon + 1..];
-        for b in v {
-            if !is_value_byte(b) {
-                // Go canonicalizes the key in place first: its message has the key so
-                detail.append(key);
-                detail.append(kv[colon..]);
-                return mime::ERR_MALFORMED_LINE, c.pos;
-            }
-        }
-        hdrs--;
-        if hdrs < 0 { h.fields.clear(); return mime::ERR_MESSAGE_TOO_LARGE, c.pos; }
-        var a = 0;
-        while a < v.len && (v[a] == ' ' || v[a] == '\t') { a++; }
-        let value = v[a..];
-        let kh = hash(key);
-        var known = false;
-        if seen.contains(kh) {
-            for f in h.fields { if f.key == key { known = true; break; } }
-        }
-        if !known {
-            mem -= key.len;
-            mem -= 200;
-            seen.insert(kh, true);
-        }
-        mem -= value.len;
-        if mem < 0 { return mime::ERR_MESSAGE_TOO_LARGE, c.pos; }
-        h.fields.push(Field { key: key[..], value: value });
-    }
+    let code = read_mime_header_step(data, hr, eof, h, detail, seen, false);
+    if code == NEED_MORE { return NEED_MORE, pos; }
+    return code, hr.pos;
 }
 
 // ReadMIMEHeader of a whole buffer: the header, the code (mime::OK, or

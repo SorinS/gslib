@@ -129,11 +129,22 @@ fn get(h, key) -> const u8[:]    fn has(h, key) -> bool    fn each_value<F>(h, k
 fn add(h, key, value)    fn set(h, key, value)    fn del(h, key)    fn key_count(h) -> i64
 fn read_mime_header(data: const u8[:], h: Header&) -> i64, i64      // code, bytes read
 fn read_mime_header_at(data, pos, eof: bool, max_memory, max_headers, h: Header&, detail: u8[>..]&) -> i64, i64
+struct HeaderReader { pos: i64, .. }     fn header_reader(pos, max_memory, max_headers) -> HeaderReader
+fn read_mime_header_step(data, hr: HeaderReader&, eof: bool, h: Header&, detail: u8[>..]&,
+                         seen: dictionary<u64, bool>&, gate: bool) -> i64
 fn error_message(out: u8[>..]&, code: i64, detail: const u8[:])
 ```
 
-`read_mime_header_at` answers `NEED_MORE` while `eof` is false and the
-bytes there do not yet decide the result as Go's reader would.
+Both answer `NEED_MORE` while `eof` is false and the bytes there do not
+yet decide the result as Go's reader would. `read_mime_header_at` reads
+from the start each time; `read_mime_header_step` resumes, keeping the
+fields read, and with `gate` set tries a field again only when the bytes
+that came can decide it: its first line has ended, the byte after its
+last line end is not a space or tab, or it has doubled. The multipart
+reader runs it that way, so a part whose header fails (a missing colon, a
+malformed line, a limit) fails as soon as Go's `NextPart` would, at a
+cost in proportion to the input. The test checks that, fed a byte at a
+time, both decide at the same byte with the same result.
 
 ### mime.multipart and mime.formdata
 
@@ -186,10 +197,11 @@ goose v2026.3-252; Go 1.27.1 on both):
 
 | | |
 |---|---|
-| `scripts/run_tests.py --native` | 9 programs, 36 runs passed on both systems: mediatype 428 checks, encodedword 195, quotedprintable 983, textproto 591, multipart 269, writer 79, formdata 60, types 91, fuzz 17379 |
-| `scripts/differential.py -n 1000` | 21000 cases (seeds 1, 2 on macOS, 11 on Linux), 0 differences; every kind: media types, FormatMediaType, encoded-words both ways, DecodeHeader, quoted-printable both ways, header sections with and without limits, multipart bodies, ReadForm, TypeByExtension, ExtensionsByType, FileContentDisposition, SetBoundary |
+| `scripts/run_tests.py --native` | 9 programs, 36 runs passed on both systems: mediatype 428 checks, encodedword 195, quotedprintable 983, textproto 645, multipart 288, writer 79, formdata 60, types 91, fuzz 17379 |
+| `scripts/differential.py -n 1000` | 21000 cases a run (seeds 1, 2, 21 on macOS, 11 on Linux), 0 differences; every kind: media types, FormatMediaType, encoded-words both ways, DecodeHeader, quoted-printable both ways, header sections with and without limits, multipart bodies, ReadForm, TypeByExtension, ExtensionsByType, FileContentDisposition, SetBoundary |
 | `--kinds alltypes` | macOS: 2834 cases (/etc/apache2/mime.types), Linux: 3233 (/usr/share/mime/globs2), 0 differences |
-| `test/fuzz.goose -- 100 12345 --debug` | 1738956 checks, no abort |
+| `test/fuzz.goose -- 100 12345 --debug` | 1738956 checks, no abort (Linux: `-- 20 777`, 347488) |
+| `scripts/bench.py` (macOS, arm64) | multipart reading 4.5 GB/s (Go 3.9-4.2), ReadForm of 1000 fields 0.42 ms (Go 0.94-1.0), quoted-printable encoding 390 MB/s (Go 420), decoding 550 MB/s (Go 230), ParseMediaType 180 ns (Go 290) |
 
 The differential's multipart cases end in every outcome Go has (clean
 ends, truncation in a body or a header, each NextPart error, the 4096-byte
@@ -264,11 +276,12 @@ Deliberate, or where Go's own result depends on how its input is read:
   and are set by the caller.
 * **mime.types**: `bufio.Scanner` stops (and Go panics) on a line of more
   than 64 KiB in a system file; such lines are read here.
-* **Windows**: the registry is not read (the built-in table only), and
-  `getentropy` is not there for random boundaries (`mime.build` names no
-  Windows C library), so multipart's writer and ReadForm's spilling do not
-  work on Windows yet; `FileName` follows Windows' `filepath.Base` there
-  (`src/path_windows.h`), untested.
+* **Windows** is untested: the registry is not read (the built-in table
+  only); `getentropy` (random boundaries, temporary file names) comes from
+  the C library through an `extern "c"` block and `mime.build` maps no
+  Windows library for it, so `new_writer` and spilling a form's files are
+  expected to fail there; `FileName` follows Windows' `filepath.Base` there
+  (`src/path_windows.h`).
 
 ## Not done
 
