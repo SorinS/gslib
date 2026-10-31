@@ -325,7 +325,10 @@ fn gzip_write_header(w: GzipWriter&, out: u8[>..]&, name: const u8[:], comment: 
                      mtime: i64 = 0, os: u8 = 255, has_extra: bool = false) -> i64 {
     if w.err != 0 { return w.err; }
     if w.wrote_header || w.closed { return ERR_ARGUMENT; }
-    if extra.len > 65535 { return ERR_ARGUMENT; }
+    if extra.len > 65535 {
+        w.err = ERR_ARGUMENT;
+        return ERR_ARGUMENT;
+    }
     let start = out.len;
     var flags: u8 = 0;
     if extra.len > 0 || has_extra { flags |= GZIP_FEXTRA; }
@@ -349,7 +352,9 @@ fn gzip_write_header(w: GzipWriter&, out: u8[>..]&, name: const u8[:], comment: 
         out.push(0);
     }
     if !ok {
+        // As Go: the writer fails, and keeps failing.
         out.resize(start);
+        w.err = ERR_ARGUMENT;
         return ERR_ARGUMENT;
     }
     w.wrote_header = true;

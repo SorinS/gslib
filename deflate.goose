@@ -136,6 +136,7 @@ struct Deflate {
     ntok: i64,
     lit_freq: i64[286], dist_freq: i64[30],
     tokens: u32[16384],          // a literal, or 1 << 31 | (distance - 1) << 8 | (length - 3)
+    dict: u8[..32768],          // the preset dictionary's last 32 KiB, for reset
     head: i32[32768],
     prev: i32[32768],
     window: u8[65536],
@@ -150,7 +151,7 @@ fn deflate_writer(level: i64) -> Deflate {
         strstart: 0, lookahead: 0, block_start: 0, block_bytes: 0,
         match_length: 2, match_start: 0, prev_length: 2, prev_match: 0, match_available: false,
         total_in: 0, ntok: 0, lit_freq: [0; 286], dist_freq: [0; 30], tokens: [0; 16384],
-        head: [-1; 32768], prev: [-1; 32768], window: [0; 65536],
+        dict: [], head: [-1; 32768], prev: [-1; 32768], window: [0; 65536],
     };
     deflate_set_level(w, level);
     return w;
@@ -187,6 +188,8 @@ fn deflate_set_dict(w: Deflate&, dict: const u8[:]) {
     let n = min(dict.len, DF_WSIZE);
     let d = dict[dict.len - n..];
     w.window[..n].move_from(d);
+    w.dict.clear();
+    w.dict.append(d);
     for k in n {
         if k + 3 <= n { df_insert(w, k); }
     }
@@ -213,6 +216,12 @@ fn deflate_reset(w: Deflate&) {
     for k in 30 { w.dist_freq[k] = 0; }
     for k in DF_HASH_SIZE { w.head[k] = DF_NIL; }
     deflate_set_level(w, level);
+    // As Go's Reset: the dictionary again.
+    if w.dict.len > 0 {
+        var d: u8[..32768] = [];
+        d.append(w.dict[..]);
+        deflate_set_dict(w, d);
+    }
 }
 
 // --- Matching --------------------------------------------------------------

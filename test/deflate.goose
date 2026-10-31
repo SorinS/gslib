@@ -182,7 +182,9 @@ fn headers() {
     var w2 = compress::gzip_writer();
     var g2: u8[>..] = [];
     if compress::gzip_write_header(w2, g2, "\xe2\x82\xac", "", "") != compress::ERR_ARGUMENT || g2.len != 0 { fail("a euro sign in a name"); }
-    if compress::gzip_write_header(w2, g2, "", "a\x00b", "") != compress::ERR_ARGUMENT { fail("a NUL in a comment"); }
+    if compress::gzip_write(w2, "x", g2) != compress::ERR_ARGUMENT || g2.len != 0 { fail("a failed header is not sticky"); }
+    var w2b = compress::gzip_writer();
+    if compress::gzip_write_header(w2b, g2, "", "a\x00b", "") != compress::ERR_ARGUMENT { fail("a NUL in a comment"); }
     // No header given: Go's (OS 255, nothing else); XFL 4 at level 1.
     var g3: u8[>..] = [];
     compress::gzip_encode("", g3, 1);
@@ -216,6 +218,17 @@ fn errors() {
     compress::deflate_close(w, b);
     var back: u8[>..] = [];
     if compress::inflate_decode(b, back) != 0 || back[..] != "second" { fail("reset"); }
+    // Reset keeps a preset dictionary, as Go's.
+    let dict = "a dictionary of words to match against";
+    var wd = compress::deflate_writer_dict(6, dict);
+    var c1: u8[>..] = [];
+    compress::deflate_write(wd, "words to match", c1);
+    compress::deflate_close(wd, c1);
+    compress::deflate_reset(wd);
+    var c2: u8[>..] = [];
+    compress::deflate_write(wd, "words to match", c2);
+    compress::deflate_close(wd, c2);
+    if c1[..] != c2[..] { fail("reset dropped the dictionary"); }
 }
 
 fn main() {

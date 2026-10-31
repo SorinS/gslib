@@ -330,6 +330,14 @@ fn inflate_read(d: Inflate&, input: const u8[:], out: u8[:]) -> i64, i64, i64 {
     // end the whole bytes left in the bit buffer go back to the input.
     // Near the end of the input the state machine takes over, so what is
     // decoded before a stop is the same either way.
+    // Whole bytes taken ahead go back to the input.
+    fn giveback() {
+        while bitcnt >= 8 && ip > 0 {
+            ip--;
+            bitcnt -= 8;
+        }
+        bitbuf &= (1 << bitcnt) - 1;
+    }
     fn fast(h: const HuffCode&) -> bool {
         let fixed = d.fixed_dist;
         while ip + 8 <= n_in && d.wpos <= INFLATE_WINDOW - 258 {
@@ -343,10 +351,11 @@ fn inflate_read(d: Inflate&, input: const u8[:], out: u8[:]) -> i64, i64, i64 {
             var len = (e & 15) as i64;
             if len == 15 {
                 let s2, l2 = huff_slow(h, bitbuf, bitcnt);
-                if s2 < 0 { fail(ERR_DATA); return false; }
+                if s2 < 0 { giveback(); fail(ERR_DATA); return false; }
                 sym = s2;
                 len = l2;
             } else if e == 0 {
+                giveback();
                 fail(ERR_DATA);
                 return false;
             } else {
@@ -363,7 +372,7 @@ fn inflate_read(d: Inflate&, input: const u8[:], out: u8[:]) -> i64, i64, i64 {
                 d.state = IS_BLOCK;
                 break;
             }
-            if sym >= 286 { fail(ERR_DATA); return false; }
+            if sym >= 286 { giveback(); fail(ERR_DATA); return false; }
             var length = LEN_BASE[sym - 257] as i64;
             let le = LEN_EXTRA[sym - 257] as i64;
             length += (bitbuf & ((1 << le) - 1)) as! i64;
@@ -379,10 +388,11 @@ fn inflate_read(d: Inflate&, input: const u8[:], out: u8[:]) -> i64, i64, i64 {
                 var dlen = (de0 & 15) as i64;
                 if dlen == 15 {
                     let s3, l3 = huff_slow(d.distcode, bitbuf, bitcnt);
-                    if s3 < 0 { fail(ERR_DATA); return false; }
+                    if s3 < 0 { giveback(); fail(ERR_DATA); return false; }
                     dsym = s3;
                     dlen = l3;
                 } else if de0 == 0 {
+                    giveback();
                     fail(ERR_DATA);
                     return false;
                 } else {
@@ -391,12 +401,12 @@ fn inflate_read(d: Inflate&, input: const u8[:], out: u8[:]) -> i64, i64, i64 {
                 bitbuf >>= dlen;
                 bitcnt -= dlen;
             }
-            if dsym >= 30 { fail(ERR_DATA); return false; }
+            if dsym >= 30 { giveback(); fail(ERR_DATA); return false; }
             let xe = DIST_EXTRA[dsym] as i64;
             let dist = DIST_BASE[dsym] + (bitbuf & ((1 << xe) - 1)) as! i64;
             bitbuf >>= xe;
             bitcnt -= xe;
-            if dist > inflate_history(d) { fail(ERR_DATA); return false; }
+            if dist > inflate_history(d) { giveback(); fail(ERR_DATA); return false; }
             let wpos = d.wpos;
             if dist >= length && wpos >= dist {
                 d.window[wpos..wpos + length].move_from(d.window[wpos - dist..wpos - dist + length]);
@@ -411,12 +421,7 @@ fn inflate_read(d: Inflate&, input: const u8[:], out: u8[:]) -> i64, i64, i64 {
             }
             d.wpos = wpos + length;
         }
-        // Whole bytes back to the input.
-        while bitcnt >= 8 && ip > 0 {
-            ip--;
-            bitcnt -= 8;
-        }
-        bitbuf &= (1 << bitcnt) - 1;
+        giveback();
         return true;
     }
 
