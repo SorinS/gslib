@@ -200,7 +200,7 @@ goose v2026.3-252; Go 1.27.1 on both):
 | `scripts/run_tests.py --native` | 9 programs, 36 runs passed on both systems: mediatype 428 checks, encodedword 195, quotedprintable 983, textproto 645, multipart 288, writer 79, formdata 60, types 91, fuzz 17379 |
 | `scripts/differential.py -n 1000` | 21000 cases a run (seeds 1, 2, 21 on macOS, 11 on Linux), 0 differences; every kind: media types, FormatMediaType, encoded-words both ways, DecodeHeader, quoted-printable both ways, header sections with and without limits, multipart bodies, ReadForm, TypeByExtension, ExtensionsByType, FileContentDisposition, SetBoundary |
 | `--kinds alltypes` | macOS: 2834 cases (/etc/apache2/mime.types), Linux: 3233 (/usr/share/mime/globs2), 0 differences |
-| `test/fuzz.goose -- 100 12345 --debug` | 1738956 checks, no abort (Linux: `-- 20 777`, 347488) |
+| `goose --debug test/fuzz.goose -- 100 12345` | 1738956 checks, no abort (Linux: `-- 20 777`, 347488) |
 | `scripts/bench.py` (macOS, arm64) | multipart reading 4.5 GB/s (Go 3.9-4.2), ReadForm of 1000 fields 0.42 ms (Go 0.94-1.0), quoted-printable encoding 390 MB/s (Go 420), decoding 550 MB/s (Go 230), ParseMediaType 180 ns (Go 290) |
 
 The differential's multipart cases end in every outcome Go has (clean
