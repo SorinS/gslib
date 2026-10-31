@@ -7,8 +7,9 @@
 
 import std;
 import os;
-import mime from "..";
-import mime.quotedprintable;
+import gslib from "../..";
+import gslib.mime;
+import gslib.mime.quotedprintable;
 import tv;
 
 // Decodes src fed in two pieces at `split`; the output and the message.

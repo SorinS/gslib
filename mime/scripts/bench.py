@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Times mimegoose against Go on the same work: tools/bench.goose (built
+"""Times mime against Go on the same work: tools/bench.goose (built
 with the C compiler) and tools/mimeoracle.sh bench.
 
     python3 scripts/bench.py [--goose PATH]
@@ -17,7 +17,7 @@ ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 
 def find_goose(arg):
     for cand in [arg, os.environ.get("GOOSE"), shutil.which("goose"),
-                 os.path.join(ROOT, "..", "goose.git", "build", "goose")]:
+                 os.path.join(ROOT, "..", "..", "goose.git", "build", "goose")]:
         if cand and os.path.isfile(cand):
             return cand
     sys.exit("no goose compiler found: pass --goose or set GOOSE")

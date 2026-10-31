@@ -8,8 +8,9 @@
 
 import std;
 import dictionary;
-import mime from "..";
-import mime.textproto;
+import gslib from "../..";
+import gslib.mime;
+import gslib.mime.textproto;
 import tv;
 
 // Every field after a '|', so that an empty field is never lost.

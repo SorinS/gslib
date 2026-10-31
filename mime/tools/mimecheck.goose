@@ -10,13 +10,14 @@
 
 import std;
 import os;
-import mime from "..";
-import mime.encodedword;
-import mime.quotedprintable;
-import mime.textproto;
-import mime.multipart;
-import mime.formdata;
-import mime.types;
+import gslib from "../..";
+import gslib.mime;
+import gslib.mime.encodedword;
+import gslib.mime.quotedprintable;
+import gslib.mime.textproto;
+import gslib.mime.multipart;
+import gslib.mime.formdata;
+import gslib.mime.types;
 
 fn unhex(c: u8) -> u8 {
     if c >= '0' && c <= '9' { return c - '0'; }

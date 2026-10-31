@@ -20,7 +20,7 @@ import std;
 import dictionary;
 import os;
 import mime;
-import types_builtin;
+import mime.types_builtin;
 
 struct TSpan { pos: i64, end: i64 }
 struct ExtOf { typ: TSpan, ext: TSpan }

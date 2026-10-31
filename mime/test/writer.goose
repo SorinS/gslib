@@ -4,9 +4,10 @@
 // Go's own result for each row).
 
 import std;
-import mime from "..";
-import mime.textproto;
-import mime.multipart;
+import gslib from "../..";
+import gslib.mime;
+import gslib.mime.textproto;
+import gslib.mime.multipart;
 import tv;
 
 fn read_part(r: multipart::Reader&, data: u8[>..]&) -> i64 {

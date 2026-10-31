@@ -9,10 +9,12 @@
 
 import std;
 import os;
-import mime from "..";
-import mime.textproto;
-import mime.multipart;
-import mime.formdata;
+import gslib from "../..";
+import gslib.mime;
+import gslib.mime.textproto;
+import gslib.mime.multipart;
+import gslib.mime.formdata;
+import gslib.crypto.bignum.entropy;
 import tv;
 
 let MAX_INT64: i64 = 9223372036854775807;
@@ -212,7 +214,7 @@ fn many_files() {
     if !::env("TMPDIR", dir) || dir.len == 0 { dir.clear(); dir.append("/tmp"); }
     if dir[dir.len - 1] != '/' { dir.push('/'); }
     var rnd: u8[6] = [0; 6];
-    mime::random_bytes(rnd);
+    bignum::random_bytes(rnd);
     dir.append("mimegoose-test-");
     for b in rnd { dir.push(mime::LOWERHEX[b >> 4]); dir.push(mime::LOWERHEX[b & 15]); }
     tv::check("temp dir", ::make_dir(dir));

@@ -16,6 +16,7 @@ later.
 | `net/ldap` | LDAP (RFC 4511): messages, filters, DNs, LDIF, URLs, connections; ldapsearch-style tools | [README](net/ldap/README.md) |
 | `encoding/yaml` | YAML 1.2 | [README](encoding/yaml/README.md) |
 | `compress` | Compression and archives, as Go's compress/* and archive/*, plus xz: DEFLATE, gzip, zlib, LZW, bzip2, xz and LZMA, zip, tar; reading and writing | [README](compress/README.md) |
+| `mime` | MIME, as Go's mime, mime/quotedprintable and mime/multipart, and net/textproto's header sections: media types, RFC 2047 encoded-words, file extensions' types, quoted-printable, multipart bodies and forms | [README](mime/README.md) |
 | `net/http` | HTTP/1.1 and HTTP/2, server and client: a client with Go's policy (redirects, cookies, credentials, proxies, gzip, TLS session resumption, streaming uploads, several responses at once), URLs, cookies, HPACK; goose-http and goose-httpd | [README](net/http/README.md) |
 
 ## Using it
@@ -37,8 +38,8 @@ fn main() {
 
 The libraries are grouped as Go groups its packages: `crypto/` (bignum,
 tls, x509, ssh), `encoding/` (asn1, yaml), `net/` (http, ldap), and
-`compress/` at the top, as Go's compress is (zip and tar are in it too:
-they share its namespace, results and checksums). As in Go,
+`compress/` and `mime/` at the top, as Go's are (zip and tar are in
+compress too: they share its namespace, results and checksums). As in Go,
 the group is part of the import path but not of the name in code:
 `import gslib.net.http.fetch;`, then `http::get(...)`. Goose namespaces
 are one identifier, so each library keeps its own (`http::`, `tls::`,
@@ -48,14 +49,16 @@ are one identifier, so each library keeps its own (`http::`, `tls::`,
 gslib the same modules are `import <group>.<lib>.<m>;`, which the
 compiler resolves within the package (packages.md §4.4). compress, with
 no group, is `import gslib.compress;` and `import gslib.compress.gzip;`,
-and `compress::` in code. Only the
+and `compress::` in code; mime likewise (`import gslib.mime.multipart;`,
+then `multipart::` and `mime::`). Only the
 modules a program imports are compiled. The libraries need one another (http needs
 tls, x509, asn1 and bignum), and since they are one package, a program
 declares only gslib.
 
-The C is http's sockets (`net/http/src/httpnet.c`), named in `gslib.build`
-and compiled only into programs that call them. bignum reaches the OS's
-random bytes through libc, by an `extern "c"` block.
+The C is http's sockets (`net/http/src/httpnet.c`) and mime's platform
+constant (`mime/src/path.c`), named in `gslib.build` and compiled only
+into programs that call them. bignum reaches the OS's random bytes through
+libc, by an `extern "c"` block; mime's multipart takes them from there.
 
 ## Layout
 
@@ -67,13 +70,14 @@ gslib.goose, gslib.build              the package's entry and its sidecar
 <group>/<lib>/scripts                 its test runners, differentials, interop
 <group>/<lib>/README.md               its documentation
 compress.goose, compress/             compress, laid out the same way at the top
+mime.goose, mime/                     mime, the same
 scripts/run_all.py            every library's unit tests
 Makefile                      the programs, checks and tests
 ```
 
 Each library came from a repository of its own (bigmongoose, asn1goose,
 x509goose, tlsgoose, sshgoose, ldapgoose, yamlgoose, httpgoose,
-compressgoose), and `git log --follow -- <group>/<lib>` shows that history.
+compressgoose, mimegoose), and `git log --follow -- <group>/<lib>` shows that history.
 
 ## Requirements
 
@@ -109,7 +113,7 @@ The compiler is `GOOSE`, else `goose` on the PATH, else
 make test                 # every library's unit tests (make test-http: one library's)
 make test-native          # also built with the C compiler
 make interop              # live: OpenSSL, Go, OpenSSH, OpenLDAP, curl, nghttp2, h2spec
-make differential         # against Go's net/http, net/url and x/net hpack, zlib, openssl
+make differential         # against Go (net/http, net/url, hpack, compress, mime), zlib, openssl
 make test-all             # check, test, interop and differential
 python3 scripts/run_all.py [--native] [--only http,tls]   # what make test runs
 ```

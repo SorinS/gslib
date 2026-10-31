@@ -15,8 +15,7 @@ namespace mime;
 
 import std;
 import dictionary;
-import unicode;
-import rand;
+import mime.unicode;
 
 // --- Errors ------------------------------------------------------------------
 //
@@ -109,8 +108,8 @@ fn error_text(code: i64) -> const u8[:] {
     }
 }
 
-// Whether the program is built for Windows (src/path_*.h, by mime.build's
-// platform c_headers): multipart's file names and mime.types depend on it.
+// Whether the program is built for Windows (mime/src/path.c): multipart's
+// file names and mime.types depend on it.
 extern fn mime_path_windows() -> i64;
 fn is_windows() -> bool { mime_path_windows() != 0 }
 

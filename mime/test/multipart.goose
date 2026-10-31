@@ -11,9 +11,10 @@
 // pieces of pseudo-random sizes, which must all read the same.
 
 import std;
-import mime from "..";
-import mime.textproto;
-import mime.multipart;
+import gslib from "../..";
+import gslib.mime;
+import gslib.mime.textproto;
+import gslib.mime.multipart;
 import tv;
 
 let FEED_WHOLE: i64 = 0;

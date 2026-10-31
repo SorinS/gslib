@@ -1,4 +1,4 @@
-# mimegoose
+# mime
 
 MIME for Goose, at parity with Go's `mime`, `mime/quotedprintable` and
 `mime/multipart` (Go 1.27.1), and with the part of `net/textproto` they
@@ -20,8 +20,9 @@ The namespaces follow Go's packages, so `mime::parse_media_type`,
 `quotedprintable::decode`, `multipart::next`, `textproto::get`.
 
 ```goose
-import mime from "../mimegoose.git";
-import mime.multipart;
+import gslib from "SorinS/gslib@v0.1";   // or a path to gslib.git
+import gslib.mime;
+import gslib.mime.multipart;
 
 let mt = mime::parse_media_type(content_type);       // mt.err, mt.typ, mt.params
 if mt.err == 0 && mt.typ == "multipart/form-data" {
@@ -278,10 +279,10 @@ Deliberate, or where Go's own result depends on how its input is read:
   than 64 KiB in a system file; such lines are read here.
 * **Windows** is untested: the registry is not read (the built-in table
   only); `getentropy` (random boundaries, temporary file names) comes from
-  the C library through an `extern "c"` block and `mime.build` maps no
-  Windows library for it, so `new_writer` and spilling a form's files are
-  expected to fail there; `FileName` follows Windows' `filepath.Base` there
-  (`src/path_windows.h`).
+  the C library by crypto/bignum's entropy module, which has no Windows
+  source yet, so `new_writer` and spilling a form's files are expected to
+  fail there; `FileName` follows Windows' `filepath.Base` there
+  (`src/path.c`).
 
 ## Not done
 

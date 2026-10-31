@@ -10,13 +10,14 @@
 //     goose run fuzz.goose -- 50 7         50 times as many inputs, from seed 7
 
 import std;
-import mime from "..";
-import mime.encodedword;
-import mime.quotedprintable;
-import mime.textproto;
-import mime.multipart;
-import mime.formdata;
-import mime.types;
+import gslib from "../..";
+import gslib.mime;
+import gslib.mime.encodedword;
+import gslib.mime.quotedprintable;
+import gslib.mime.textproto;
+import gslib.mime.multipart;
+import gslib.mime.formdata;
+import gslib.mime.types;
 import tv;
 
 var seed: u64 = 0x2545F4914F6CDD1D;

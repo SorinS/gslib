@@ -3,7 +3,8 @@
 // by scripts/gen_vectors.py), each row checked against what Go returns.
 
 import std;
-import mime from "..";
+import gslib from "../..";
+import gslib.mime;
 import tv;
 
 fn params_text(out: u8[>..]&, mt: const mime::MediaType&) {

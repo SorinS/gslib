@@ -34,8 +34,9 @@ namespace multipart;
 import std;
 import dictionary;
 import mime;
-import textproto;
-import quotedprintable;
+import crypto.bignum.entropy;
+import mime.textproto;
+import mime.quotedprintable;
 
 let EV_NEED_MORE: i64 = 0;
 let EV_PART: i64 = 1;
@@ -423,7 +424,7 @@ struct Writer {
 fn new_writer() -> Writer {
     var w = Writer { .. };
     var raw: u8[30] = [0; 30];
-    mime::random_bytes(raw);
+    bignum::random_bytes(raw);
     for b in raw { w.boundary.push(mime::LOWERHEX[b >> 4]); w.boundary.push(mime::LOWERHEX[b & 15]); }
     return w;
 }

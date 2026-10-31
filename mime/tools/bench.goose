@@ -5,10 +5,11 @@
 
 import std;
 import os;
-import mime from "..";
-import mime.quotedprintable;
-import mime.multipart;
-import mime.formdata;
+import gslib from "../..";
+import gslib.mime;
+import gslib.mime.quotedprintable;
+import gslib.mime.multipart;
+import gslib.mime.formdata;
 
 fn body_of(parts: i64, size: i64, boundary: const u8[:]) -> u8[>..] {
     var out: u8[>..] = [];

@@ -22,7 +22,8 @@ namespace multipart;
 import std;
 import os;
 import mime;
-import textproto;
+import crypto.bignum.entropy;
+import mime.textproto;
 
 let NEED_MORE: i64 = -1;
 
@@ -148,7 +149,7 @@ fn start_spill(f: Form&) -> bool {
     if f.spill.len > 0 && f.spill[f.spill.len - 1] != '/' { f.spill.push('/'); }
     f.spill.append("multipart-");
     var rnd: u8[8] = [0; 8];
-    mime::random_bytes(rnd);
+    bignum::random_bytes(rnd);
     for b in rnd { f.spill.push(mime::LOWERHEX[b >> 4]); f.spill.push(mime::LOWERHEX[b & 15]); }
     if ::file_exists(f.spill) { return false; }
     if !::write_file(f.spill, f.text[f.part_start..]) { return false; }

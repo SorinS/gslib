@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Differential test of mimegoose against Go's mime packages.
+"""Differential test of mime against Go's mime packages.
 
 Generates random cases (media types and their parameters, encoded-words
 and headers holding them, quoted-printable data both ways, MIME header
@@ -452,7 +452,7 @@ WEIGHT = {"mp": 4, "form": 2, "mt": 2, "dh": 2}
 
 def find_goose(arg):
     for cand in [arg, os.environ.get("GOOSE"), shutil.which("goose"),
-                 os.path.join(ROOT, "..", "goose.git", "build", "goose")]:
+                 os.path.join(ROOT, "..", "..", "goose.git", "build", "goose")]:
         if cand and os.path.isfile(cand):
             return cand
     sys.exit("no goose compiler found: pass --goose or set GOOSE")

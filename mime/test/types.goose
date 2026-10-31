@@ -6,8 +6,9 @@
 // over a small table and over Go's built-in one.
 
 import std;
-import mime from "..";
-import mime.types;
+import gslib from "../..";
+import gslib.mime;
+import gslib.mime.types;
 import tv;
 
 fn set_type(ext: const u8[:], typ: const u8[:]) {

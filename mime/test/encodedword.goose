@@ -3,8 +3,9 @@
 // each row checked against what Go returns, and the error messages.
 
 import std;
-import mime from "..";
-import mime.encodedword;
+import gslib from "../..";
+import gslib.mime;
+import gslib.mime.encodedword;
 import tv;
 
 fn encode() {
