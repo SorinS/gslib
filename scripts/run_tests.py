@@ -20,7 +20,7 @@ import sys
 import tempfile
 
 ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
-EXAMPLE_ARGS = {}
+EXAMPLE_ARGS = {"gzstream": ["../README.md", "9"]}
 
 
 def find_goose(arg):
