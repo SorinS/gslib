@@ -1,0 +1,2 @@
+# form_filename: 1 rows of messageWithFileName in $GOROOT/src/mime/multipart, by tools/mimeoracle.sh vectors -table form_filename
+1|\x0a--MyBoundary\x0aContent-Disposition: form-data; name="filea"; filename="filea.txt"\x0aContent-Type: text/plain\x0a\x0aThis is a test file.\x0a--MyBoundary--\x0a|=>||0|1|filea|1|filea.txt|20|This is a test file.|0

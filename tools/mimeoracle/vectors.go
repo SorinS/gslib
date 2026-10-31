@@ -26,6 +26,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io"
+	"math"
 	"mime"
 	"mime/multipart"
 	"mime/quotedprintable"
@@ -79,6 +80,13 @@ var tables = map[string]tableSpec{
 	"qp_part":           {dir: "mime/multipart", fn: "testQuotedPrintableEncoding", name: "body", actual: actualParse("0016e68ee29c5d515f04cedf6733"), seed: map[string]any{"cte": "quoted-printable"}},
 	"readahead_1":       {dir: "mime/multipart", fn: "TestMultipartStreamReadahead", name: "testBody1"},
 	"readahead_2":       {dir: "mime/multipart", fn: "TestMultipartStreamReadahead", name: "testBody2"},
+	// ReadForm's test messages and TestReadFormLimits.
+	"form_message":  {dir: "mime/multipart", name: "message", actual: actualReadForm(25)},
+	"form_nameless": {dir: "mime/multipart", name: "messageWithFileWithoutName", actual: actualReadForm(25)},
+	"form_filename": {dir: "mime/multipart", name: "messageWithFileName", actual: actualReadForm(math.MaxInt64)},
+	"form_textct":   {dir: "mime/multipart", name: "messageWithTextContentType", actual: actualReadForm(25)},
+	"form_contents": {dir: "mime/multipart", name: "fileaContents filebContents textaValue textbValue boundary"},
+	"form_limits":   {dir: "mime/multipart", fn: "TestReadFormLimits", calls: "range"},
 	// net/textproto's tests of what multipart relies on.
 	"canonical_key":    {dir: "net/textproto", name: "canonicalHeaderKeyTests", actual: actualCanonicalKey},
 	"header_malformed": {dir: "net/textproto", fn: "TestReadMIMEHeaderMalformed", name: "inputs", actual: actualReadMIMEHeader},
@@ -105,7 +113,19 @@ func vectorsMode(args []string) error {
 		e.locals[k] = v
 	}
 	var v any
-	if spec.calls != "" {
+	if strings.Contains(spec.name, " ") { // several package constants: a row each, name and value
+		var rows []any
+		for _, n := range strings.Fields(spec.name) {
+			x, err := p.table(e, "", n)
+			if err != nil {
+				return err
+			}
+			rows = append(rows, []any{n, x})
+		}
+		v = rows
+	} else if spec.calls == "range" { // the literal a test function ranges over
+		v, err = p.rangeLiteral(e, spec.fn)
+	} else if spec.calls != "" {
 		v, err = p.callArgs(e, spec.fn, spec.calls)
 	} else {
 		v, err = p.table(e, spec.fn, spec.name)
@@ -329,6 +349,29 @@ func (p *pkg) callArgs(e *env, fnPrefix, callee string) (any, error) {
 	return out, nil
 }
 
+// rangeLiteral: the composite literal that function fn's first
+// `for ... range <literal>` ranges over.
+func (p *pkg) rangeLiteral(e *env, fn string) (any, error) {
+	fd := p.funcs[fn]
+	if fd == nil {
+		return nil, fmt.Errorf("no function %s", fn)
+	}
+	var lit ast.Expr
+	ast.Inspect(fd.Body, func(x ast.Node) bool {
+		if rs, ok := x.(*ast.RangeStmt); ok && lit == nil {
+			if cl, ok := rs.X.(*ast.CompositeLit); ok {
+				lit = cl
+			}
+		}
+		return lit == nil
+	})
+	if lit == nil {
+		return nil, fmt.Errorf("%s: no range over a literal", fn)
+	}
+	e.table = lit
+	return e.eval(lit, nil)
+}
+
 // findIn evaluates the statements' simple assignments in order, as locals,
 // until one assigns `name`.
 func (e *env) findIn(stmts []ast.Stmt, name string) (any, error) {
@@ -481,6 +524,9 @@ func (e *env) call(x *ast.CallExpr) (any, error) {
 		}
 	case *ast.SelectorExpr:
 		pk, ok := f.X.(*ast.Ident)
+		if ok && (pk.Name == "errors" && f.Sel.Name == "New" || pk.Name == "fmt" && f.Sel.Name == "Errorf") && len(args) >= 1 {
+			return args[0], nil // an error: its text
+		}
 		if ok && pk.Name == "strings" {
 			switch f.Sel.Name {
 			case "Repeat":
@@ -824,6 +870,52 @@ func actualParse(boundary string) func(any) ([]string, error) {
 func actualParseCRLF(boundary string) func(any) ([]string, error) {
 	return func(row any) ([]string, error) {
 		return parseFields(strings.ReplaceAll(str(row, 0), "\n", "\r\n"), boundary), nil
+	}
+}
+
+// actualReadForm: Go's ReadForm(maxMemory) of a row's message (its
+// newlines made CRLF, as the tests do), boundary "MyBoundary": the error,
+// then the values (name, value) and the files (name, file name, size,
+// content, whether on disk) in Go's map order sorted by name.
+func actualReadForm(maxMemory int64) func(any) ([]string, error) {
+	return func(row any) ([]string, error) {
+		body := strings.ReplaceAll(str(row, 0), "\n", "\r\n")
+		r := multipart.NewReader(strings.NewReader(body), "MyBoundary")
+		f, err := r.ReadForm(maxMemory)
+		out := []string{escapeField(errText(err))}
+		if err != nil {
+			return out, nil
+		}
+		defer f.RemoveAll()
+		vals := map[string]any{}
+		for k, vs := range f.Value {
+			var l []any
+			for _, v := range vs {
+				l = append(l, v)
+			}
+			vals[k] = l
+		}
+		flatten(vals, &out)
+		files := map[string]any{}
+		for k, fhs := range f.File {
+			var l []any
+			for _, fh := range fhs {
+				fd, err := fh.Open()
+				if err != nil {
+					return nil, err
+				}
+				data, err := io.ReadAll(fd)
+				_, onDisk := fd.(*os.File)
+				fd.Close()
+				if err != nil {
+					return nil, err
+				}
+				l = append(l, &structVal{vals: []any{fh.Filename, int64(fh.Size), string(data), onDisk}})
+			}
+			files[k] = l
+		}
+		flatten(files, &out)
+		return out, nil
 	}
 }
 

@@ -1,0 +1,13 @@
+# form_limits: 12 rows of TestReadFormLimits. in $GOROOT/src/mime/multipart, by tools/mimeoracle.sh vectors -table form_limits
+1000|0|0|\N|
+1001|0|0|multipart: message too large|
+500|500|0|\N|
+501|500|0|multipart: message too large|
+0|1000|0|\N|
+0|1001|0|multipart: message too large|
+0|1|9998|\N|
+0|1|10000|multipart: message too large|
+100|0|0|\N|multipartmaxparts=100
+101|0|0|multipart: message too large|multipartmaxparts=100
+0|2|48|\N|multipartmaxheaders=100
+0|2|50|multipart: message too large|multipartmaxheaders=100

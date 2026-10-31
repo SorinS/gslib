@@ -30,6 +30,7 @@ TABLES = [
     "line_endings", "truncated_bodies", "multipart_body", "line_continuation", "raw_part", "qp_part",
     "readahead_1", "readahead_2",
     "canonical_key", "header_malformed", "read_mime_header",
+    "form_message", "form_nameless", "form_filename", "form_textct", "form_contents", "form_limits",
 ]
 
 # Go's test data files, copied as they are.
@@ -119,6 +120,8 @@ def check(table, want, got):
         return (unescape(got[0]) == b"") == (u[1] == b"1")
     if table == "file_disposition":
         return unescape(got[0]) == u[2]
+    if table.startswith("form_") and got:
+        return got[0] == ""
     if table == "canonical_key":
         return unescape(got[0]) == u[1]
     if table == "header_malformed":

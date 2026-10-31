@@ -1,0 +1,2 @@
+# form_nameless: 1 rows of messageWithFileWithoutName in $GOROOT/src/mime/multipart, by tools/mimeoracle.sh vectors -table form_nameless
+1|\x0a--MyBoundary\x0aContent-Disposition: form-data; name="hiddenfile"; filename=""\x0aContent-Type: text/plain\x0a\x0aAnother test file.\x0a--MyBoundary--\x0a|=>||1|hiddenfile|1|Another test file.|0

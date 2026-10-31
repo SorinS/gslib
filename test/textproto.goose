@@ -11,8 +11,9 @@ import mime from "..";
 import mime.textproto;
 import tv;
 
+// Every field after a '|', so that an empty field is never lost.
 fn push_field(out: u8[>..]&, s: const u8[:]) {
-    if out.len > 0 { out.push('|'); }
+    out.push('|');
     tv::escape(out, s);
 }
 

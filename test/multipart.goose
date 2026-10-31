@@ -20,8 +20,9 @@ let FEED_WHOLE: i64 = 0;
 let FEED_BYTES: i64 = 1;
 let FEED_RANDOM: i64 = 2;
 
+// Every field after a '|', so that an empty field is never lost.
 fn push_field(out: u8[>..]&, s: const u8[:]) {
-    if out.len > 0 { out.push('|'); }
+    out.push('|');
     tv::escape(out, s);
 }
 
@@ -89,7 +90,7 @@ fn parse_fields(body: const u8[:], boundary: const u8[:], mode: i64, raw_first: 
         break;
     }
     push_field(out, str(count));
-    if parts.len > 0 { out.push('|'); out.append(parts); }
+    out.append(parts);
     push_field(out, final);
     return out;
 }

@@ -1,0 +1,6 @@
+# form_contents: 5 rows of fileaContents filebContents textaValue textbValue boundary in $GOROOT/src/mime/multipart, by tools/mimeoracle.sh vectors -table form_contents
+2|fileaContents|This is a test file.
+2|filebContents|Another test file.
+2|textaValue|foo
+2|textbValue|bar
+2|boundary|MyBoundary
