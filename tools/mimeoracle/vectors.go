@@ -18,6 +18,7 @@ package main
 // "=>" are Go's actual results, per table (see the actual funcs below).
 
 import (
+	"bufio"
 	"errors"
 	"flag"
 	"fmt"
@@ -28,6 +29,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"mime/quotedprintable"
+	"net/textproto"
 	"os"
 	"path/filepath"
 	"sort"
@@ -46,36 +48,41 @@ type tableSpec struct {
 	name   string // the variable
 	actual func(row any) ([]string, error)
 	seed   map[string]any // values for the function's parameters
+	calls  string         // instead of a variable: the argument of every call to this function in the functions named fn*
 }
 
 var tables = map[string]tableSpec{
-	"consume_token":       {"mime", "TestConsumeToken", "tests", nil, nil},
-	"consume_value":       {"mime", "TestConsumeValue", "tests", nil, nil},
-	"consume_media_param": {"mime", "TestConsumeMediaParam", "tests", nil, nil},
-	"parse_media_type":    {"mime", "", "parseMediaTypeTests", actualParseMediaType(0), nil},
-	"bad_media_type":      {"mime", "", "badMediaTypeTests", actualParseMediaType(0), nil},
-	"format_media_type":   {"mime", "", "formatTests", actualFormatMediaType, nil},
-	"encode_word":         {"mime", "TestEncodeWord", "tests", actualEncodeWord, nil},
-	"encoded_word_length": {"mime", "TestEncodedWordLength", "tests", actualEncodeWordUTF8, nil},
-	"decode_word":         {"mime", "TestDecodeWord", "tests", actualDecodeWord, nil},
-	"decode_header":       {"mime", "TestDecodeHeader", "tests", actualDecodeHeader, nil},
-	"charset_decoder":     {"mime", "TestCharsetDecoder", "tests", nil, nil},
-	"qp_reader":           {"mime/quotedprintable", "TestReader", "tests", actualQPReader, nil},
-	"qp_writer":           {"mime/quotedprintable", "testWriter", "tests", actualQPWriter, nil},
-	"qp_testmsg":          {"mime/quotedprintable", "", "testMsg", actualQPWriter, nil},
-	"name_accessors":      {"mime/multipart", "TestNameAccessors", "tests", actualNameAccessors, nil},
-	"multipart_parse":     {"mime/multipart", "", "parseTests", actualMultipartParse, nil},
-	"set_boundary":        {"mime/multipart", "TestWriterSetBoundary", "tests", actualSetBoundary, nil},
-	"file_disposition":    {"mime/multipart", "TestFileContentDisposition", "tests", actualFileDisposition, nil},
+	"consume_token":       {dir: "mime", fn: "TestConsumeToken", name: "tests"},
+	"consume_value":       {dir: "mime", fn: "TestConsumeValue", name: "tests"},
+	"consume_media_param": {dir: "mime", fn: "TestConsumeMediaParam", name: "tests"},
+	"parse_media_type":    {dir: "mime", name: "parseMediaTypeTests", actual: actualParseMediaType(0)},
+	"bad_media_type":      {dir: "mime", name: "badMediaTypeTests", actual: actualParseMediaType(0)},
+	"format_media_type":   {dir: "mime", name: "formatTests", actual: actualFormatMediaType},
+	"encode_word":         {dir: "mime", fn: "TestEncodeWord", name: "tests", actual: actualEncodeWord},
+	"encoded_word_length": {dir: "mime", fn: "TestEncodedWordLength", name: "tests", actual: actualEncodeWordUTF8},
+	"decode_word":         {dir: "mime", fn: "TestDecodeWord", name: "tests", actual: actualDecodeWord},
+	"decode_header":       {dir: "mime", fn: "TestDecodeHeader", name: "tests", actual: actualDecodeHeader},
+	"charset_decoder":     {dir: "mime", fn: "TestCharsetDecoder", name: "tests"},
+	"qp_reader":           {dir: "mime/quotedprintable", fn: "TestReader", name: "tests", actual: actualQPReader},
+	"qp_writer":           {dir: "mime/quotedprintable", fn: "testWriter", name: "tests", actual: actualQPWriter},
+	"qp_testmsg":          {dir: "mime/quotedprintable", name: "testMsg", actual: actualQPWriter},
+	"name_accessors":      {dir: "mime/multipart", fn: "TestNameAccessors", name: "tests", actual: actualNameAccessors},
+	"multipart_parse":     {dir: "mime/multipart", name: "parseTests", actual: actualMultipartParse},
+	"set_boundary":        {dir: "mime/multipart", fn: "TestWriterSetBoundary", name: "tests", actual: actualSetBoundary},
+	"file_disposition":    {dir: "mime/multipart", fn: "TestFileContentDisposition", name: "tests", actual: actualFileDisposition},
 	// Bodies that multipart's test functions build inline, with Go's parse of each.
-	"line_endings":      {"mime/multipart", "TestVariousTextLineEndings", "tests", nil, nil},
-	"truncated_bodies":  {"mime/multipart", "TestMultipartTruncated", "body", actualParseCRLF("MyBoundary"), nil},
-	"multipart_body":    {"mime/multipart", "testMultipartBody", "testBody", nil, nil},
-	"line_continuation": {"mime/multipart", "TestLineContinuation", "testBody", actualParse("Apple-Mail-2-292336769"), nil},
-	"raw_part":          {"mime/multipart", "TestRawPart", "body", actualParse("0016e68ee29c5d515f04cedf6733"), nil},
-	"qp_part":           {"mime/multipart", "testQuotedPrintableEncoding", "body", actualParse("0016e68ee29c5d515f04cedf6733"), map[string]any{"cte": "quoted-printable"}},
-	"readahead_1":       {"mime/multipart", "TestMultipartStreamReadahead", "testBody1", nil, nil},
-	"readahead_2":       {"mime/multipart", "TestMultipartStreamReadahead", "testBody2", nil, nil},
+	"line_endings":      {dir: "mime/multipart", fn: "TestVariousTextLineEndings", name: "tests"},
+	"truncated_bodies":  {dir: "mime/multipart", fn: "TestMultipartTruncated", name: "body", actual: actualParseCRLF("MyBoundary")},
+	"multipart_body":    {dir: "mime/multipart", fn: "testMultipartBody", name: "testBody"},
+	"line_continuation": {dir: "mime/multipart", fn: "TestLineContinuation", name: "testBody", actual: actualParse("Apple-Mail-2-292336769")},
+	"raw_part":          {dir: "mime/multipart", fn: "TestRawPart", name: "body", actual: actualParse("0016e68ee29c5d515f04cedf6733")},
+	"qp_part":           {dir: "mime/multipart", fn: "testQuotedPrintableEncoding", name: "body", actual: actualParse("0016e68ee29c5d515f04cedf6733"), seed: map[string]any{"cte": "quoted-printable"}},
+	"readahead_1":       {dir: "mime/multipart", fn: "TestMultipartStreamReadahead", name: "testBody1"},
+	"readahead_2":       {dir: "mime/multipart", fn: "TestMultipartStreamReadahead", name: "testBody2"},
+	// net/textproto's tests of what multipart relies on.
+	"canonical_key":    {dir: "net/textproto", name: "canonicalHeaderKeyTests", actual: actualCanonicalKey},
+	"header_malformed": {dir: "net/textproto", fn: "TestReadMIMEHeaderMalformed", name: "inputs", actual: actualReadMIMEHeader},
+	"read_mime_header": {dir: "net/textproto", fn: "TestReadMIMEHeader", actual: actualReadMIMEHeader, calls: "reader"},
 }
 
 func vectorsMode(args []string) error {
@@ -97,7 +104,12 @@ func vectorsMode(args []string) error {
 	for k, v := range spec.seed {
 		e.locals[k] = v
 	}
-	v, err := p.table(e, spec.fn, spec.name)
+	var v any
+	if spec.calls != "" {
+		v, err = p.callArgs(e, spec.fn, spec.calls)
+	} else {
+		v, err = p.table(e, spec.fn, spec.name)
+	}
 	if err != nil {
 		return err
 	}
@@ -283,6 +295,38 @@ func (p *pkg) table(e *env, fn, name string) (any, error) {
 		}
 	}
 	return nil, fmt.Errorf("no table %s", name)
+}
+
+// callArgs: the first argument of every call to `callee` in the
+// functions whose names start with fnPrefix, in source order; arguments
+// the evaluator cannot read are skipped (and noted).
+func (p *pkg) callArgs(e *env, fnPrefix, callee string) (any, error) {
+	var names []string
+	for n := range p.funcs {
+		if strings.HasPrefix(n, fnPrefix) {
+			names = append(names, n)
+		}
+	}
+	sort.Slice(names, func(i, j int) bool { return p.funcs[names[i]].Pos() < p.funcs[names[j]].Pos() })
+	out := []any{}
+	for _, n := range names {
+		ast.Inspect(p.funcs[n].Body, func(x ast.Node) bool {
+			c, ok := x.(*ast.CallExpr)
+			if !ok || len(c.Args) != 1 {
+				return true
+			}
+			if id, ok := c.Fun.(*ast.Ident); ok && id.Name == callee {
+				v, err := e.eval(c.Args[0], nil)
+				if err != nil {
+					e.skips = append(e.skips, fmt.Sprintf("%s: %s(%s): %v", n, callee, exprText(c.Args[0]), err))
+					return true
+				}
+				out = append(out, []any{n, v})
+			}
+			return true
+		})
+	}
+	return out, nil
 }
 
 // findIn evaluates the statements' simple assignments in order, as locals,
@@ -781,6 +825,34 @@ func actualParseCRLF(boundary string) func(any) ([]string, error) {
 	return func(row any) ([]string, error) {
 		return parseFields(strings.ReplaceAll(str(row, 0), "\n", "\r\n"), boundary), nil
 	}
+}
+
+func actualCanonicalKey(row any) ([]string, error) {
+	return []string{escapeField(textproto.CanonicalMIMEHeaderKey(str(row, 0)))}, nil
+}
+
+// actualReadMIMEHeader: ReadMIMEHeader of the row's last string field: the
+// error's text, then the header as a map of lists.
+func actualReadMIMEHeader(row any) ([]string, error) {
+	in := ""
+	switch r := row.(type) {
+	case []any:
+		in, _ = r[len(r)-1].(string)
+	case string:
+		in = r
+	}
+	m, err := textproto.NewReader(bufio.NewReader(strings.NewReader(in))).ReadMIMEHeader()
+	mp := map[string]any{}
+	for k, vs := range m {
+		var l []any
+		for _, v := range vs {
+			l = append(l, v)
+		}
+		mp[k] = l
+	}
+	out := []string{escapeField(errText(err))}
+	flatten(mp, &out)
+	return out, nil
 }
 
 func actualSetBoundary(row any) ([]string, error) {

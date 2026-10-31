@@ -29,6 +29,7 @@ TABLES = [
     "name_accessors", "multipart_parse", "set_boundary", "file_disposition",
     "line_endings", "truncated_bodies", "multipart_body", "line_continuation", "raw_part", "qp_part",
     "readahead_1", "readahead_2",
+    "canonical_key", "header_malformed", "read_mime_header",
 ]
 
 # Go's test data files, copied as they are.
@@ -118,6 +119,10 @@ def check(table, want, got):
         return (unescape(got[0]) == b"") == (u[1] == b"1")
     if table == "file_disposition":
         return unescape(got[0]) == u[2]
+    if table == "canonical_key":
+        return unescape(got[0]) == u[1]
+    if table == "header_malformed":
+        return unescape(got[0]) not in (b"", b"EOF")
     if table == "truncated_bodies":
         return got[-1] == "body: unexpected EOF"
     if table in ("line_continuation", "raw_part", "qp_part"):
