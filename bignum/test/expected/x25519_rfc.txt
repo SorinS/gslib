@@ -1,0 +1,8 @@
+5.2 vector 1: ok
+5.2 vector 2: ok
+5.2 after 1 iteration: ok
+5.2 after 1000 iterations: ok
+6.1 Alice's public key: ok
+6.1 Bob's public key: ok
+6.1 Alice's shared secret: ok
+6.1 Bob's shared secret: ok

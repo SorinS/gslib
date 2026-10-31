@@ -1,0 +1,4 @@
+// bignum's sidecar: the C library that entropy.goose's extern "c" block
+// opens. "c" is libc.dylib on macOS as it stands; Linux's libc.so is a
+// linker script, so name the library itself.
+dylibs_linux = ["c=libc.so.6"];
