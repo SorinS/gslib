@@ -10,6 +10,8 @@
 //	    function returns for it; see vectors.go
 //	mimeoracle serve
 //	    answers the differential's cases, one per line on stdin; see serve.go
+//	mimeoracle bench
+//	    the same work as tools/bench.goose, timed
 //	mimeoracle -version
 //
 // Errors go to stderr: a bad command line exits 2, anything else 1.
@@ -29,6 +31,7 @@ const usage = `usage: mimeoracle unicode
        mimeoracle types [-goroot dir]
        mimeoracle vectors -table name [-goroot dir]
        mimeoracle serve
+       mimeoracle bench
        mimeoracle -version
 `
 
@@ -67,7 +70,7 @@ func gorootFlag(fs *flag.FlagSet) *string {
 
 func main() {
 	modes := map[string]func([]string) error{
-		"unicode": unicodeMode, "types": typesMode, "vectors": vectorsMode, "serve": serveMode,
+		"unicode": unicodeMode, "types": typesMode, "vectors": vectorsMode, "serve": serveMode, "bench": benchMode,
 	}
 	if len(os.Args) == 2 && (os.Args[1] == "-version" || os.Args[1] == "--version") {
 		printVersion()

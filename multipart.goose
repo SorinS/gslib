@@ -77,6 +77,8 @@ root struct Reader {
     qp: quotedprintable::Reader = quotedprintable::Reader { .. },
     hdr_scan: i64 = 0,               // where the search for the header's blank line has got to
     hdr_try: i64 = 0,                // how many bytes there were at the last attempt
+    cr_set: ByteSet = byte_set("\r"),    // the first byte of "\r\n--boundary", for find_any (memchr)
+    lf_set: ByteSet = byte_set("\n"),
 }
 
 // NewReader: a reader for the body of a multipart message with this
@@ -270,6 +272,21 @@ fn match_after_prefix(buf: const u8[:], plen: i64, read_err: bool) -> i64 {
     return -1;
 }
 
+// bytes.Index(buf, pat) for pat = nl_dash_boundary: memchr for its first
+// byte, then a compare.
+fn index_boundary(r: const Reader&, buf: const u8[:], pat: const u8[:]) -> i64 {
+    var i = 0;
+    while i + pat.len <= buf.len {
+        let k = if pat[0] == '\r' { find_any(buf[i..buf.len - pat.len + 1], r.cr_set) }
+                else { find_any(buf[i..buf.len - pat.len + 1], r.lf_set) };
+        if k < 0 { return -1; }
+        let at = i + k;
+        if buf[at..at + pat.len] == pat { return at; }
+        i = at + 1;
+    }
+    return -1;
+}
+
 // scanUntilBoundary: how many bytes of buf are body for certain, and
 // whether the body ends after them (1: io.EOF, the boundary; 2: the input
 // ended first, io.ErrUnexpectedEOF; 0 not yet).
@@ -286,7 +303,7 @@ fn scan_until_boundary(r: const Reader&, buf: const u8[:], total: i64, read_err:
         }
         if has_prefix(db, buf) { return 0, rerr; }
     }
-    let i = find(buf, ndb);
+    let i = index_boundary(r, buf, ndb);
     if i >= 0 {
         let m = match_after_prefix(buf[i..], ndb.len, read_err);
         if m == -1 { return i + ndb.len, 0; }
