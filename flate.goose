@@ -17,8 +17,9 @@
 // and can stop anywhere inside one, keeping only the bits it took. Huffman
 // codes are looked up in a 512-entry table for codes of up to 9 bits; the
 // rarer longer codes are decoded canonically from the code's counts. A
-// faster loop decodes while 8 bytes of input and 258 bytes of window room
-// are at hand.
+// faster loop decodes whole symbol sequences while 8 bytes of input and
+// 258 bytes of window room are at hand, and gives back the whole bytes it
+// took ahead when it stops.
 //
 // What is refused is what Go's reader refuses: a reserved block type, a
 // stored block's LEN that does not match NLEN, more than 286 length or 30
@@ -323,6 +324,101 @@ fn inflate_read(d: Inflate&, input: const u8[:], out: u8[:]) -> i64, i64, i64 {
         d.state = IS_FAILED;
         st = e;
     }
+    // The fast loop: while 8 bytes of input and 258 bytes of window room
+    // are at hand, whole symbol sequences are decoded without stopping (a
+    // length, a distance and their extra bits are at most 48 bits). At its
+    // end the whole bytes left in the bit buffer go back to the input.
+    // Near the end of the input the state machine takes over, so what is
+    // decoded before a stop is the same either way.
+    fn fast(h: const HuffCode&) -> bool {
+        let fixed = d.fixed_dist;
+        while ip + 8 <= n_in && d.wpos <= INFLATE_WINDOW - 258 {
+            while bitcnt <= 56 {
+                bitbuf |= (input[ip] as u64) << bitcnt;
+                ip++;
+                bitcnt += 8;
+            }
+            var e = h.table[bitbuf & 511];
+            var sym: i64 = 0;
+            var len = (e & 15) as i64;
+            if len == 15 {
+                let s2, l2 = huff_slow(h, bitbuf, bitcnt);
+                if s2 < 0 { fail(ERR_DATA); return false; }
+                sym = s2;
+                len = l2;
+            } else if e == 0 {
+                fail(ERR_DATA);
+                return false;
+            } else {
+                sym = (e >> 4);
+            }
+            bitbuf >>= len;
+            bitcnt -= len;
+            if sym < 256 {
+                d.window[d.wpos] = sym as! u8;
+                d.wpos++;
+                continue;
+            }
+            if sym == 256 {
+                d.state = IS_BLOCK;
+                break;
+            }
+            if sym >= 286 { fail(ERR_DATA); return false; }
+            var length = LEN_BASE[sym - 257] as i64;
+            let le = LEN_EXTRA[sym - 257] as i64;
+            length += (bitbuf & ((1 << le) - 1)) as! i64;
+            bitbuf >>= le;
+            bitcnt -= le;
+            var dsym: i64 = 0;
+            if fixed {
+                dsym = reverse_bits((bitbuf & 31) as! i64, 5);
+                bitbuf >>= 5;
+                bitcnt -= 5;
+            } else {
+                let de0 = d.distcode.table[bitbuf & 511];
+                var dlen = (de0 & 15) as i64;
+                if dlen == 15 {
+                    let s3, l3 = huff_slow(d.distcode, bitbuf, bitcnt);
+                    if s3 < 0 { fail(ERR_DATA); return false; }
+                    dsym = s3;
+                    dlen = l3;
+                } else if de0 == 0 {
+                    fail(ERR_DATA);
+                    return false;
+                } else {
+                    dsym = (de0 >> 4);
+                }
+                bitbuf >>= dlen;
+                bitcnt -= dlen;
+            }
+            if dsym >= 30 { fail(ERR_DATA); return false; }
+            let xe = DIST_EXTRA[dsym] as i64;
+            let dist = DIST_BASE[dsym] + (bitbuf & ((1 << xe) - 1)) as! i64;
+            bitbuf >>= xe;
+            bitcnt -= xe;
+            if dist > inflate_history(d) { fail(ERR_DATA); return false; }
+            let wpos = d.wpos;
+            if dist >= length && wpos >= dist {
+                d.window[wpos..wpos + length].move_from(d.window[wpos - dist..wpos - dist + length]);
+            } else {
+                var src = wpos - dist;
+                if src < 0 { src += INFLATE_WINDOW; }
+                for k in length {
+                    d.window[wpos + k] = d.window[src];
+                    src++;
+                    if src == INFLATE_WINDOW { src = 0; }
+                }
+            }
+            d.wpos = wpos + length;
+        }
+        // Whole bytes back to the input.
+        while bitcnt >= 8 && ip > 0 {
+            ip--;
+            bitcnt -= 8;
+        }
+        bitbuf &= (1 << bitcnt) - 1;
+        return true;
+    }
 
     // After an error, what was decoded before it is handed out first, as
     // Go's reader does; then the error.
@@ -457,6 +553,11 @@ fn inflate_read(d: Inflate&, input: const u8[:], out: u8[:]) -> i64, i64, i64 {
             if d.wpos == INFLATE_WINDOW {
                 drain();
                 if d.wpos == INFLATE_WINDOW { break; }
+            }
+            if ip + 8 <= n_in && d.wpos <= INFLATE_WINDOW - 258 {
+                let ok = if d.fixed_dist { fast(FIXED_LIT) } else { fast(d.lencode) };
+                if !ok { break; }
+                continue;
             }
             if !need(if d.fixed_dist { 7 } else { d.lencode.min }) { break; }
             let sym = if d.fixed_dist { decode(FIXED_LIT) } else { decode(d.lencode) };

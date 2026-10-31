@@ -380,7 +380,39 @@ fn bomb() {
     if total != 1 + 40000 * 258 || p != zeros.len { print("FAIL bomb: ", total, " bytes, ", p, " used"); failures++; }
 }
 
+// A match that ends exactly at the end of the window, from the fast
+// loop: 1 + 125 * 258 + 3 + 256 = 32510 bytes, then a match of 258 fills
+// the window to 32768, then a literal and more.
+fn window_edge() {
+    var s: u8[>..] = [];
+    var w = compress::bit_writer();
+    compress::bw_bits(w, s, 3, 3);                    // BFINAL, fixed
+    compress::bw_bits(w, s, 0x0c, 8);                 // literal 0
+    for k in 125 {
+        compress::bw_bits(w, s, 0xa3, 8);             // length 258
+        compress::bw_bits(w, s, 0, 5);                // distance 1
+    }
+    compress::bw_bits(w, s, 0x40, 7);                 // length 3
+    compress::bw_bits(w, s, 0, 5);
+    compress::bw_bits(w, s, 0x23, 8);                 // length 227 + 29 = 256
+    compress::bw_bits(w, s, 29, 5);
+    compress::bw_bits(w, s, 0, 5);
+    compress::bw_bits(w, s, 0xa3, 8);                 // length 258
+    compress::bw_bits(w, s, 0, 5);
+    compress::bw_bits(w, s, 0x0c, 8);                 // literal 0
+    for k in 100 {                                    // more input after it
+        compress::bw_bits(w, s, 0xa3, 8);
+        compress::bw_bits(w, s, 0, 5);
+    }
+    compress::bw_bits(w, s, 0, 7);                    // end of block
+    compress::bw_flush(w, s);
+    var want: u8[>..] = [];
+    want.resize(32769 + 25800, 0);
+    expect("a match to the window's end", RAW, s, want, 0);
+}
+
 fn main() {
+    window_edge();
     go_streams();
     go_golden();
     go_gunzip_tests();
