@@ -394,14 +394,12 @@ fn file_name(r: const Reader&) -> const u8[:] {
     return base_name(f);
 }
 
-extern fn mime_path_windows() -> i64;
-
 // filepath.Base: the last element of the path, its trailing separators
 // removed; "." for "", the separator for one made of separators only.
 // Windows' rules (both slashes, a volume name kept apart) when built for
 // Windows, as Go's are.
 fn base_name(path: const u8[:]) -> const u8[:] {
-    let win = mime_path_windows() != 0;
+    let win = mime::is_windows();
     if path.len == 0 { return "."; }
     var p = path;
     if win { p = p[volume_name_len(p)..]; }

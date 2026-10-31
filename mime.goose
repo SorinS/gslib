@@ -109,6 +109,11 @@ fn error_text(code: i64) -> const u8[:] {
     }
 }
 
+// Whether the program is built for Windows (src/path_*.h, by mime.build's
+// platform c_headers): multipart's file names and mime.types depend on it.
+extern fn mime_path_windows() -> i64;
+fn is_windows() -> bool { mime_path_windows() != 0 }
+
 // --- Grammar (RFC 2045 §5.1) -------------------------------------------------
 
 // tspecials := "(" / ")" / "<" / ">" / "@" / "," / ";" / ":" / "\" / <">

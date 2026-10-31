@@ -31,6 +31,7 @@ TABLES = [
     "readahead_1", "readahead_2",
     "canonical_key", "header_malformed", "read_mime_header",
     "form_message", "form_nameless", "form_filename", "form_textct", "form_contents", "form_limits",
+    "types_init", "types_local_data", "types_unix", "ext_by_type", "ext_by_type2",
 ]
 
 # Go's test data files, copied as they are.

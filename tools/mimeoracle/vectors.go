@@ -23,6 +23,7 @@ import (
 	"flag"
 	"fmt"
 	"go/ast"
+	"go/build"
 	"go/parser"
 	"go/token"
 	"io"
@@ -87,6 +88,12 @@ var tables = map[string]tableSpec{
 	"form_textct":   {dir: "mime/multipart", name: "messageWithTextContentType", actual: actualReadForm(25)},
 	"form_contents": {dir: "mime/multipart", name: "fileaContents filebContents textaValue textbValue boundary"},
 	"form_limits":   {dir: "mime/multipart", fn: "TestReadFormLimits", calls: "range"},
+	// The type tables: maps of extension to type, and ExtensionsByType's.
+	"types_init":       {dir: "mime", fn: "initMimeForTests", name: "return"},
+	"types_local_data": {dir: "mime", fn: "TestTypeByExtension_LocalData", name: "tests"},
+	"types_unix":       {dir: "mime", fn: "TestTypeByExtensionUNIX", name: "typeTests"},
+	"ext_by_type":      {dir: "mime", fn: "TestExtensionsByType", name: "tests"},
+	"ext_by_type2":     {dir: "mime", fn: "TestExtensionsByType2", name: "tests"},
 	// net/textproto's tests of what multipart relies on.
 	"canonical_key":    {dir: "net/textproto", name: "canonicalHeaderKeyTests", actual: actualCanonicalKey},
 	"header_malformed": {dir: "net/textproto", fn: "TestReadMIMEHeaderMalformed", name: "inputs", actual: actualReadMIMEHeader},
@@ -135,6 +142,18 @@ func vectorsMode(args []string) error {
 	}
 	if one, ok := v.(string); ok { // a single value: one row
 		v = []any{[]any{one}}
+	}
+	if mp, ok := v.(map[string]any); ok { // a map: a row per key, in order
+		keys := make([]string, 0, len(mp))
+		for k := range mp {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		var rows []any
+		for _, k := range keys {
+			rows = append(rows, &structVal{names: []string{"key", "value"}, vals: []any{k, mp[k]}})
+		}
+		v = rows
 	}
 	if list, ok := v.([]any); ok { // a list of strings: a row each
 		for i, x := range list {
@@ -251,6 +270,9 @@ func loadPackage(dir string) (*pkg, error) {
 	}
 	p := &pkg{types: map[string]ast.Expr{}, vars: map[string]*ast.ValueSpec{}, funcs: map[string]*ast.FuncDecl{}}
 	for _, m := range matches {
+		if ok, err := build.Default.MatchFile(dir, filepath.Base(m)); err != nil || !ok {
+			continue // another platform's file
+		}
 		f, err := parser.ParseFile(fset, m, nil, 0)
 		if err != nil {
 			return nil, err
@@ -376,6 +398,10 @@ func (p *pkg) rangeLiteral(e *env, fn string) (any, error) {
 // until one assigns `name`.
 func (e *env) findIn(stmts []ast.Stmt, name string) (any, error) {
 	for _, st := range stmts {
+		if rs, ok := st.(*ast.ReturnStmt); ok && name == "return" && len(rs.Results) == 1 {
+			e.table = rs.Results[0]
+			return e.eval(rs.Results[0], nil)
+		}
 		if rs, ok := st.(*ast.RangeStmt); ok { // for _, name := range <literal>
 			if id, ok := rs.Value.(*ast.Ident); ok && id.Name == name {
 				e.table = rs.X

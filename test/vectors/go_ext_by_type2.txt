@@ -1,0 +1,47 @@
+# ext_by_type2: 46 rows of TestExtensionsByType2.tests in $GOROOT/src/mime, by tools/mimeoracle.sh vectors -table ext_by_type2
+application/postscript|3|.ai|.eps|.ps
+application/vnd.android.package-archive|1|.apk
+image/apng|1|.apng
+image/avif|1|.avif
+application/octet-stream|3|.bin|.com|.exe
+image/bmp|1|.bmp
+text/css; charset=utf-8|1|.css
+text/csv; charset=utf-8|1|.csv
+application/msword|1|.doc
+application/vnd.openxmlformats-officedocument.wordprocessingml.document|1|.docx
+text/html; charset=utf-8|4|.ehtml|.htm|.html|.shtml
+message/rfc822|1|.eml
+audio/flac|1|.flac
+image/gif|1|.gif
+application/gzip|1|.gz
+image/vnd.microsoft.icon|1|.ico
+text/calendar; charset=utf-8|1|.ics
+image/jpeg|5|.jfif|.jpeg|.jpg|.pjp|.pjpeg
+text/javascript; charset=utf-8|2|.js|.mjs
+application/json|1|.json
+audio/mp4|1|.m4a
+audio/mpeg|1|.mp3
+video/mp4|1|.mp4
+audio/ogg|3|.oga|.ogg|.opus
+video/ogg|1|.ogv
+application/pdf|1|.pdf
+image/png|1|.png
+application/vnd.ms-powerpoint|1|.ppt
+application/vnd.openxmlformats-officedocument.presentationml.presentation|1|.pptx
+application/rdf+xml|1|.rdf
+application/rtf|1|.rtf
+image/svg+xml|1|.svg
+text/plain; charset=utf-8|2|.text|.txt
+image/tiff|2|.tif|.tiff
+text/vtt; charset=utf-8|1|.vtt
+application/wasm|1|.wasm
+audio/wav|1|.wav
+audio/webm|1|.weba
+video/webm|1|.webm
+image/webp|1|.webp
+text/xml; charset=utf-8|3|.xbl|.xml|.xsl
+image/x-xbitmap|1|.xbm
+application/xhtml+xml|2|.xht|.xhtml
+application/vnd.ms-excel|1|.xls
+application/vnd.openxmlformats-officedocument.spreadsheetml.sheet|1|.xlsx
+application/zip|1|.zip
