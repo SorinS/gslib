@@ -45,27 +45,37 @@ type tableSpec struct {
 	fn     string // the function holding the table; "" for package level or init
 	name   string // the variable
 	actual func(row any) ([]string, error)
+	seed   map[string]any // values for the function's parameters
 }
 
 var tables = map[string]tableSpec{
-	"consume_token":       {"mime", "TestConsumeToken", "tests", nil},
-	"consume_value":       {"mime", "TestConsumeValue", "tests", nil},
-	"consume_media_param": {"mime", "TestConsumeMediaParam", "tests", nil},
-	"parse_media_type":    {"mime", "", "parseMediaTypeTests", actualParseMediaType(0)},
-	"bad_media_type":      {"mime", "", "badMediaTypeTests", actualParseMediaType(0)},
-	"format_media_type":   {"mime", "", "formatTests", actualFormatMediaType},
-	"encode_word":         {"mime", "TestEncodeWord", "tests", actualEncodeWord},
-	"encoded_word_length": {"mime", "TestEncodedWordLength", "tests", actualEncodeWordUTF8},
-	"decode_word":         {"mime", "TestDecodeWord", "tests", actualDecodeWord},
-	"decode_header":       {"mime", "TestDecodeHeader", "tests", actualDecodeHeader},
-	"charset_decoder":     {"mime", "TestCharsetDecoder", "tests", nil},
-	"qp_reader":           {"mime/quotedprintable", "TestReader", "tests", actualQPReader},
-	"qp_writer":           {"mime/quotedprintable", "testWriter", "tests", actualQPWriter},
-	"qp_testmsg":          {"mime/quotedprintable", "", "testMsg", actualQPWriter},
-	"name_accessors":      {"mime/multipart", "TestNameAccessors", "tests", actualNameAccessors},
-	"multipart_parse":     {"mime/multipart", "", "parseTests", actualMultipartParse},
-	"set_boundary":        {"mime/multipart", "TestWriterSetBoundary", "tests", actualSetBoundary},
-	"file_disposition":    {"mime/multipart", "TestFileContentDisposition", "tests", actualFileDisposition},
+	"consume_token":       {"mime", "TestConsumeToken", "tests", nil, nil},
+	"consume_value":       {"mime", "TestConsumeValue", "tests", nil, nil},
+	"consume_media_param": {"mime", "TestConsumeMediaParam", "tests", nil, nil},
+	"parse_media_type":    {"mime", "", "parseMediaTypeTests", actualParseMediaType(0), nil},
+	"bad_media_type":      {"mime", "", "badMediaTypeTests", actualParseMediaType(0), nil},
+	"format_media_type":   {"mime", "", "formatTests", actualFormatMediaType, nil},
+	"encode_word":         {"mime", "TestEncodeWord", "tests", actualEncodeWord, nil},
+	"encoded_word_length": {"mime", "TestEncodedWordLength", "tests", actualEncodeWordUTF8, nil},
+	"decode_word":         {"mime", "TestDecodeWord", "tests", actualDecodeWord, nil},
+	"decode_header":       {"mime", "TestDecodeHeader", "tests", actualDecodeHeader, nil},
+	"charset_decoder":     {"mime", "TestCharsetDecoder", "tests", nil, nil},
+	"qp_reader":           {"mime/quotedprintable", "TestReader", "tests", actualQPReader, nil},
+	"qp_writer":           {"mime/quotedprintable", "testWriter", "tests", actualQPWriter, nil},
+	"qp_testmsg":          {"mime/quotedprintable", "", "testMsg", actualQPWriter, nil},
+	"name_accessors":      {"mime/multipart", "TestNameAccessors", "tests", actualNameAccessors, nil},
+	"multipart_parse":     {"mime/multipart", "", "parseTests", actualMultipartParse, nil},
+	"set_boundary":        {"mime/multipart", "TestWriterSetBoundary", "tests", actualSetBoundary, nil},
+	"file_disposition":    {"mime/multipart", "TestFileContentDisposition", "tests", actualFileDisposition, nil},
+	// Bodies that multipart's test functions build inline, with Go's parse of each.
+	"line_endings":      {"mime/multipart", "TestVariousTextLineEndings", "tests", nil, nil},
+	"truncated_bodies":  {"mime/multipart", "TestMultipartTruncated", "body", actualParseCRLF("MyBoundary"), nil},
+	"multipart_body":    {"mime/multipart", "testMultipartBody", "testBody", nil, nil},
+	"line_continuation": {"mime/multipart", "TestLineContinuation", "testBody", actualParse("Apple-Mail-2-292336769"), nil},
+	"raw_part":          {"mime/multipart", "TestRawPart", "body", actualParse("0016e68ee29c5d515f04cedf6733"), nil},
+	"qp_part":           {"mime/multipart", "testQuotedPrintableEncoding", "body", actualParse("0016e68ee29c5d515f04cedf6733"), map[string]any{"cte": "quoted-printable"}},
+	"readahead_1":       {"mime/multipart", "TestMultipartStreamReadahead", "testBody1", nil, nil},
+	"readahead_2":       {"mime/multipart", "TestMultipartStreamReadahead", "testBody2", nil, nil},
 }
 
 func vectorsMode(args []string) error {
@@ -84,12 +94,22 @@ func vectorsMode(args []string) error {
 		return err
 	}
 	e := &env{p: p, locals: map[string]any{}}
+	for k, v := range spec.seed {
+		e.locals[k] = v
+	}
 	v, err := p.table(e, spec.fn, spec.name)
 	if err != nil {
 		return err
 	}
 	if one, ok := v.(string); ok { // a single value: one row
 		v = []any{[]any{one}}
+	}
+	if list, ok := v.([]any); ok { // a list of strings: a row each
+		for i, x := range list {
+			if s, ok := x.(string); ok {
+				list[i] = []any{s}
+			}
+		}
 	}
 	rows, ok := v.([]any)
 	if !ok {
@@ -186,7 +206,7 @@ func flatten(v any, out *[]string) {
 
 type pkg struct {
 	files []*ast.File
-	types map[string]ast.Expr      // type name -> its type expression
+	types map[string]ast.Expr       // type name -> its type expression
 	vars  map[string]*ast.ValueSpec // package-level var or const -> spec
 	funcs map[string]*ast.FuncDecl
 }
@@ -269,6 +289,13 @@ func (p *pkg) table(e *env, fn, name string) (any, error) {
 // until one assigns `name`.
 func (e *env) findIn(stmts []ast.Stmt, name string) (any, error) {
 	for _, st := range stmts {
+		if rs, ok := st.(*ast.RangeStmt); ok { // for _, name := range <literal>
+			if id, ok := rs.Value.(*ast.Ident); ok && id.Name == name {
+				e.table = rs.X
+				return e.eval(rs.X, nil)
+			}
+			continue
+		}
 		as, ok := st.(*ast.AssignStmt)
 		if !ok || len(as.Lhs) != len(as.Rhs) {
 			continue
@@ -713,6 +740,47 @@ func actualMultipartParse(row any) ([]string, error) {
 		out = append(out, p...)
 	}
 	return append(out, escapeField(final)), nil
+}
+
+// parseFields: Go's parse of body with the boundary, as actualMultipartParse writes it.
+func parseFields(body, boundary string) []string {
+	r := multipart.NewReader(strings.NewReader(body), boundary)
+	var parts [][]string
+	final := ""
+	for {
+		p, err := r.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			final = err.Error()
+			break
+		}
+		data, err := io.ReadAll(p)
+		if err != nil {
+			parts = append(parts, partFields(p, string(data)))
+			final = "body: " + err.Error()
+			break
+		}
+		parts = append(parts, partFields(p, string(data)))
+	}
+	out := []string{strconv.Itoa(len(parts))}
+	for _, p := range parts {
+		out = append(out, p...)
+	}
+	return append(out, escapeField(final))
+}
+
+// actualParse: Go's parse of a one-string row's body with this boundary.
+func actualParse(boundary string) func(any) ([]string, error) {
+	return func(row any) ([]string, error) { return parseFields(str(row, 0), boundary), nil }
+}
+
+// actualParseCRLF: the same after the test's ReplaceAll(body, "\n", "\r\n").
+func actualParseCRLF(boundary string) func(any) ([]string, error) {
+	return func(row any) ([]string, error) {
+		return parseFields(strings.ReplaceAll(str(row, 0), "\n", "\r\n"), boundary), nil
+	}
 }
 
 func actualSetBoundary(row any) ([]string, error) {

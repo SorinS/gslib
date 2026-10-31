@@ -1,0 +1,2 @@
+# readahead_1: 1 rows of TestMultipartStreamReadahead.testBody1 in $GOROOT/src/mime/multipart, by tools/mimeoracle.sh vectors -table readahead_1
+1|\x0aThis is a multi-part message.  This line is ignored.\x0a--MyBoundary\x0afoo-bar: baz\x0a\x0aBody\x0a--MyBoundary\x0a

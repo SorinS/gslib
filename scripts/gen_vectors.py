@@ -27,6 +27,15 @@ TABLES = [
     "encode_word", "encoded_word_length", "decode_word", "decode_header", "charset_decoder",
     "qp_reader", "qp_writer", "qp_testmsg",
     "name_accessors", "multipart_parse", "set_boundary", "file_disposition",
+    "line_endings", "truncated_bodies", "multipart_body", "line_continuation", "raw_part", "qp_part",
+    "readahead_1", "readahead_2",
+]
+
+# Go's test data files, copied as they are.
+TESTDATA = [
+    ("mime/multipart/testdata/nested-mime", "go_nested-mime"),
+    ("mime/testdata/test.types", "go_test.types"),
+    ("mime/testdata/test.types.globs2", "go_test.types.globs2"),
 ]
 
 
@@ -109,6 +118,10 @@ def check(table, want, got):
         return (unescape(got[0]) == b"") == (u[1] == b"1")
     if table == "file_disposition":
         return unescape(got[0]) == u[2]
+    if table == "truncated_bodies":
+        return got[-1] == "body: unexpected EOF"
+    if table in ("line_continuation", "raw_part", "qp_part"):
+        return got[-1] == ""
     return True
 
 
@@ -139,6 +152,16 @@ def main():
             with open(path, "w", encoding="latin-1") as f:
                 f.write(text)
         print(f"{t}: {n} rows")
+    goroot = subprocess.run(["go", "env", "GOROOT"], capture_output=True, text=True).stdout.strip()
+    for src, name in TESTDATA:
+        data = open(os.path.join(goroot, "src", src), "rb").read()
+        path = os.path.join(OUT, name)
+        if args.check:
+            if not os.path.exists(path) or open(path, "rb").read() != data:
+                print(f"{os.path.relpath(path, ROOT)} differs from $GOROOT/src/{src}")
+                bad += 1
+        else:
+            open(path, "wb").write(data)
     sys.exit(1 if bad else 0)
 
 

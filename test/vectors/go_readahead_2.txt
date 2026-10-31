@@ -1,0 +1,2 @@
+# readahead_2: 1 rows of TestMultipartStreamReadahead.testBody2 in $GOROOT/src/mime/multipart, by tools/mimeoracle.sh vectors -table readahead_2
+1|foo-bar: bop\x0a\x0aBody 2\x0a--MyBoundary--\x0a
