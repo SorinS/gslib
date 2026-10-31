@@ -55,7 +55,7 @@ CHECKED := $(shell cd $(ROOT) && grep -l '^fn main' */*/tools/*.goose */*/exampl
 # Helpers
 # ------------------------------------------------------------------------------
 
-# Print a message in bold
+# Print a message in bold (no commas in it: $(call) splits there)
 define echo
 	@printf "\033[1m>> %s\033[0m\n" $(1)
 endef
@@ -132,7 +132,7 @@ test: ## Run every library's unit tests (-O0, -O2 and --debug)
 
 .PHONY: test-native
 test-native: ## Run the unit tests, also built with the C compiler
-	$(call echo,"Running unit tests, natively too")
+	$(call echo,"Running unit tests and native builds")
 	cd $(ROOT) && $(PYTHON) scripts/run_all.py --native
 
 # test-asn1, test-bignum, ... (scripts/run_all.py refuses a name not in
