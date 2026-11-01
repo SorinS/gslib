@@ -9,6 +9,11 @@
 //   gss server PORT [-once] [-keytab FILE] [-any]
 //   gss http-server PORT [-once] [-keytab FILE]
 //   gss http-client HOST PORT PATH SERVICE@HOST [-deleg]
+//   gss ldap HOST PORT [-service ldap@NAME] [-layer conf|integ|none] [-sid SID]... [-groups ACCOUNT]
+//
+// ldap binds with SASL GSSAPI (RFC 4752), then prints the bound identity
+// (Who am I?), the domain's naming context, each SID's entry, and an
+// account's tokenGroups resolved to names.
 //
 // The client's credentials come from $KRB5CCNAME and $KRB5_CONFIG; the
 // server's keytab from -keytab, else $KRB5_KTNAME, else /etc/krb5.keytab.
@@ -28,6 +33,10 @@ import gslib.krb5.service;
 import gslib.krb5.gssapi;
 import gslib.krb5.spnego;
 import gslib.krb5.pac;
+import gslib.krb5.ndr;
+import gslib.krb5.ldap;
+import gslib.net.ldap;
+import gslib.net.ldap.conn;
 
 extern fn gssnet_listen(port: i32) -> i32;
 extern fn gssnet_port(s: i32) -> i32;
@@ -464,6 +473,167 @@ fn http_client(a: u8[:][>..]&) {
     write_stdout(body);
 }
 
+// --- LDAP (SASL GSSAPI) ---------------------------------------------------------------
+
+struct LdapIo { s: i32, pending: u8[>..] }
+
+fn ldap_send(io: LdapIo&, sasl: krb5::SaslGssapi&, req: const u8[:]) {
+    var wire: u8[>..] = [];
+    let err = krb5::sasl_out(sasl, req, wire);
+    if err != krb5::OK { die_err("wrap", err); }
+    if gssnet_write(io.s, wire) != 0 { die("write failed"); }
+}
+
+// Reads until the response to `id` that ends it (a search's done, or the
+// one response), collecting every message for it in msgs.
+fn ldap_wait(io: LdapIo&, sasl: krb5::SaslGssapi&, c: ldap::Conn&, id: i64, msgs: u8[>..]&) {
+    var chunk: u8[16384] = [0; 16384];
+    loop {
+        var pos = 0;
+        loop {
+            let m, ok = ldap::next_message(msgs, pos);
+            if !ok { break; }
+            if m.id == id && m.op != ldap::OP_SEARCH_ENTRY && m.op != 0x73 { return; }
+        }
+        let n = gssnet_read(io.s, chunk);
+        if n <= 0 { die("connection closed"); }
+        io.pending.append(chunk[..n]);
+        var plain: u8[>..] = [];
+        let err = krb5::sasl_in(sasl, io.pending, plain);
+        if err != krb5::OK { die_err("unwrap", err); }
+        let ferr = ldap::feed(c, plain, msgs);
+        if ferr != 0 { die(str("ldap: ", ldap::conn_error(c))); }
+    }
+}
+
+fn ldap_cmd(a: u8[:][>..]&) {
+    if a.len < 4 { die("usage: gss ldap HOST PORT [-service ldap@NAME] [-layer conf|integ|none] [-sid SID]... [-groups ACCOUNT]"); }
+    var service: u8[>..] = [];
+    service.append("ldap@");
+    service.append(a[2]);
+    var want: u8 = krb5::SASL_LAYER_CONFIDENTIALITY | krb5::SASL_LAYER_INTEGRITY;
+    var sids: u8[][>..] = [];
+    var groups_of: u8[>..] = [];
+    var i = 4;
+    while i < a.len {
+        if a[i] == "-service" && i + 1 < a.len { i++; service.clear(); service.append(a[i]); }
+        else if a[i] == "-layer" && i + 1 < a.len {
+            i++;
+            want = if a[i] == "conf" { krb5::SASL_LAYER_CONFIDENTIALITY } else if a[i] == "integ" { krb5::SASL_LAYER_INTEGRITY } else { krb5::SASL_LAYER_NONE };
+        }
+        else if a[i] == "-sid" && i + 1 < a.len { i++; var t: u8[>..] = []; t.append(a[i]); sids.push(copy(t)); }
+        else if a[i] == "-groups" && i + 1 < a.len { i++; groups_of.append(a[i]); }
+        else { die(str("unknown option ", a[i])); }
+        i++;
+    }
+    let port, pok = parse_int(a[3]);
+    if !pok { die("bad port"); }
+    let cfg, cerr = krb5::default_config();
+    if cerr != krb5::OK { die_err("krb5.conf", cerr); }
+    let cred, err = krb5::get_service_ticket_cached(cfg, krb5::default_ccache_name(), service, true);
+    if err != krb5::OK { die_err("service ticket", err); }
+    let s = gssnet_connect(a[2], port as! i32);
+    if s < 0 { die("cannot connect"); }
+    var io = LdapIo { s: s, pending: [] };
+    var c = ldap::client();
+    var out: u8[>..] = [];
+    let now, usec = now_secs();
+    var sasl, serr = krb5::sasl_gssapi_start(c, cred, want, "", now, usec, out);
+    if serr != krb5::OK { die_err("sasl start", serr); }
+    loop {
+        gssnet_write(s, out);
+        out.clear();
+        var msgs: u8[>..] = [];
+        ldap_wait(io, sasl, c, sasl.bind_id, msgs);
+        var pos = 0;
+        let m, ok = ldap::next_message(msgs, pos);
+        let done, berr = krb5::sasl_gssapi_step(sasl, c, msgs, m, out);
+        if berr != krb5::OK { die(str("bind: ", if berr > 2000 { ldap::result_name(berr - 2000) } else { krb5::error_text(berr) })); }
+        if done { break; }
+    }
+    print("bound: layer ", if sasl.layer == 4 { "confidentiality" } else if sasl.layer == 2 { "integrity" } else { "none" });
+    var req: u8[>..] = [];
+    let wid = ldap::who_am_i(c, req);
+    ldap_send(io, sasl, req);
+    var wm: u8[>..] = [];
+    ldap_wait(io, sasl, c, wid, wm);
+    var wpos = 0;
+    let w, wok = ldap::next_message(wm, wpos);
+    let who, hok = ldap::response_value(wm, w);
+    print("whoami: ", who);
+    req.clear();
+    let rid = krb5::rootdse_request(c, req);
+    ldap_send(io, sasl, req);
+    var rm: u8[>..] = [];
+    ldap_wait(io, sasl, c, rid, rm);
+    var base: u8[>..] = [];
+    var rpos = 0;
+    loop {
+        let m, ok = ldap::next_message(rm, rpos);
+        if !ok { break; }
+        if m.op == ldap::OP_SEARCH_ENTRY { base.append(ldap::get_value(rm, m, "defaultNamingContext")); }
+    }
+    print("naming context: ", base);
+    for sid in sids { print_sid(io, sasl, c, base, sid); }
+    if groups_of.len > 0 {
+        req.clear();
+        var f: u8[>..] = [];
+        f.append("(sAMAccountName=");
+        f.append(ldap::escape_filter(groups_of));
+        f.append(")");
+        let qid = ldap::search(c, base, ldap::SCOPE_SUB, f, "distinguishedName", req);
+        ldap_send(io, sasl, req);
+        var qm: u8[>..] = [];
+        ldap_wait(io, sasl, c, qid, qm);
+        var dn: u8[>..] = [];
+        var qpos = 0;
+        loop {
+            let m, ok = ldap::next_message(qm, qpos);
+            if !ok { break; }
+            if m.op == ldap::OP_SEARCH_ENTRY && dn.len == 0 { dn.append(ldap::entry_dn(qm, m)); }
+        }
+        if dn.len == 0 { die(str("no account ", groups_of)); }
+        print("account: ", dn);
+        req.clear();
+        let tid = krb5::token_groups_request(c, dn, req);
+        ldap_send(io, sasl, req);
+        var tm: u8[>..] = [];
+        ldap_wait(io, sasl, c, tid, tm);
+        var tpos = 0;
+        var group_sids: u8[][>..] = [];
+        loop {
+            let m, ok = ldap::next_message(tm, tpos);
+            if !ok { break; }
+            if m.op == ldap::OP_SEARCH_ENTRY { for g in krb5::entry_sids(tm, m, "tokenGroups") { group_sids.push(copy(g)); } }
+        }
+        for g in group_sids { print_sid(io, sasl, c, base, g); }
+    }
+    req.clear();
+    ldap::unbind(c, req);
+    ldap_send(io, sasl, req);
+    gssnet_close(s);
+}
+
+fn print_sid(io: LdapIo&, sasl: krb5::SaslGssapi&, c: ldap::Conn&, base: const u8[:], sid: const u8[:]) {
+    var req: u8[>..] = [];
+    let id = krb5::sid_lookup_request(c, base, sid, req);
+    if id < 0 { print("sid ", sid, ": not a SID"); return; }
+    ldap_send(io, sasl, req);
+    var m: u8[>..] = [];
+    ldap_wait(io, sasl, c, id, m);
+    var pos = 0;
+    var found = false;
+    loop {
+        let e, ok = ldap::next_message(m, pos);
+        if !ok { break; }
+        if e.op == ldap::OP_SEARCH_ENTRY {
+            print("sid ", sid, ": ", ldap::entry_dn(m, e), " (", ldap::get_value(m, e, "sAMAccountName"), ")");
+            found = true;
+        }
+    }
+    if !found { print("sid ", sid, ": no entry (a well-known or foreign SID)"); }
+}
+
 fn main() {
     let a = args();
     if a.len < 2 { die("usage: gss client|server|http-server|http-client ..."); }
@@ -471,5 +641,6 @@ fn main() {
     if a[1] == "server" { server(a); return; }
     if a[1] == "http-server" { http_server(a); return; }
     if a[1] == "http-client" { http_client(a); return; }
+    if a[1] == "ldap" { ldap_cmd(a); return; }
     die(str("unknown command ", a[1]));
 }
