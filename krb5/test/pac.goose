@@ -15,6 +15,7 @@ import gslib.krb5.messages;
 import gslib.krb5.keytab;
 import gslib.krb5.ndr;
 import gslib.krb5.pac;
+import gslib.krb5.claims;
 import tv;
 
 fn groups(out: u8[>..]&, g: const krb5::GroupMembership[:]) {
@@ -104,6 +105,31 @@ fn dump_pac(out: u8[>..]&, b: const u8[:]) {
     }
 }
 
+fn dump_claims(out: u8[>..]&, b: const u8[:]) {
+    let arrays, err = krb5::decode_claims(b);
+    if err != krb5::OK { out.append("claims.error\n"); return; }
+    for a in arrays {
+        var n = 0;
+        for c in a.claims { n++; }
+        out.append(str("claims.array=", a.source_type, ",", n, "\n"));
+        for c in a.claims {
+            out.append(str("claim=", c.id, "|", c.claim_type, "|"));
+            var first = true;
+            if c.claim_type == krb5::CLAIM_TYPE_STRING {
+                for v in c.strings { if !first { out.push(','); } out.append(v); first = false; }
+            } else {
+                for v in c.ints {
+                    if !first { out.push(','); }
+                    if c.claim_type == krb5::CLAIM_TYPE_INT64 { format_int(out, v as! i64, 10, 0, ' '); }
+                    else { format_uint(out, v, 10, 0, ' '); }
+                    first = false;
+                }
+            }
+            out.push('\n');
+        }
+    }
+}
+
 fn dump(name: const u8[:], b: const u8[:]) -> u8[>..] {
     var out: u8[>..] = [];
     out.append(str("== ", name, "\n"));
@@ -126,6 +152,8 @@ fn dump(name: const u8[:], b: const u8[:]) -> u8[>..] {
         dump_sig(out, "server_sig", b);
     } else if name == "MarshaledPAC_KDC_Signature" {
         dump_sig(out, "kdc_sig", b);
+    } else if name.starts_with("MarshaledPAC_ClientClaimsInfo") && !name.ends_with("XPRESS_HUFF") {
+        dump_claims(out, b);
     }
     return out;
 }
@@ -254,8 +282,58 @@ fn malformed() {
     };
 }
 
+// The one compressed vector go-krb5 has (and reads wrongly, with HPACK's
+// Huffman code): the metadata's uncompressed size must come out exactly,
+// and decode as a ClaimsSet.
+fn compressed_claims() {
+    var b: u8[>..] = [];
+    tv::each_row("vectors/pac.txt") { r: tv::Row& =>
+        let name = r.next();
+        if name.ends_with("XPRESS_HUFF") { b.append(tv::hex(r.next())); }
+    };
+    tv::check("xpress vector", b.len > 0);
+    let arrays, err = krb5::decode_claims(b);
+    tv::check_int("xpress claims decode", err, krb5::OK);
+    var n = 0;
+    var ids: u8[>..] = [];
+    for a in arrays {
+        for c in a.claims {
+            n++;
+            tv::check(str("claim id ", c.id), c.id.starts_with("ad://ext/"));
+            ids.append(c.id);
+            ids.push(' ');
+        }
+    }
+    // What the uncompressed vectors hold for the same user: objectClass as
+    // in ClientClaimsInfoMultiUint, sAMAccountName as in ClientClaimsInfoStr,
+    // and sAMAccountType SAM_USER_OBJECT (0x30000000).
+    tv::check_eq("xpress claim ids", ids,
+                 "ad://ext/objectClass:88d5de791e7b27e6 ad://ext/sAMAccountName:88d5d9085ea5c0c0 ad://ext/sAMAccountType:88d5de79a7ecf8c7 ");
+    for a in arrays {
+        for c in a.claims {
+            if c.id.starts_with("ad://ext/objectClass") {
+                let want: u64[4] = [655369, 65543, 65542, 65536];
+                tv::check("objectClass values", c.claim_type == 2 && c.ints == want);
+            }
+            if c.id.starts_with("ad://ext/sAMAccountName") {
+                var v: u8[>..] = [];
+                for x in c.strings { v.append(x); }
+                tv::check_eq("sAMAccountName", v, "testuser1");
+            }
+            if c.id.starts_with("ad://ext/sAMAccountType") {
+                let want: u64[1] = [0x30000000];
+                tv::check("sAMAccountType", c.claim_type == 1 && c.ints == want);
+            }
+        }
+    }
+    // Cut short, the compressed data runs out before the declared size.
+    let cut, cerr = krb5::decode_claims(b[..b.len - 40]);
+    tv::check("truncated xpress refused", cerr != krb5::OK);
+}
+
 fn main() {
     against_oracle();
+    compressed_claims();
     signatures();
     upn_extended();
     malformed();

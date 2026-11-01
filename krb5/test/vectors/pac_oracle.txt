@@ -120,8 +120,19 @@ kvi.ilogon=0,0,0
 kvi.extra_sids=S-1-18-1:7
 kvi.resource=S-1-5-21-3062750306-1230139592-1973306805|1107:536870919,1108:536870919
 == MarshaledPAC_ClientClaimsInfoStr
+claims.array=1,1
+claim=ad://ext/sAMAccountName:88d5d9085ea5c0c0|3|testuser1
 == MarshaledPAC_ClientClaimsInfoInt
+claims.array=1,1
+claim=ad://ext/msDS-SupportedE:88d5dea8f1af5f19|1|28
 == MarshaledPAC_ClientClaimsInfoMulti
+claims.array=1,2
+claim=ad://ext/msDS-SupportedE:88d5dea8f1af5f19|1|28
+claim=ad://ext/sAMAccountName:88d5d9085ea5c0c0|3|testuser1
 == MarshaledPAC_ClientClaimsInfoMultiUint
+claims.array=1,1
+claim=ad://ext/objectClass:88d5de791e7b27e6|2|655369,65543,65542,65536
 == MarshaledPAC_ClientClaimsInfoMultiStr
+claims.array=1,1
+claim=ad://ext/otherIpPhone:88d5de9f6b4af985|3|str1,str2,str3,str4
 == MarshaledPAC_ClientClaimsInfo_XPRESS_HUFF

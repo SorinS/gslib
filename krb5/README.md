@@ -24,6 +24,7 @@ reading theirs. Only `krb5.net`, the file functions and the tools do I/O.
 | `krb5.spnego` | RFC 4178: `spnego_init`, `spnego_init_continue`, `spnego_accept` (Kerberos under RFC 4121's OID or Microsoft's, a second round when another mechanism was preferred, mechListMIC both ways, NegTokenInit2, bare Kerberos tokens); `negotiate_header`, `negotiate_token` |
 | `krb5.ndr` | NDR as MS-RPCE's type serialization: the reader the PAC's types use |
 | `krb5.pac` | The PAC: logon info (`LogonInfo`, `logon_sids`), client info, UPN/DNS info with its SAM-name and SID extension, S4U delegation info, device info, attributes, requestor, signatures; `pac_verify` (server signature with the service key, client info against the ticket), `pac_verify_kdc` |
+| `krb5.claims` | The PAC's claims (client and device): `decode_claims`, `pac_claims`, with MS-XCA's LZ77+Huffman decompression (`xpress_huff_decompress`) for the compressed ones |
 | `krb5.sys` | The C krb5 calls (`src/krb5sys.c`: UDP, files only their owner reads, the uid, host names; and http's TCP sockets) |
 
 ```goose
@@ -91,10 +92,12 @@ server; servers listen on 127.0.0.1 only.
 - `test/gssapi.goose`, `test/spnego.goose`: tickets made with known keys,
   contexts both ways, tokens, tampering, replays, channel bindings,
   delegation, Windows' and NTLM-first SPNEGO exchanges.
-- `test/pac.goose`: go-krb5's PAC vectors (two from Windows AD) read the
-  same as go-krb5 reads them, line for line (`test/vectors/pac_oracle.txt`,
-  from `tools/krb5oracle`); the server signature checked with the
-  service's key; extended UPN_DNS_INFO.
+- `test/pac.goose`: go-krb5's PAC vectors (two from Windows AD) and its
+  five uncompressed claims vectors read the same as go-krb5 reads them,
+  line for line (`test/vectors/pac_oracle.txt`, from `tools/krb5oracle`);
+  the server signature checked with the service's key; extended
+  UPN_DNS_INFO; the compressed claims vector decompressed to its declared
+  size, its claims those of the uncompressed vectors for the same user.
 
 `make interop-krb5` (`scripts/interop.py`, macOS with Homebrew's
 `krb5`): two MIT 1.22 realms (`scripts/kdc.py`, on 127.0.0.1, trusting
@@ -120,7 +123,6 @@ Go, and `tools/krb5oracle/go.mod` points (`replace`) at that checkout.
 - S4U2Self and S4U2Proxy (constrained delegation), user-to-user.
 - RFC 1964 / RFC 4757 per-message tokens: contexts with DES3 or RC4
   session keys establish, but `gss_get_mic` and `gss_wrap` refuse them.
-- Claims (PAC buffers 13 and 15), and their MS-XCA compression.
 - DNS SRV discovery of KDCs (`dns_lookup_kdc`), kpasswd (RFC 3244),
   KKDCP, MEMORY/KEYRING/KCM caches.
 - Windows is built for (the C has its Windows branches) but untested.
@@ -128,4 +130,6 @@ Go, and `tools/krb5oracle/go.mod` points (`replace`) at that checkout.
 Where go-krb5 differs, we follow the RFCs: RC4's string-to-key encodes
 the password as UTF-16LE (go-krb5 leaves gaps after non-ASCII bytes), the
 RC4 usage number is little-endian (go-krb5 writes a varint, the same
-below 128), and XPRESS_HUFF claims are not HPACK's Huffman code.
+below 128), and XPRESS_HUFF claims are MS-XCA's LZ77+Huffman, not HPACK's Huffman
+code (go-krb5 misreads its own compressed vector). Claims compressed with
+LZNT1 or plain LZ77, which AD does not use, are refused.

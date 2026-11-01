@@ -130,6 +130,35 @@ func dumpDevice(w *bufio.Writer, b []byte) {
 		sidAttrs(k.ExtraSIDs), strings.Join(d, ";"))
 }
 
+func dumpClaims(w *bufio.Writer, b []byte) {
+	var k pac.ClientClaimsInfo
+	if err := k.Unmarshal(b); err != nil {
+		fmt.Fprintf(w, "claims.error\n")
+		return
+	}
+	for _, a := range k.ClaimsSet.ClaimsArrays {
+		fmt.Fprintf(w, "claims.array=%d,%d\n", a.ClaimsSourceType, a.ClaimsCount)
+		for _, e := range a.ClaimEntries {
+			var v []string
+			switch e.Type {
+			case mstypes.ClaimTypeIDInt64:
+				for _, x := range e.TypeInt64.Value {
+					v = append(v, fmt.Sprintf("%d", x))
+				}
+			case mstypes.ClaimTypeIDUInt64:
+				for _, x := range e.TypeUInt64.Value {
+					v = append(v, fmt.Sprintf("%d", x))
+				}
+			case mstypes.ClaimTypeIDString:
+				for _, x := range e.TypeString.Value {
+					v = append(v, x.Value)
+				}
+			}
+			fmt.Fprintf(w, "claim=%s|%d|%s\n", e.ID, e.Type, strings.Join(v, ","))
+		}
+	}
+}
+
 func dumpPAC(w *bufio.Writer, b []byte) {
 	var p pac.PACType
 	if err := p.Unmarshal(b); err != nil {
@@ -228,6 +257,8 @@ func main() {
 			dumpSig(w, "server_sig", b)
 		case name == "MarshaledPAC_KDC_Signature":
 			dumpSig(w, "kdc_sig", b)
+		case strings.HasPrefix(name, "MarshaledPAC_ClientClaimsInfo") && !strings.Contains(name, "XPRESS"):
+			dumpClaims(w, b)
 		}
 	}
 }
