@@ -284,6 +284,11 @@ fn as_exchange(cfg: const Config&, s: Settings&, cname: const PrincipalName&, re
         if message_type(reply) != MSG_AS_REP { return empty_credential(), ERR_UNEXPECTED; }
         let rep, derr = decode_kdc_rep(reply);
         if derr != OK { return empty_credential(), derr; }
+        // Only a type we asked for (as MIT checks): a KDC, or someone in
+        // the middle, cannot push us onto a weaker one.
+        var asked = false;
+        for e in etypes { if e == rep.enc_part.etype { asked = true; } }
+        if !asked { return empty_credential(), KDC_ERR_ETYPE_NOSUPP; }
         // The reply key: the one we pre-authenticated with if the reply
         // uses its type, else one made from the reply's salt.
         var key = pk.key;
@@ -301,6 +306,9 @@ fn as_exchange(cfg: const Config&, s: Settings&, cname: const PrincipalName&, re
         let part, perr = decode_enc_kdc_rep_part(plain);
         if perr != OK { return empty_credential(), perr; }
         if part.nonce != nonce { return empty_credential(), ERR_NONCE; }
+        var key_asked = false;
+        for e in etypes { if e == part.key.etype { key_asked = true; } }
+        if !key_asked { return empty_credential(), KDC_ERR_ETYPE_NOSUPP; }
         // Names: as asked, unless the KDC canonicalized them and proved it
         // saw our request (RFC 6806 §11).
         let same = rep.cname.name == cname.name && rep.crealm == realm && part.sname.name == sname.name && part.srealm == realm;
@@ -423,6 +431,10 @@ fn tgs_exchange(cfg: const Config&, s: Settings&, tgt: const Credential&, sname:
         let part, perr = decode_enc_kdc_rep_part(plain);
         if perr != OK { return empty_credential(), perr; }
         if part.nonce != nonce { return empty_credential(), ERR_NONCE; }
+        // The session key of a type we asked for, as MIT checks.
+        var key_asked = false;
+        for e in body.etypes { if e == part.key.etype { key_asked = true; } }
+        if !key_asked { return empty_credential(), KDC_ERR_ETYPE_NOSUPP; }
         if rep.cname.name != tgt.client || rep.crealm != tgt.client_realm { return empty_credential(), ERR_NAME_MISMATCH; }
         return credential_of(rep, part), OK;
     }

@@ -14,15 +14,15 @@ PYTHON  ?= python3
 GOOSE   ?= $(or $(shell command -v goose 2>/dev/null),$(abspath $(ROOT)/../goose.git/build/goose))
 export GOOSE
 
-LIBS    := asn1 bignum x509 tls ssh ldap yaml http compress mime
+LIBS    := asn1 bignum x509 tls ssh ldap yaml http compress mime krb5
 
 # ------------------------------------------------------------------------------
 # Derived values
 # ------------------------------------------------------------------------------
 
 # A program is rebuilt when any of the package's sources changes.
-SOURCES := $(ROOT)/gslib.goose $(ROOT)/gslib.build $(ROOT)/compress.goose $(ROOT)/mime.goose \
-	$(shell find $(ROOT)/crypto $(ROOT)/encoding $(ROOT)/net $(ROOT)/compress $(ROOT)/mime \
+SOURCES := $(ROOT)/gslib.goose $(ROOT)/gslib.build $(ROOT)/compress.goose $(ROOT)/mime.goose $(ROOT)/krb5.goose \
+	$(shell find $(ROOT)/crypto $(ROOT)/encoding $(ROOT)/net $(ROOT)/compress $(ROOT)/mime $(ROOT)/krb5 \
 		\( -name '*.goose' -o -name '*.c' -o -name '*.build' \) \
 		-not -path '*/test/*' -not -path '*/examples/*')
 
@@ -41,7 +41,9 @@ PROGRAMS := \
 	goose-ldapmodrdn:net/ldap/tools/ldapmodrdn.goose \
 	goose-ldappasswd:net/ldap/tools/ldappasswd.goose \
 	goose-ldapwhoami:net/ldap/tools/ldapwhoami.goose \
-	goose-ldapcompare:net/ldap/tools/ldapcompare.goose
+	goose-ldapcompare:net/ldap/tools/ldapcompare.goose \
+	goose-krb5:krb5/tools/krb5.goose \
+	goose-gss:krb5/tools/gss.goose
 
 prog_name   = $(word 1,$(subst :, ,$(1)))
 prog_source = $(word 2,$(subst :, ,$(1)))
@@ -49,7 +51,7 @@ BINARIES    := $(foreach p,$(PROGRAMS),$(BIN)/$(call prog_name,$(p))) $(BIN)/goo
 
 # Every tool and example with a main, for check.
 CHECKED := $(shell cd $(ROOT) && grep -l '^fn main' */*/tools/*.goose */*/examples/*.goose \
-	compress/tools/*.goose compress/examples/*.goose mime/tools/*.goose)
+	compress/tools/*.goose compress/examples/*.goose mime/tools/*.goose krb5/tools/*.goose)
 
 # ------------------------------------------------------------------------------
 # Helpers
@@ -77,13 +79,14 @@ help: ## Show this help message
 
 .PHONY: all build
 all: build ## Build every program into BIN
-build: $(BINARIES) ## Build every program into BIN (http, httpd, ssh, sshd, scp, sftp-server, ssh-keygen, the ldap tools)
+build: $(BINARIES) ## Build every program into BIN (http, httpd, ssh, sshd, scp, sftp-server, ssh-keygen, the ldap tools, krb5, gss)
 	@echo "  -> $(BIN)"
 
-.PHONY: http ssh ldap
+.PHONY: http ssh ldap krb5
 http: $(BIN)/goose-http $(BIN)/goose-httpd ## Build goose-http and goose-httpd
 ssh: $(filter $(BIN)/goose-s%,$(BINARIES)) ## Build goose-ssh, goose-sshd, goose-scp, goose-sftp-server, goose-ssh-keygen
 ldap: $(filter $(BIN)/goose-ldap%,$(BINARIES)) ## Build the goose-ldap* tools
+krb5: $(BIN)/goose-krb5 $(BIN)/goose-gss ## Build goose-krb5 (kinit, kvno, klist) and goose-gss
 
 $(BIN):
 	@mkdir -p $@
@@ -137,7 +140,7 @@ test-native: ## Run the unit tests, also built with the C compiler
 
 # test-asn1, test-bignum, ... (scripts/run_all.py refuses a name not in
 # LIBS). Not .PHONY: make looks for no pattern rule for a phony target.
-test-%: ## Run one library's unit tests: test-asn1 test-bignum test-x509 test-tls test-ssh test-ldap test-yaml test-http test-compress test-mime
+test-%: ## Run one library's unit tests: test-asn1 test-bignum test-x509 test-tls test-ssh test-ldap test-yaml test-http test-compress test-mime test-krb5
 	$(call echo,"Running $* unit tests")
 	cd $(ROOT) && $(PYTHON) scripts/run_all.py --only $*
 
@@ -145,7 +148,7 @@ test-%: ## Run one library's unit tests: test-asn1 test-bignum test-x509 test-tl
 # needs installed is in its library's README; a missing tool is skipped.
 
 .PHONY: interop
-interop: interop-http interop-h2spec interop-tls interop-ssh interop-ldap ## Run every live interop test
+interop: interop-http interop-h2spec interop-tls interop-ssh interop-ldap interop-krb5 ## Run every live interop test
 
 .PHONY: interop-http
 interop-http: ## HTTP against curl, Go's net/http, Python, nghttp2
@@ -173,6 +176,11 @@ interop-ssh: ## SSH, SFTP and scp against OpenSSH and Go's x/crypto/ssh
 interop-ldap: ## LDAP against OpenLDAP and go-ldap
 	$(call echo,"LDAP interop")
 	cd $(ROOT)/net/ldap && $(PYTHON) scripts/interop.py
+
+.PHONY: interop-krb5
+interop-krb5: ## Kerberos against MIT's KDC, kinit/kvno/klist, gss-client/gss-server and curl --negotiate
+	$(call echo,"Kerberos interop")
+	cd $(ROOT)/krb5 && $(PYTHON) scripts/interop.py
 
 .PHONY: differential
 differential: differential-http differential-x509 differential-compress differential-mime ## Run every differential

@@ -1,3 +1,3 @@
-// The gss tool's sockets.
+// The gss tool's sockets (127.0.0.1 listeners).
+output = "goose-gss";
 c_sources = ["gssnet.c"];
-output = "gss";

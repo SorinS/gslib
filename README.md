@@ -17,6 +17,7 @@ later.
 | `encoding/yaml` | YAML 1.2 | [README](encoding/yaml/README.md) |
 | `compress` | Compression and archives, as Go's compress/* and archive/*, plus xz: DEFLATE, gzip, zlib, LZW, bzip2, xz and LZMA, zip, tar; reading and writing | [README](compress/README.md) |
 | `mime` | MIME, as Go's mime, mime/quotedprintable and mime/multipart, and net/textproto's header sections: media types, RFC 2047 encoded-words, file extensions' types, quoted-printable, multipart bodies and forms | [README](mime/README.md) |
+| `krb5` | Kerberos V5 (RFC 4120) as go-krb5 has it: TGTs and service tickets (password, keytab, cross-realm, referrals), the acceptor, GSS-API (RFC 4121), SPNEGO and HTTP Negotiate, Microsoft's PAC, keytabs and credential caches; goose-krb5 (kinit, kvno, klist) and goose-gss | [README](krb5/README.md) |
 | `net/http` | HTTP/1.1 and HTTP/2, server and client: a client with Go's policy (redirects, cookies, credentials, proxies, gzip, TLS session resumption, streaming uploads, several responses at once), URLs, cookies, HPACK; goose-http and goose-httpd | [README](net/http/README.md) |
 
 ## Using it
@@ -39,7 +40,8 @@ fn main() {
 The libraries are grouped as Go groups its packages: `crypto/` (bignum,
 tls, x509, ssh), `encoding/` (asn1, yaml), `net/` (http, ldap), and
 `compress/` and `mime/` at the top, as Go's are (zip and tar are in
-compress too: they share its namespace, results and checksums). As in Go,
+compress too: they share its namespace, results and checksums), and
+`krb5/` at the top as well, Kerberos having no place in Go's tree. As in Go,
 the group is part of the import path but not of the name in code:
 `import gslib.net.http.fetch;`, then `http::get(...)`. Goose namespaces
 are one identifier, so each library keeps its own (`http::`, `tls::`,
@@ -50,13 +52,15 @@ gslib the same modules are `import <group>.<lib>.<m>;`, which the
 compiler resolves within the package (packages.md §4.4). compress, with
 no group, is `import gslib.compress;` and `import gslib.compress.gzip;`,
 and `compress::` in code; mime likewise (`import gslib.mime.multipart;`,
-then `multipart::` and `mime::`). Only the
+then `multipart::` and `mime::`), and krb5 (`import gslib.krb5.client;`,
+then `krb5::`: all its modules share one namespace). Only the
 modules a program imports are compiled. The libraries need one another (http needs
 tls, x509, asn1 and bignum), and since they are one package, a program
 declares only gslib.
 
-The C is http's sockets (`net/http/src/httpnet.c`) and mime's platform
-constant (`mime/src/path.c`), named in `gslib.build` and compiled only
+The C is http's sockets (`net/http/src/httpnet.c`), mime's platform
+constant (`mime/src/path.c`) and krb5's UDP, owner-only files and host
+names (`krb5/src/krb5sys.c`), named in `gslib.build` and compiled only
 into programs that call them. bignum reaches the OS's random bytes through
 libc, by an `extern "c"` block; mime's multipart takes them from there.
 

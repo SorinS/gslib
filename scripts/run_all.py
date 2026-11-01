@@ -19,7 +19,7 @@ ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 # Each library's directory, by its name.
 LIBS = {"asn1": "encoding/asn1", "bignum": "crypto/bignum", "x509": "crypto/x509", "tls": "crypto/tls",
         "ssh": "crypto/ssh", "ldap": "net/ldap", "yaml": "encoding/yaml", "http": "net/http",
-        "compress": "compress", "mime": "mime"}
+        "compress": "compress", "mime": "mime", "krb5": "krb5"}
 
 
 def main():
