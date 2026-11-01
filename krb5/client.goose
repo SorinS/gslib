@@ -99,8 +99,8 @@ fn default_salt_of(name: const u8[:], realm: const u8[:]) -> u8[>..] {
 // The encryption types to ask for: the configured ones, and for a keytab
 // only those it has keys of (MIT's kinit -k does the same).
 fn as_etypes(cfg: const Config&, sec: const Secret&, name: const u8[:], realm: const u8[:]) -> i32[>..] {
+    if sec.has_password { return conf_etypes(cfg, "default_tkt_enctypes"); }
     let want = conf_etypes(cfg, "default_tkt_enctypes");
-    if sec.has_password { return want; }
     return keytab_etypes(sec.keytab, name, realm, want);
 }
 

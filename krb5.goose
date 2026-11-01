@@ -14,10 +14,14 @@
 //   krb5.spnego     RFC 4178 negotiation tokens, HTTP Negotiate (RFC 4559)
 //   krb5.ndr        NDR (MS-RPCE) decoding, for the PAC
 //   krb5.pac        the PAC: logon info, UPN/DNS info, signatures
+//   krb5.claims     the PAC's claims, and MS-XCA decompression
 //   krb5.net        talking to KDCs over UDP and TCP
 //   krb5.ldap       SASL GSSAPI binds (RFC 4752) and SID lookups in AD
+//   krb5.sys        the C it calls (src/krb5sys.c, http's TCP sockets)
 //
-// Nothing here does I/O except krb5.net, the file modules and krb5.ldap.
+// Nothing here does I/O but krb5.net, the file functions (keytabs,
+// caches, krb5.conf) and the tools; krb5.ldap writes and reads bytes for
+// the caller's connection.
 
 namespace krb5;
 

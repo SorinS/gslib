@@ -84,7 +84,7 @@ fn send_token(s: i32, flags: u8, tok: const u8[:]) -> bool {
 fn recv_token(s: i32, tok: u8[>..]&) -> u8, bool {
     var h: u8[5] = [0; 5];
     if gssnet_read_full(s, h) != 1 { return 0, false; }
-    let n: i64 = (h[1] as i64) << 24 | (h[2] as i64) << 16 | (h[3] as i64) << 8 | h[4] as i64;
+    let n: i64 = (h[1] as i64) << 24 | (h[2] as i64) << 16 | (h[3] as i64) << 8 | h[4];
     if n < 0 || n > 1 << 24 { return 0, false; }
     tok.clear();
     tok.resize(n, 0);

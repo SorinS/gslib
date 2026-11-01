@@ -159,7 +159,7 @@ fn sasl_in(s: SaslGssapi&, pending: u8[>..]&, plain: u8[>..]&) -> i64 {
     var pos = 0;
     while pending.len - pos >= 4 {
         let n: i64 = (pending[pos] as i64) << 24 | (pending[pos + 1] as i64) << 16 | (pending[pos + 2] as i64) << 8 | pending[pos + 3];
-        if n > SASL_MAX_BUFFER as i64 || n < 16 { return ERR_TOKEN; }
+        if n > SASL_MAX_BUFFER || n < 16 { return ERR_TOKEN; }
         if pending.len - pos - 4 < n { break; }
         let sealed, err = gss_unwrap(s.ctx, pending[pos + 4..pos + 4 + n], plain);
         if err != OK { return err; }

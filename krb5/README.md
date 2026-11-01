@@ -128,6 +128,13 @@ Go, and `tools/krb5oracle/go.mod` points (`replace`) at that checkout.
 - DNS SRV discovery of KDCs (`dns_lookup_kdc`), kpasswd (RFC 3244),
   KKDCP, MEMORY/KEYRING/KCM caches.
 - Windows is built for (the C has its Windows branches) but untested.
+- An acceptor taking any name (`any_name`) tries the first keytab key of
+  the ticket's realm, type and version, where MIT tries each in turn.
+- No live Active Directory yet: the PAC and claims are checked against
+  Windows AD PACs recorded by go-krb5 and against MIT's live PACs, but a
+  KDC exchange with AD, its referrals, a ktpass keytab, a live logon-info
+  PAC, the LDAP GSSAPI bind with signing and SID lookups are untested
+  against AD.
 
 RFC 4757 §7.2's pseudocode puts the direction bytes of RC4 tokens the
 wrong way round; we follow RFC 1964 and MIT (00 from the initiator), and
