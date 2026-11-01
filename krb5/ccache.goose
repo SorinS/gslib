@@ -241,6 +241,23 @@ fn ccache_add(cc: const CCache&, c: const Credential&) -> CCache {
                     realm: copy(cc.realm), creds: creds };
 }
 
+// The cache with every credential of `more` added, as ccache_add does.
+fn ccache_add_all(cc: const CCache&, more: const Credential[:]) -> CCache {
+    var creds: Credential[>..] = [];
+    for x in cc.creds {
+        var replaced = false;
+        for c in more {
+            if !is_config_cred(x) && x.client == c.client && x.client_realm == c.client_realm &&
+               x.server == c.server && x.server_realm == c.server_realm && x.is_skey == c.is_skey { replaced = true; }
+        }
+        if !replaced { creds.push(copy(x)); }
+    }
+    for c in more { creds.push(copy(c)); }
+    return CCache { version: 4, has_time_offset: cc.has_time_offset, time_offset: cc.time_offset,
+                    time_offset_usec: cc.time_offset_usec, principal_type: cc.principal_type, principal: copy(cc.principal),
+                    realm: copy(cc.realm), creds: creds };
+}
+
 // The cache with a time offset (the KDC's clock minus ours).
 fn ccache_with_offset(cc: const CCache&, offset: i64) -> CCache {
     var creds: Credential[>..] = [];
