@@ -417,8 +417,9 @@ fn gss_wrap(ctx: GssContext&, msg: const u8[:], conf: bool, out: u8[>..]&) -> i6
         var data: u8[>..] = [];
         data.append(msg);
         data.append(h);
+        // The Wrap token's usage even without confidentiality (§2).
         var ck: u8[>..] = [];
-        let err = checksum(ctx.key, 0, sign_usage(ctx.initiator), data, ck);
+        let err = checksum(ctx.key, 0, seal_usage(ctx.initiator), data, ck);
         if err != OK { return err; }
         h[4] = (ck.len >> 8) as! u8;
         h[5] = ck.len as! u8;
@@ -472,7 +473,7 @@ fn gss_unwrap(ctx: GssContext&, token: const u8[:], out: u8[>..]&) -> bool, i64 
         data[data.len - 11] = 0;
         data[data.len - 10] = 0;
         data[data.len - 9] = 0;
-        let err = verify_checksum(ctx.key, cksum_type_for(ctx.key.etype), sign_usage(!ctx.initiator), data, b[b.len - ec..]);
+        let err = verify_checksum(ctx.key, cksum_type_for(ctx.key.etype), seal_usage(!ctx.initiator), data, b[b.len - ec..]);
         if err != OK { return false, err; }
         out.append(msg);
     }

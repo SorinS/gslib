@@ -75,7 +75,7 @@ def free_port():
 
 
 class Kdc:
-    def __init__(self, directory=None, mit=None, quiet=True):
+    def __init__(self, directory=None, mit=None, quiet=True, time_offset=0):
         self.mit = mit_prefix(mit)
         self.own_dir = directory is None
         self.dir = directory or tempfile.mkdtemp(prefix="krb5kdc-")
@@ -84,6 +84,7 @@ class Kdc:
         self.port_a = free_port()
         self.port_b = free_port()
         self.env = None
+        self.time_offset = time_offset
 
     def bin(self, name):
         for sub in ("sbin", "bin"):
@@ -199,6 +200,9 @@ class Kdc:
 
     def start(self):
         args = [self.bin("krb5kdc"), "-n", "-r", REALM_A, "-r", REALM_B]
+        if self.time_offset:
+            # The KDC's clock, ahead of ours by this many seconds.
+            args += ["-T", str(self.time_offset)]
         out = subprocess.DEVNULL if self.quiet else None
         self.proc = subprocess.Popen(args, env=self.env, stdout=out, stderr=out)
         deadline = time.time() + 10
