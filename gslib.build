@@ -1,9 +1,10 @@
-// gslib's sidecar. Its C is http.client's sockets (net/http/src/httpnet.c)
-// and mime's platform constant (mime/src/path.c), built only into programs
-// that call them. crypto/bignum's entropy module opens libc
+// gslib's sidecar. Its C is http.client's sockets (net/http/src/httpnet.c),
+// mime's platform constant (mime/src/path.c) and krb5's UDP, private files
+// and host names (krb5/src/krb5sys.c), built only into programs that call
+// them. crypto/bignum's entropy module opens libc
 // through an extern "c" block; on Linux libc.so is a linker script, so the
 // library itself is named.
-c_sources = ["net/http/src/httpnet.c", "mime/src/path.c"];
+c_sources = ["net/http/src/httpnet.c", "mime/src/path.c", "krb5/src/krb5sys.c"];
 c_libs_windows = ["ws2_32"];
 dylibs_linux = ["c=libc.so.6"];
 
@@ -20,4 +21,5 @@ exclude = [
     "net/http/test", "net/http/tools",
     "compress/test", "compress/tools", "compress/examples",
     "mime/test", "mime/tools",
+    "krb5/test", "krb5/tools",
 ];
