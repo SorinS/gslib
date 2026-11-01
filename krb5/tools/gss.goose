@@ -27,6 +27,7 @@ import gslib.krb5.client;
 import gslib.krb5.service;
 import gslib.krb5.gssapi;
 import gslib.krb5.spnego;
+import gslib.krb5.pac;
 
 extern fn gssnet_listen(port: i32) -> i32;
 extern fn gssnet_port(s: i32) -> i32;
@@ -217,6 +218,7 @@ fn serve_one(c: i32, kt: const krb5::KeytabEntry[:], any: bool, rc: krb5::Replay
             print("accepted: ", krb5::principal_string(acc.ap.client, acc.ap.client_realm), " flags=", acc.flags,
                   " delegated=", n, " spnego=", !sp.raw);
             for x in acc.delegated { print("delegated: ", krb5::principal_string(x.server, x.server_realm)); }
+            print_pac(acc.ap);
         }
         done = d;
     }
@@ -240,6 +242,20 @@ fn serve_one(c: i32, kt: const krb5::KeytabEntry[:], any: bool, rc: krb5::Replay
         } else {
             send_token(c, TOKEN_NOOP, "");
         }
+    }
+}
+
+// The PAC of an accepted ticket, checked with the service key: what it
+// says, or why it fails.
+fn print_pac(ap: const krb5::ApContext&) {
+    let p, found, err = krb5::pac_verify(ap, ap.service_key);
+    if !found { print("pac: none"); return; }
+    if err != krb5::OK { print("pac: ", krb5::error_text(err)); return; }
+    var types: u8[>..] = [];
+    for b in p.buffers { types.append(str(" ", b.ul_type)); }
+    print("pac: verified client=", p.client_info.name, " upn=", p.upn_dns_info.upn, " buffers", types);
+    if p.has_logon_info {
+        for s in krb5::logon_sids(p.logon_info) { print("pac sid: ", s); }
     }
 }
 
@@ -374,6 +390,7 @@ fn http_server(a: u8[:][>..]&) {
                     for x in acc.delegated { n++; }
                     respond(c, "200 OK", extra, str("hello ", who, "\n"));
                     print("authenticated: ", who, " spnego=", !sp.raw, " delegated=", n);
+                    print_pac(acc.ap);
                     served++;
                 } else {
                     respond(c, "401 Unauthorized", extra, str("refused: ", krb5::error_text(err), "\n"));

@@ -271,6 +271,10 @@ def gss_tests(k, tool, gss):
               and f"message: hello goose sealed={'false' if '-nx' in opts else 'true'}" in log
               and (not want_deleg or "delegated=1" in log))
         check(f"MIT gss-client {' '.join(opts) or 'krb5'} -> our acceptor", ok, out(p) + log)
+        if not opts:
+            # MIT's KDC (1.20 and later) signs a PAC into every ticket.
+            check("PAC of an MIT ticket verified (server signature, client info)",
+                  "pac: verified client=alice" in log, log)
     # An acceptor without the key refuses.
     srv, port = start_server([gss, "server", "0", "-once", "-keytab", k.path("web.keytab")], k.env)
     p = run(k, [k.bin("gss-client"), "-port", str(port), "127.0.0.1", "host@svc.a.test", "x"], timeout=20)

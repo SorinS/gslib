@@ -288,8 +288,8 @@ fn gss_accept(token: const u8[:], kt: const KeytabEntry[:], any_name: bool, rc: 
     let f = rd_le32(sum, 20);
     var delegated: Credential[>..] = [];
     if f & GSS_DELEG != 0 && sum.len >= 28 {
-        let dlg_opt = sum[24] as u32 | (sum[25] as u32) << 8;
-        let dlg_len = sum[26] as i64 | (sum[27] as i64) << 8;
+        let dlg_opt = sum[24] | (sum[25] as u32) << 8;
+        let dlg_len = sum[26] | (sum[27] as i64) << 8;
         if dlg_opt != 1 || 28 + dlg_len > sum.len { return ctx, none, ERR_TOKEN; }
         let cs, cerr = read_krb_cred(sum[28..28 + dlg_len], ap.session_key, if ap.has_subkey { ap.subkey } else { no_key() });
         if cerr != OK { return ctx, none, cerr; }
@@ -331,7 +331,7 @@ fn put_seq64(out: u8[>..]&, v: u64) {
 
 fn rd_seq64(b: const u8[:], at: i64) -> u64 {
     var v: u64 = 0;
-    for i in 8 { v = v << 8 | b[at + i] as u64; }
+    for i in 8 { v = v << 8 | b[at + i]; }
     return v;
 }
 
@@ -439,8 +439,8 @@ fn gss_unwrap(ctx: GssContext&, token: const u8[:], out: u8[>..]&) -> bool, i64 
     if token.len < 16 || token[0] != 0x05 || token[1] != 0x04 || token[3] != 0xff { return false, ERR_TOKEN; }
     let f = token[2];
     if !check_token_flags(ctx, f, true) { return false, ERR_TOKEN; }
-    let ec = (token[4] as i64) << 8 | token[5] as i64;
-    let rrc = (token[6] as i64) << 8 | token[7] as i64;
+    let ec = (token[4] as i64) << 8 | token[5];
+    let rrc = (token[6] as i64) << 8 | token[7];
     let seq = rd_seq64(token, 8);
     // Undo the right rotation of everything after the header.
     let body = token[16..];

@@ -66,13 +66,14 @@ struct ApContext {
     cksum: Checksum,       // the authenticator's, which GSS-API reads
     authz: AuthData[],     // the ticket's authorization data
     kvno: u32,
+    service_key: Key,      // the keytab key the ticket decrypted with (for the PAC's signature)
 }
 
 fn empty_ap_context() -> ApContext {
     return ApContext {
         client: "", client_realm: "", client_type: 0, server: "", server_realm: "", session_key: no_key(),
         has_subkey: false, subkey: no_key(), has_seq_number: false, seq_number: 0, ap_options: 0, ticket_flags: 0,
-        authtime: 0, endtime: 0, ctime: 0, cusec: 0, has_cksum: false, cksum: no_checksum(), authz: [], kvno: 0,
+        authtime: 0, endtime: 0, ctime: 0, cusec: 0, has_cksum: false, cksum: no_checksum(), authz: [], kvno: 0, service_key: no_key(),
     };
 }
 
@@ -146,7 +147,7 @@ fn verify_ap_req(apreq: const u8[:], kt: const KeytabEntry[:], any_name: bool, r
         server: copy(t.sname.name), server_realm: copy(t.realm), session_key: tp.key, has_subkey: a.has_subkey,
         subkey: a.subkey, has_seq_number: a.has_seq_number, seq_number: a.seq_number, ap_options: ap.ap_options,
         ticket_flags: tp.flags, authtime: tp.authtime, endtime: tp.endtime, ctime: a.ctime, cusec: a.cusec,
-        has_cksum: a.has_cksum, cksum: copy(a.cksum), authz: copy(tp.authz), kvno: kvno,
+        has_cksum: a.has_cksum, cksum: copy(a.cksum), authz: copy(tp.authz), kvno: kvno, service_key: key,
     }, OK;
 }
 
