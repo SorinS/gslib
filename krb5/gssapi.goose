@@ -25,6 +25,9 @@ import krb5.ccache;
 import krb5.service;
 
 let KRB5_OID = "1.2.840.113554.1.2.2";
+// Microsoft's mistaken Kerberos OID (Windows 2000), which Windows still
+// sends first in SPNEGO and sometimes frames its tokens with.
+let MS_KRB5_OID = "1.2.840.48018.1.2.2";
 
 // Token identifiers (RFC 4121 §4.1, §4.2.6).
 let TOK_AP_REQ: u32 = 0x0100;
@@ -78,13 +81,15 @@ fn gss_frame(out: u8[>..]&, oid: const u8[:], tok_id: u32, body: const u8[:]) {
     asn1::put(out, 0x60, c);
 }
 
-// The mechanism OID's DER content, the TOK_ID (when `with_id`) and where
-// the body starts, of a framed token.
+// The TOK_ID (when `with_id`) and where the body starts, of a token
+// framed with `oid` (or, for Kerberos, Microsoft's OID).
 fn gss_unframe(token: const u8[:], oid: const u8[:], with_id: bool) -> u32, i64, i64 {
     let t, ok = asn1::read(token, 0, token.len, true);
     if !ok || t.tag != 0x60 || t.end != token.len { return 0, 0, ERR_TOKEN; }
     let o, ook = asn1::read(token, t.off, t.end, true);
-    if !ook || !asn1::oid_is(token, o, oid) { return 0, 0, ERR_MECH; }
+    if !ook { return 0, 0, ERR_TOKEN; }
+    let ms = oid == KRB5_OID && asn1::oid_is(token, o, MS_KRB5_OID);
+    if !asn1::oid_is(token, o, oid) && !ms { return 0, 0, ERR_MECH; }
     if !with_id { return 0, o.end, OK; }
     if o.end + 2 > t.end { return 0, 0, ERR_TOKEN; }
     let hi: u32 = token[o.end];
