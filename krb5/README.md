@@ -20,7 +20,7 @@ reading theirs. Only `krb5.net`, the file functions and the tools do I/O.
 | `krb5.net` | Sending to a realm's KDCs: UDP first below `udp_preference_limit`, TCP above it or on KRB_ERR_RESPONSE_TOO_BIG, each KDC in turn, as MIT does |
 | `krb5.client` | AS exchanges (`get_tgt_password`, `get_tgt_keytab`, encrypted-timestamp pre-authentication from ETYPE-INFO2, enterprise names and client referrals), TGS exchanges (`get_service_ticket`: cross-realm along `capaths` or the hierarchy, server referrals), `renew`, `forward_tgt`, clock skew learned from the KDC; `kinit_password`, `kinit_keytab`, `get_service_ticket_cached` keep a cache |
 | `krb5.service` | The acceptor: `verify_ap_req` (keytab, ticket times, skew, authenticator, replay cache), `make_ap_rep`, `verify_ap_rep`, `make_ap_req` |
-| `krb5.gssapi` | RFC 4121: `gss_init`, `gss_init_continue`, `gss_accept` (mutual authentication, channel bindings, delegation through KRB-CRED, acceptor subkeys), `gss_get_mic`, `gss_verify_mic`, `gss_wrap`, `gss_unwrap` (sealed or not, any RRC), sequence checks |
+| `krb5.gssapi` | RFC 4121: `gss_init`, `gss_init_continue`, `gss_accept` (mutual authentication, channel bindings, delegation through KRB-CRED, acceptor subkeys), `gss_get_mic`, `gss_verify_mic`, `gss_wrap`, `gss_unwrap` (sealed or not, any RRC), sequence checks; RFC 4757's tokens for RC4 session keys |
 | `krb5.spnego` | RFC 4178: `spnego_init`, `spnego_init_continue`, `spnego_accept` (Kerberos under RFC 4121's OID or Microsoft's, a second round when another mechanism was preferred, mechListMIC both ways, NegTokenInit2, bare Kerberos tokens); `negotiate_header`, `negotiate_token` |
 | `krb5.ndr` | NDR as MS-RPCE's type serialization: the reader the PAC's types use |
 | `krb5.pac` | The PAC: logon info (`LogonInfo`, `logon_sids`), client info, UPN/DNS info with its SAM-name and SID extension, S4U delegation info, device info, attributes, requestor, signatures; `pac_verify` (server signature with the service key, client info against the ticket), `pac_verify_kdc` |
@@ -101,14 +101,15 @@ server; servers listen on 127.0.0.1 only.
 
 `make interop-krb5` (`scripts/interop.py`, macOS with Homebrew's
 `krb5`): two MIT 1.22 realms (`scripts/kdc.py`, on 127.0.0.1, trusting
-each other), and 57 checks: kinit with each user (pre-auth required,
+each other), and 64 checks: kinit with each user (pre-auth required,
 RC4-only, DES3-only, keytab), every encryption type for TGT and service
 ticket, cross-realm both ways, our cache in MIT's klist and kvno and
 MIT's in ours, TCP only, `tcp/` and `udp/` KDCs, a silent KDC skipped,
 renewal, forwardable flags, clock skew corrected against a KDC ten minutes
 ahead; our initiator against MIT's gss-server (krb5, SPNEGO, sequence,
 integrity-only, delegation) and MIT's gss-client against our acceptor
-(the same and `-d`), the PAC of MIT's tickets verified, our HTTP
+(the same and `-d`), RC4 session keys both ways (RFC 4757's tokens),
+the PAC of MIT's tickets verified, our HTTP
 Negotiate client and `curl --negotiate` against our server.
 
 `scripts/gen_vectors.py` writes `test/vectors` from go-krb5's checkout
@@ -121,13 +122,17 @@ Go, and `tools/krb5oracle/go.mod` points (`replace`) at that checkout.
 - FAST (RFC 6113) and what needs it (encrypted challenge), PKINIT (RFC
   4556), SPAKE, OTP.
 - S4U2Self and S4U2Proxy (constrained delegation), user-to-user.
-- RFC 1964 / RFC 4757 per-message tokens: contexts with DES3 or RC4
-  session keys establish, but `gss_get_mic` and `gss_wrap` refuse them.
+- RFC 1964's per-message tokens for DES3 session keys: such contexts
+  establish, but `gss_get_mic` and `gss_wrap` refuse them (RC4's, RFC
+  4757's, are done).
 - DNS SRV discovery of KDCs (`dns_lookup_kdc`), kpasswd (RFC 3244),
   KKDCP, MEMORY/KEYRING/KCM caches.
 - Windows is built for (the C has its Windows branches) but untested.
 
-Where go-krb5 differs, we follow the RFCs: RC4's string-to-key encodes
+RFC 4757 §7.2's pseudocode puts the direction bytes of RC4 tokens the
+wrong way round; we follow RFC 1964 and MIT (00 from the initiator), and
+its Wrap checksum's salt is 13, not the 15 it writes, as MIT, Heimdal and
+Windows have it. Where go-krb5 differs, we follow the RFCs: RC4's string-to-key encodes
 the password as UTF-16LE (go-krb5 leaves gaps after non-ASCII bytes), the
 RC4 usage number is little-endian (go-krb5 writes a varint, the same
 below 128), and XPRESS_HUFF claims are MS-XCA's LZ77+Huffman, not HPACK's Huffman

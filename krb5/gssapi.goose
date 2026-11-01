@@ -8,9 +8,10 @@
 // both sides then protect messages with it; without one, with the
 // initiator's subkey; without that, with the session key.
 //
-// Not done: RFC 1964 / RFC 4757 tokens, which MIT and Windows use instead
-// of RFC 4121's for DES3 and RC4 session keys; with such keys contexts
-// establish, but get_mic and wrap refuse (ERR_ETYPE). DCE-style contexts.
+// With an RC4 key, per-message tokens are RFC 4757's (§7.2, §7.3), as MIT
+// and Windows make them, and neither side asserts an acceptor subkey.
+// Not done: RFC 1964's tokens for DES3 keys (contexts establish, but
+// get_mic and wrap refuse them: ERR_ETYPE); DCE-style contexts.
 
 namespace krb5;
 
@@ -18,6 +19,10 @@ import std;
 import encoding.asn1;
 import crypto.bignum;
 import crypto.bignum.md5;
+import crypto.bignum.rc4;
+import crypto.bignum.hmac;
+import crypto.bignum.ct;
+import crypto.bignum.entropy;
 import krb5.crypto;
 import krb5.messages;
 import krb5.keytab;
@@ -244,7 +249,8 @@ fn gss_init_continue(ctx: GssContext&, token: const u8[:]) -> i64 {
     if id != TOK_AP_REP { return ERR_TOKEN; }
     let p, perr = verify_ap_rep(token[at..], ctx.session_key, ctx.ctime, ctx.cusec);
     if perr != OK { return perr; }
-    if p.has_subkey {
+    // An acceptor subkey counts for RFC 4121's tokens only.
+    if p.has_subkey && cfx_key(ctx.key) {
         ctx.key = p.subkey;
         ctx.acceptor_subkey = true;
     }
@@ -302,14 +308,19 @@ fn gss_accept(token: const u8[:], kt: const KeytabEntry[:], any_name: bool, rc: 
         send_seq: init_seq, recv_seq: init_seq, ctime: ap.ctime, cusec: ap.cusec,
     };
     if ap.ap_options & flag(AP_OPT_MUTUAL_REQUIRED) != 0 || f & GSS_MUTUAL != 0 {
+        // A subkey of ours for RFC 4121's tokens; RFC 4757's (RC4) and
+        // RFC 1964's (DES3) keep the initiator's, as MIT does.
+        let cfx = cfx_key(init_key);
         let sub = random_key(init_key.etype);
         let seq = random_u32() & 0x3fffffff;
         var rep: u8[>..] = [];
-        let rerr = make_ap_rep(ap, true, sub, true, seq, rep);
+        let rerr = make_ap_rep(ap, cfx, sub, true, seq, rep);
         if rerr != OK { return ctx, none, rerr; }
         gss_frame(out, KRB5_OID, TOK_AP_REP, rep);
-        ctx.key = sub;
-        ctx.acceptor_subkey = true;
+        if cfx {
+            ctx.key = sub;
+            ctx.acceptor_subkey = true;
+        }
         ctx.send_seq = seq;
     }
     return ctx, GssAccepted { ap: ap, flags: f, delegated: delegated }, OK;
@@ -357,6 +368,7 @@ fn check_seq(ctx: GssContext&, seq: u64) -> i64 {
 
 fn gss_get_mic(ctx: GssContext&, msg: const u8[:], out: u8[>..]&) -> i64 {
     if !ctx.established { return ERR_CONTEXT; }
+    if ctx.key.etype == ETYPE_RC4_HMAC { return rc4_get_mic(ctx, msg, out); }
     if !cfx_key(ctx.key) { return ERR_ETYPE; }
     var h: u8[>..] = [0x04, 0x04, token_flags(ctx, false), 0xff, 0xff, 0xff, 0xff, 0xff];
     put_seq64(h, ctx.send_seq);
@@ -384,6 +396,7 @@ fn check_token_flags(ctx: const GssContext&, f: u8, sealed_ok: bool) -> bool {
 
 fn gss_verify_mic(ctx: GssContext&, msg: const u8[:], token: const u8[:]) -> i64 {
     if !ctx.established { return ERR_CONTEXT; }
+    if ctx.key.etype == ETYPE_RC4_HMAC { return rc4_verify_mic(ctx, msg, token); }
     if !cfx_key(ctx.key) { return ERR_ETYPE; }
     if token.len < 16 || token[0] != 0x04 || token[1] != 0x04 { return ERR_TOKEN; }
     if !check_token_flags(ctx, token[2], false) { return ERR_TOKEN; }
@@ -400,6 +413,7 @@ fn gss_verify_mic(ctx: GssContext&, msg: const u8[:], token: const u8[:]) -> i64
 // else with a checksum. RRC is 0 when we send; any is read.
 fn gss_wrap(ctx: GssContext&, msg: const u8[:], conf: bool, out: u8[>..]&) -> i64 {
     if !ctx.established { return ERR_CONTEXT; }
+    if ctx.key.etype == ETYPE_RC4_HMAC { return rc4_wrap(ctx, msg, conf, out); }
     if !cfx_key(ctx.key) { return ERR_ETYPE; }
     var h: u8[>..] = [0x05, 0x04, token_flags(ctx, conf), 0xff, 0, 0, 0, 0];
     put_seq64(h, ctx.send_seq);
@@ -435,6 +449,7 @@ fn gss_wrap(ctx: GssContext&, msg: const u8[:], conf: bool, out: u8[>..]&) -> i6
 // encrypted.
 fn gss_unwrap(ctx: GssContext&, token: const u8[:], out: u8[>..]&) -> bool, i64 {
     if !ctx.established { return false, ERR_CONTEXT; }
+    if ctx.key.etype == ETYPE_RC4_HMAC { return rc4_unwrap(ctx, token, out); }
     if !cfx_key(ctx.key) { return false, ERR_ETYPE; }
     if token.len < 16 || token[0] != 0x05 || token[1] != 0x04 || token[3] != 0xff { return false, ERR_TOKEN; }
     let f = token[2];
@@ -478,4 +493,162 @@ fn gss_unwrap(ctx: GssContext&, token: const u8[:], out: u8[>..]&) -> bool, i64 
         out.append(msg);
     }
     return sealed, check_seq(ctx, seq);
+}
+
+// --- RFC 4757's tokens (RC4) ----------------------------------------------------------
+
+// The checksum's salts: 15 for MIC tokens, 13 for Wrap tokens (as MIT,
+// Heimdal and Windows have them; RFC 4757 §7.3 writes 15 for both).
+let RC4_SIGN_SALT: i64 = 15;
+let RC4_SEAL_SALT: i64 = 13;
+
+// SND_SEQ before its encryption: the number, big-endian, then the
+// direction: zeros when the initiator sends, ff ff ff ff when the
+// acceptor does (RFC 1964 §1.2.1.2, and MIT and Windows; RFC 4757 §7.2's
+// pseudocode has them the other way round).
+fn rc4_seq(seq: u64, from_initiator: bool) -> u8[8] {
+    let d: u8 = if from_initiator { 0 } else { 0xff };
+    return [(seq >> 24) as! u8, (seq >> 16) as! u8, (seq >> 8) as! u8, seq as! u8, d, d, d, d];
+}
+
+// The first 8 bytes of HMAC-MD5 over header and data (krb5.crypto's
+// HMAC-MD5 checksum, with the salt as its usage).
+fn rc4_cksum(key: Key, salt: i64, header: const u8[:], data: const u8[:]) -> u8[>..] {
+    var d: u8[>..] = [];
+    d.append(header);
+    d.append(data);
+    var c: u8[>..] = [];
+    let err = checksum(key, CKSUM_HMAC_MD5, salt, d, c);
+    var out: u8[>..] = [];
+    if err == OK { out.append(c[..8]); }
+    return out;
+}
+
+// SND_SEQ's key: HMAC(HMAC(Kss, 0), SGN_CKSUM).
+fn rc4_seq_key(key: Key, cksum: const u8[:]) -> u8[>..] {
+    let z: u8[4] = [0; 4];
+    let k = bignum::hmac(128, key.value, z);
+    return bignum::hmac(128, k, cksum);
+}
+
+// The data's key: HMAC(HMAC(Kss ^ f0, 0), sequence number).
+fn rc4_data_key(key: Key, seq4: const u8[:]) -> u8[>..] {
+    var local: u8[>..] = [];
+    for b in key.value { local.push(b ^ 0xf0); }
+    let z: u8[4] = [0; 4];
+    let k = bignum::hmac(128, local, z);
+    return bignum::hmac(128, k, seq4);
+}
+
+fn rc4_get_mic(ctx: GssContext&, msg: const u8[:], out: u8[>..]&) -> i64 {
+    let header: u8[8] = [0x01, 0x01, 0x11, 0x00, 0xff, 0xff, 0xff, 0xff];
+    let ck = rc4_cksum(ctx.key, RC4_SIGN_SALT, header, msg);
+    if ck.len != 8 { return ERR_CKSUMTYPE; }
+    var seq: u8[>..] = [];
+    seq.append(rc4_seq(ctx.send_seq, ctx.initiator));
+    var r = bignum::rc4_init(rc4_seq_key(ctx.key, ck));
+    bignum::rc4_xor(r, seq);
+    var body: u8[>..] = [];
+    body.append(header[2..]);
+    body.append(seq);
+    body.append(ck);
+    gss_frame(out, KRB5_OID, 0x0101, body);
+    ctx.send_seq++;
+    return OK;
+}
+
+// The token's 8-byte header (from its TOK_ID) and what follows, unframed.
+fn rc4_unframe(token: const u8[:], want_id: u32, min: i64) -> const u8[:], i64 {
+    let id, at, err = gss_unframe(token, KRB5_OID, true);
+    if err != OK { return token[0..0], err; }
+    if id != want_id || token.len - (at - 2) < min { return token[0..0], ERR_TOKEN; }
+    return token[at - 2..], OK;
+}
+
+// The sequence number of a received token, decrypted, and checked to come
+// from the peer.
+fn rc4_read_seq(ctx: const GssContext&, enc: const u8[:], ck: const u8[:]) -> u8[>..], bool {
+    var seq: u8[>..] = [];
+    seq.append(enc);
+    var r = bignum::rc4_init(rc4_seq_key(ctx.key, ck));
+    bignum::rc4_xor(r, seq);
+    // From the peer: the acceptor's tokens to us carry ff, the initiator's 00.
+    let want: u8 = if ctx.initiator { 0xff } else { 0 };
+    for i in 4..8 { if seq[i] != want { return seq, false; } }
+    return seq, true;
+}
+
+fn seq_of(b: const u8[:]) -> u64 {
+    var v: u64 = 0;
+    for i in 4 { v = v << 8 | b[i]; }
+    return v;
+}
+
+fn rc4_verify_mic(ctx: GssContext&, msg: const u8[:], token: const u8[:]) -> i64 {
+    let t, err = rc4_unframe(token, 0x0101, 24);
+    if err != OK { return err; }
+    let header = t[..8];
+    if header[2] != 0x11 || header[3] != 0 { return ERR_TOKEN; }
+    for i in 4..8 { if header[i] != 0xff { return ERR_TOKEN; } }
+    let ck = t[16..24];
+    let want = rc4_cksum(ctx.key, RC4_SIGN_SALT, header, msg);
+    if want.len != 8 || bignum::ct_eq_bytes(want, ck) != 1 { return KRB_AP_ERR_MODIFIED; }
+    let seq, ok = rc4_read_seq(ctx, t[8..16], ck);
+    if !ok { return ERR_TOKEN; }
+    return check_seq(ctx, seq_of(seq));
+}
+
+fn rc4_wrap(ctx: GssContext&, msg: const u8[:], conf: bool, out: u8[>..]&) -> i64 {
+    let s: u8 = if conf { 0x10 } else { 0xff };
+    let s2: u8 = if conf { 0x00 } else { 0xff };
+    let header: u8[8] = [0x02, 0x01, 0x11, 0x00, s, s2, 0xff, 0xff];
+    let seq = rc4_seq(ctx.send_seq, ctx.initiator);
+    var data: u8[>..] = [0; 8];
+    bignum::random_bytes(data);
+    data.append(msg);
+    // One byte of padding, of value 1 (§7.3).
+    data.push(1);
+    let ck = rc4_cksum(ctx.key, RC4_SEAL_SALT, header, data);
+    if ck.len != 8 { return ERR_CKSUMTYPE; }
+    if conf {
+        var r = bignum::rc4_init(rc4_data_key(ctx.key, seq[..4]));
+        bignum::rc4_xor(r, data);
+    }
+    var enc_seq: u8[>..] = [];
+    enc_seq.append(seq);
+    var rs = bignum::rc4_init(rc4_seq_key(ctx.key, ck));
+    bignum::rc4_xor(rs, enc_seq);
+    var body: u8[>..] = [];
+    body.append(header[2..]);
+    body.append(enc_seq);
+    body.append(ck);
+    body.append(data);
+    gss_frame(out, KRB5_OID, 0x0201, body);
+    ctx.send_seq++;
+    return OK;
+}
+
+fn rc4_unwrap(ctx: GssContext&, token: const u8[:], out: u8[>..]&) -> bool, i64 {
+    let t, err = rc4_unframe(token, 0x0201, 32 + 1);
+    if err != OK { return false, err; }
+    let header = t[..8];
+    if header[2] != 0x11 || header[3] != 0 || header[6] != 0xff || header[7] != 0xff { return false, ERR_TOKEN; }
+    let sealed = header[4] == 0x10 && header[5] == 0x00;
+    if !sealed && (header[4] != 0xff || header[5] != 0xff) { return false, ERR_TOKEN; }
+    let ck = t[16..24];
+    let seq, ok = rc4_read_seq(ctx, t[8..16], ck);
+    if !ok { return sealed, ERR_TOKEN; }
+    var data: u8[>..] = [];
+    data.append(t[24..]);
+    if sealed {
+        var r = bignum::rc4_init(rc4_data_key(ctx.key, seq[..4]));
+        bignum::rc4_xor(r, data);
+    }
+    let want = rc4_cksum(ctx.key, RC4_SEAL_SALT, header, data);
+    if want.len != 8 || bignum::ct_eq_bytes(want, ck) != 1 { return sealed, KRB_AP_ERR_MODIFIED; }
+    // The padding's last byte says how long it is (1 for RC4; up to 8).
+    let padn: i64 = data[data.len - 1];
+    if padn < 1 || padn > 8 || 8 + padn > data.len { return sealed, ERR_TOKEN; }
+    out.append(data[8..data.len - padn]);
+    return sealed, check_seq(ctx, seq_of(seq));
 }

@@ -275,6 +275,29 @@ def gss_tests(k, tool, gss):
             # MIT's KDC (1.20 and later) signs a PAC into every ticket.
             check("PAC of an MIT ticket verified (server signature, client info)",
                   "pac: verified client=alice" in log, log)
+    # RC4 session keys: RFC 4757's tokens, both ways.
+    rc4 = dict(k.env, KRB5_CONFIG=k.path("krb5-arcfour-hmac.conf"), KRB5CCNAME="FILE:" + k.path("ccache-rc4"))
+    run(k, [tool, "kinit", "alice"], "alice-pw\n", env=rc4)
+    for mech in ("", "-spnego"):
+        for extra in ([], ["-noconf"]):
+            b = InetdBridge(k, k.path("svc.keytab"), "host@svc.a.test")
+            args = [gss, "client", "127.0.0.1", str(b.port), "host@svc.a.test", "hello rc4"] + ([mech] if mech else []) + extra
+            p = run(k, args, env=rc4)
+            log = b.output()
+            check(f"RC4 context: our initiator -> MIT gss-server {mech or 'krb5'} {' '.join(extra)}".strip(),
+                  p.returncode == 0 and "Signature verified." in p.stdout and 'Received message: "hello rc4"' in log,
+                  out(p) + log)
+    run(k, [k.bin("kinit"), "alice"], "alice-pw\n", env=rc4)
+    for opts in ([], ["-nx"], ["-spnego"]):
+        srv, port = start_server([gss, "server", "0", "-once", "-keytab", k.path("svc.keytab")], rc4)
+        p = run(k, [k.bin("gss-client"), "-port", str(port)] + opts + ["127.0.0.1", "host@svc.a.test", "hello goose"], env=rc4)
+        log = stop_server(srv)
+        q = run(k, [k.bin("klist"), "-e"], env=rc4)
+        # The session key MIT's klist shows is RC4's.
+        ok = (p.returncode == 0 and "Signature verified" in out(p) and "message: hello goose" in log
+              and "arcfour-hmac" in q.stdout)
+        check(f"RC4 context: MIT gss-client {' '.join(opts) or 'krb5'} -> our acceptor", ok, out(p) + log)
+
     # An acceptor without the key refuses.
     srv, port = start_server([gss, "server", "0", "-once", "-keytab", k.path("web.keytab")], k.env)
     p = run(k, [k.bin("gss-client"), "-port", str(port), "127.0.0.1", "host@svc.a.test", "x"], timeout=20)

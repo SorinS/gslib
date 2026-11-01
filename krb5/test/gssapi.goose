@@ -65,11 +65,7 @@ fn exchange(what: const u8[:], e: i32, mutual: bool) {
     if mutual { tv::check_int(str(what, " continue"), krb5::gss_init_continue(ictx, t2), krb5::OK); }
     tv::check(str(what, " established"), ictx.established && actx.established);
     tv::check(str(what, " same key"), ictx.key.value == actx.key.value && ictx.acceptor_subkey == actx.acceptor_subkey);
-    if !krb5::cfx_key(ictx.key) {
-        var m: u8[>..] = [];
-        tv::check_int(str(what, " legacy tokens refused"), krb5::gss_get_mic(ictx, "x", m), krb5::ERR_ETYPE);
-        return;
-    }
+    let legacy = !krb5::cfx_key(ictx.key);
     for round in 3 {
         for conf in [true, false] {
             var w: u8[>..] = [];
@@ -104,6 +100,7 @@ fn exchange(what: const u8[:], e: i32, mutual: bool) {
         // Resynchronize: the acceptor's tokens from now on.
         ictx.recv_seq = actx.send_seq;
     }
+    if legacy { return; }
     // Rotated tokens (RRC) read the same.
     var w: u8[>..] = [];
     krb5::gss_wrap(ictx, "rotated payload", true, w);
