@@ -582,3 +582,13 @@ fn get_service_ticket_cached(cfg: const Config&, cache_name: const u8[:], servic
     let serr = ccache_save(cache_name, next);
     return last_credential(got), serr;
 }
+
+// A forwarded TGT (KDC option forwarded) from a forwardable one, for
+// delegating to a service (GSS-API's deleg flag).
+fn forward_tgt(cfg: const Config&, tgt: const Credential&) -> Credential, i64 {
+    if tgt.flags & flag(TKT_FORWARDABLE) == 0 { return empty_credential(), KDC_ERR_BADOPTION; }
+    var s = settings(cfg);
+    s.forwardable = true;
+    let sn = PrincipalName { name_type: tgt.server_type, name: copy(tgt.server) };
+    return tgs_exchange(cfg, s, tgt, sn, tgt.server_realm, flag(KDC_OPT_FORWARDED));
+}
