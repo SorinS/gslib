@@ -1468,3 +1468,173 @@ fn decode_principal(buf: const u8[:]) -> PrincipalName, i64 {
 }
 
 fn encode_principal(out: u8[>..]&, p: const PrincipalName&) { put_principal(out, p); }
+
+// --- FAST (RFC 6113 §5.4) ------------------------------------------------------
+
+// KrbFastArmor: an armor type (FX_FAST_ARMOR_AP_REQUEST) and its value
+// (an AP-REQ's DER).
+struct KrbFastArmor { armor_type: i32, value: u8[] }
+
+// KrbFastArmoredReq, PA-FX-FAST's value in a request: the armor (absent
+// in a TGS-REQ, armored by its TGT), the request's checksum under the
+// armor key, and the KrbFastReq encrypted under it.
+struct KrbFastArmoredReq { has_armor: bool, armor: KrbFastArmor, req_checksum: Checksum, enc_fast_req: EncryptedData }
+
+// KrbFastReq: the request's real padata and body, inside the armor.
+struct KrbFastReq { fast_options: u32, padata: PaData[], req_body: KdcReqBody }
+
+// KrbFastFinished: a reply's client name, made under the armor key, and
+// the checksum of the reply's ticket.
+struct KrbFastFinished { timestamp: i64, usec: i64, crealm: u8[], cname: PrincipalName, ticket_checksum: Checksum }
+
+// KrbFastResponse: the reply's real padata, the key that strengthens the
+// reply key, the finished part (in a ticket's reply, not an error's) and
+// the request's nonce.
+struct KrbFastResponse {
+    padata: PaData[],
+    has_strengthen_key: bool,
+    strengthen_key: Key,
+    has_finished: bool,
+    finished: KrbFastFinished,
+    nonce: u32,
+}
+
+fn no_fast_finished() -> KrbFastFinished {
+    KrbFastFinished { timestamp: 0, usec: 0, crealm: "", cname: no_principal(), ticket_checksum: no_checksum() }
+}
+
+// PA-FX-FAST-REQUEST and PA-FX-FAST-REPLY are CHOICEs of one: armored-data
+// [0], around the SEQUENCE.
+fn choice0_fields(buf: const u8[:]) -> Fields {
+    let t, ok = asn1::parse(buf, true);
+    if !ok || t.cls != asn1::CLASS_CONTEXT || t.number != 0 || !t.constructed {
+        return Fields { bad: true, mask: 0, t: [no_tlv(); 16] };
+    }
+    let inner, iok = asn1::explicit(buf, t, true);
+    if !iok { return Fields { bad: true, mask: 0, t: [no_tlv(); 16] }; }
+    return fields_at(buf, inner);
+}
+
+fn decode_pa_fx_fast_request(buf: const u8[:]) -> KrbFastArmoredReq, i64 {
+    var fs = choice0_fields(buf);
+    require(fs, 6);
+    var armor_type: i64 = 0;
+    var armor_value: u8[>..] = [];
+    if has(fs, 0) {
+        var afs = fields_at(buf, fs.t[0]);
+        require(afs, 3);
+        armor_type = f_int32(buf, afs, 0);
+        armor_value.append(f_octets(buf, afs, 1));
+        if afs.bad { fs.bad = true; }
+    }
+    let r = KrbFastArmoredReq {
+        has_armor: has(fs, 0), armor: KrbFastArmor { armor_type: armor_type as! i32, value: copy(armor_value) },
+        req_checksum: f_checksum(buf, fs, 1), enc_fast_req: f_enc_data(buf, fs, 2),
+    };
+    let err = result(fs);
+    return r, err;
+}
+
+fn encode_pa_fx_fast_request(out: u8[>..]&, r: const KrbFastArmoredReq&) {
+    var s: u8[>..] = [];
+    if r.has_armor {
+        var a: u8[>..] = [];
+        put_int_f(a, 0, r.armor.armor_type);
+        put_octets_f(a, 1, r.armor.value);
+        var t: u8[>..] = [];
+        put_seq(t, a);
+        put_field(s, 0, t);
+    }
+    put_checksum_f(s, 1, r.req_checksum);
+    put_enc_data_f(s, 2, r.enc_fast_req);
+    var seq: u8[>..] = [];
+    put_seq(seq, s);
+    put_field(out, 0, seq);
+}
+
+fn decode_fast_req(buf: const u8[:]) -> KrbFastReq, i64 {
+    let t, ok = asn1::parse(buf, true);
+    var fs = fields_at(buf, if ok { t } else { no_tlv() });
+    require(fs, 7);
+    var bad = false;
+    let r = KrbFastReq {
+        fast_options: f_flags(buf, fs, 0), padata: f_padata(buf, fs, 1),
+        req_body: req_body_at(buf, if has(fs, 2) { fs.t[2] } else { no_tlv() }, bad),
+    };
+    if bad { fs.bad = true; }
+    let err = result(fs);
+    return r, err;
+}
+
+fn encode_fast_req(out: u8[>..]&, r: const KrbFastReq&) {
+    var s: u8[>..] = [];
+    put_flags_f(s, 0, r.fast_options);
+    put_padata_f(s, 1, r.padata);
+    var b: u8[>..] = [];
+    encode_req_body(b, r.req_body);
+    put_field(s, 2, b);
+    put_seq(out, s);
+}
+
+// PA-FX-FAST-REPLY: the encrypted KrbFastResponse.
+fn decode_pa_fx_fast_reply(buf: const u8[:]) -> EncryptedData, i64 {
+    var fs = choice0_fields(buf);
+    require(fs, 1);
+    let d = f_enc_data(buf, fs, 0);
+    let err = result(fs);
+    return d, err;
+}
+
+fn encode_pa_fx_fast_reply(out: u8[>..]&, d: const EncryptedData&) {
+    var s: u8[>..] = [];
+    put_enc_data_f(s, 0, d);
+    var seq: u8[>..] = [];
+    put_seq(seq, s);
+    put_field(out, 0, seq);
+}
+
+fn fast_finished_at(buf: const u8[:], t: asn1::Tlv, bad: bool&) -> KrbFastFinished {
+    var fs = fields_at(buf, t);
+    require(fs, 0x1f);
+    let f = KrbFastFinished {
+        timestamp: f_ktime(buf, fs, 0), usec: f_usec(buf, fs, 1), crealm: f_kstring(buf, fs, 2),
+        cname: f_principal(buf, fs, 3), ticket_checksum: f_checksum(buf, fs, 4),
+    };
+    if fs.bad { bad = true; }
+    return f;
+}
+
+fn decode_fast_response(buf: const u8[:]) -> KrbFastResponse, i64 {
+    let t, ok = asn1::parse(buf, true);
+    var fs = fields_at(buf, if ok { t } else { no_tlv() });
+    require(fs, 9);
+    var bad = false;
+    let r = KrbFastResponse {
+        padata: f_padata(buf, fs, 0), has_strengthen_key: has(fs, 1), strengthen_key: f_key(buf, fs, 1),
+        has_finished: has(fs, 2),
+        finished: if has(fs, 2) { fast_finished_at(buf, fs.t[2], bad) } else { no_fast_finished() },
+        nonce: f_uint32(buf, fs, 3),
+    };
+    if bad { fs.bad = true; }
+    let err = result(fs);
+    return r, err;
+}
+
+fn encode_fast_response(out: u8[>..]&, r: const KrbFastResponse&) {
+    var s: u8[>..] = [];
+    put_padata_f(s, 0, r.padata);
+    if r.has_strengthen_key { put_key_f(s, 1, r.strengthen_key); }
+    if r.has_finished {
+        var f: u8[>..] = [];
+        put_ktime_f(f, 0, r.finished.timestamp);
+        put_int_f(f, 1, r.finished.usec);
+        put_kstring_f(f, 2, r.finished.crealm);
+        put_principal_f(f, 3, r.finished.cname);
+        put_checksum_f(f, 4, r.finished.ticket_checksum);
+        var t: u8[>..] = [];
+        put_seq(t, f);
+        put_field(s, 2, t);
+    }
+    put_int_f(s, 3, r.nonce);
+    put_seq(out, s);
+}

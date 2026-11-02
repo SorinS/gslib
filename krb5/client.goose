@@ -6,9 +6,15 @@
 // (MIT's kdc_timesync); renewal. The *_cached functions keep tickets in a
 // credential cache, as kinit and kvno do.
 //
-// Not done: FAST armoring (RFC 6113) and the pre-authentication that
-// needs it (encrypted challenge), PKINIT, SPAKE, S4U2Self/S4U2Proxy and
-// user-to-user.
+// FAST (RFC 6113, krb5.fast): an AS exchange armored with a TGT the
+// caller has (get_tgt_*_fast, kinit_*_fast: MIT's kinit -T), encrypted
+// challenge in it when the KDC offers it; every TGS exchange armored by
+// its own TGT, as MIT's are, a KDC that does not do FAST answered in the
+// clear.
+//
+// Not done: PKINIT, SPAKE, FAST's hide-client-names option, explicit
+// armor in a TGS exchange (Windows' compound identity),
+// S4U2Self/S4U2Proxy and user-to-user.
 
 namespace krb5;
 
@@ -23,6 +29,7 @@ import krb5.config;
 import krb5.net;
 import krb5.keytab;
 import krb5.ccache;
+import krb5.fast;
 
 // The settings of a request, from krb5.conf's [libdefaults] (MIT's
 // defaults), and the clock offset learned from the KDC.
@@ -156,39 +163,50 @@ fn pick_etype_info(pa: const PaData[:], etypes: const i32[:], name: const u8[:],
     return 0, salt, params, false;
 }
 
-fn encode_as_req(cfg: const Config&, s: const Settings&, cname: const PrincipalName&, realm: const u8[:],
-                 sname: const PrincipalName&, nonce: u32, etypes: const i32[:], pk: const PreauthKey&, out: u8[>..]&) -> i64 {
-    let now, usec = kdc_now(s);
-    var pa: PaData[>..] = [];
+// The padata of an AS-REQ: the pre-authentication (encrypted challenge
+// inside FAST when the KDC offers it, else the encrypted timestamp), the
+// FAST cookie, the PAC request, and the ask for the request's checksum.
+fn as_padata(s: const Settings&, st: const FastState&, armored: bool, challenge: bool, pk: const PreauthKey&,
+             cookie: const u8[:], has_cookie: bool, now: i64, usec: i64, out: PaData[>..]&) -> i64 {
     if pk.have {
-        var ts: u8[>..] = [];
-        encode_pa_enc_ts(ts, now, true, usec);
-        var c: u8[>..] = [];
-        let err = encrypt(pk.key, USAGE_AS_REQ_PA_ENC_TIMESTAMP, ts, c);
-        if err != OK { return err; }
-        var ed: u8[>..] = [];
-        let d = EncryptedData { etype: pk.key.etype, has_kvno: false, kvno: 0, cipher: copy(c) };
-        encode_enc_data(ed, d);
-        pa.push(PaData { pa_type: PA_ENC_TIMESTAMP, value: copy(ed) });
+        if armored && challenge {
+            var v: u8[>..] = [];
+            let err = enc_challenge(st, pk.key, now, usec, v);
+            if err != OK { return err; }
+            out.push(PaData { pa_type: PA_ENCRYPTED_CHALLENGE, value: copy(v) });
+        } else {
+            var ts: u8[>..] = [];
+            encode_pa_enc_ts(ts, now, true, usec);
+            var c: u8[>..] = [];
+            let err = encrypt(pk.key, USAGE_AS_REQ_PA_ENC_TIMESTAMP, ts, c);
+            if err != OK { return err; }
+            var ed: u8[>..] = [];
+            let d = EncryptedData { etype: pk.key.etype, has_kvno: false, kvno: 0, cipher: copy(c) };
+            encode_enc_data(ed, d);
+            out.push(PaData { pa_type: PA_ENC_TIMESTAMP, value: copy(ed) });
+        }
     }
+    if has_cookie { out.push(PaData { pa_type: PA_FX_COOKIE, value: cookie }); }
     if s.request_pac {
         var pr: u8[>..] = [];
         encode_pa_pac_request(pr, true);
-        pa.push(PaData { pa_type: PA_PAC_REQUEST, value: copy(pr) });
+        out.push(PaData { pa_type: PA_PAC_REQUEST, value: copy(pr) });
     }
     // Ask for the request's checksum in the reply (RFC 6806 §11), which
     // lets a canonicalized reply be trusted.
-    pa.push(PaData { pa_type: PA_REQ_ENC_PA_REP, value: "" });
+    out.push(PaData { pa_type: PA_REQ_ENC_PA_REP, value: "" });
+    return OK;
+}
+
+fn as_req_body(s: const Settings&, cname: const PrincipalName&, realm: const u8[:], sname: const PrincipalName&, nonce: u32,
+               etypes: const i32[:], now: i64) -> KdcReqBody {
     let renewable = s.renew_lifetime > 0;
-    let body = KdcReqBody {
+    return KdcReqBody {
         kdc_options: kdc_options(s), has_cname: true, cname: copy(cname), realm: realm, has_sname: true, sname: copy(sname),
         has_from: false, from: 0, till: now + s.lifetime, has_rtime: renewable, rtime: now + s.renew_lifetime,
         nonce: nonce, etypes: etypes, has_addresses: false, addresses: [], has_enc_authz: false, enc_authz: no_enc_data(),
         has_tickets: false, tickets: [],
     };
-    let r = KdcReq { msg_type: MSG_AS_REQ, has_padata: true, padata: copy(pa), body: copy(body) };
-    encode_kdc_req(out, r);
-    return OK;
 }
 
 // Checks the PA-REQ-ENC-PA-REP of an AS-REP's encrypted part: OK if it
@@ -203,7 +221,7 @@ fn check_req_checksum(part: const EncKdcRepPart&, key: Key, req: const u8[:]) ->
         if !ok { return ERR_INTEGRITY; }
         let ck = checksum_at(p.value, t, bad);
         if bad { return ERR_INTEGRITY; }
-        return if verify_checksum(key, ck.ctype, 56, req, ck.sum) == OK { OK } else { ERR_INTEGRITY };
+        return if verify_checksum(key, ck.ctype, USAGE_AS_REQ, req, ck.sum) == OK { OK } else { ERR_INTEGRITY };
     }
     return ERR_NAME_MISMATCH;
 }
@@ -220,8 +238,16 @@ fn reply_error(reply: const u8[:]) -> i64, KrbError {
 // kadmin/changepw), with the realm's KDCs. The client name's type is
 // NT_ENTERPRISE when it holds an escaped '@' (user\@domain), and then
 // the KDC may send us to another realm (RFC 6806 §7).
+//
+// With `armored`, every request is armored with FAST, the armor made
+// from `armor`, a TGT for the realm (krbtgt/REALM@REALM): there is no
+// first try without it, and a reply that is not armored is refused
+// (ERR_FAST), so nothing in the clear can turn FAST off. Only the
+// armored KDC's errors are acted on; an unarmored error ends the
+// exchange with its code. Also returns whether the KDC said it does FAST
+// (PA-FX-FAST in the reply's encrypted padata), as MIT's fast_avail.
 fn as_exchange(cfg: const Config&, s: Settings&, cname: const PrincipalName&, realm0: const u8[:], sname0: const PrincipalName&,
-               sec: const Secret&) -> Credential, i64 {
+               sec: const Secret&, armor: const Credential&, armored: bool) -> Credential, bool, i64 {
     var realm: u8[>..] = [];
     realm.append(realm0);
     var sname_name: u8[>..] = [];
@@ -232,42 +258,84 @@ fn as_exchange(cfg: const Config&, s: Settings&, cname: const PrincipalName&, re
     var salt: u8[>..] = [];
     var params: u8[>..] = [];
     var known_etype: i32 = 0;
+    var challenge = false;
+    var cookie: u8[>..] = [];
+    var has_cookie = false;
     let enterprise = cname.name_type == NT_ENTERPRISE;
     if enterprise { s.canonicalize = true; }
     for attempt in 8 {
         let etypes = as_etypes(cfg, sec, cname.name, realm);
-        if etypes.len == 0 { return empty_credential(), ERR_ETYPE; }
+        if etypes.len == 0 { return empty_credential(), false, ERR_ETYPE; }
         let sname = if sname0.name_type == NT_SRV_INST && name_part(sname_name, 0) == "krbtgt" {
             krbtgt(realm, realm)
         } else {
             PrincipalName { name_type: sname0.name_type, name: copy(sname_name) }
         };
         let nonce = new_nonce();
+        let now, usec = kdc_now(s);
+        // The armor: a TGT for this realm (not another one a referral
+        // sends us to).
+        if armored && !(is_tgt_name(armor.server) && name_part(armor.server, 1) == realm && armor.server_realm == realm) {
+            return empty_credential(), false, ERR_FAST;
+        }
+        let st, aerr = fast_armor_as_if(armored, armor, now, usec);
+        if aerr != OK { return empty_credential(), false, aerr; }
+        var pa: PaData[>..] = [];
+        let perr0 = as_padata(s, st, armored, challenge, pk, cookie, has_cookie, now, usec, pa);
+        if perr0 != OK { return empty_credential(), false, perr0; }
+        let body = as_req_body(s, cname, realm, sname, nonce, etypes, now);
         var req: u8[>..] = [];
-        let eerr = encode_as_req(cfg, s, cname, realm, sname, nonce, etypes, pk, req);
-        if eerr != OK { return empty_credential(), eerr; }
+        if armored {
+            var body_der: u8[>..] = [];
+            encode_req_body(body_der, body);
+            var none: PaData[>..] = [];
+            let werr = fast_wrap(st, MSG_AS_REQ, pa, none, body, body_der, req);
+            if werr != OK { return empty_credential(), false, werr; }
+        } else {
+            let r = KdcReq { msg_type: MSG_AS_REQ, has_padata: true, padata: copy(pa), body: copy(body) };
+            encode_kdc_req(req, r);
+        }
         var reply: u8[>..] = [];
         let nerr = send_to_kdc(cfg, realm, req, reply);
-        if nerr != OK { return empty_credential(), nerr; }
-        let code, kerr = reply_error(reply);
-        if code != 0 {
+        if nerr != OK { return empty_credential(), false, nerr; }
+        let code0, kerr0 = reply_error(reply);
+        if code0 != 0 {
+            // Armored, the error that counts is the one inside the armor,
+            // with its padata; unarmored, the error itself and its e-data.
+            let inner, fhints, ferr = fast_error(armored, st, kerr0, nonce);
+            if ferr != OK { return empty_credential(), false, code0; }
+            let kerr = if armored { copy(inner) } else { copy(kerr0) };
+            let code = if kerr.error_code == 0 { KRB_ERR_GENERIC } else { kerr.error_code };
+            let ehints, eherr = decode_padata(kerr0.edata);
+            let hints = if armored { copy(fhints) } else { copy(ehints) };
+            let ck, cfound = find_padata(hints, PA_FX_COOKIE);
+            if armored && cfound {
+                cookie.clear();
+                cookie.append(ck);
+                has_cookie = true;
+            }
             if code == KDC_ERR_PREAUTH_REQUIRED && !pk.have {
-                let pa, perr = decode_padata(kerr.edata);
-                if perr != OK { return empty_credential(), ERR_PREAUTH; }
-                let e, sl, pr, ok = pick_etype_info(pa, etypes, cname.name, realm);
-                if !ok || e == 0 { return empty_credential(), ERR_PREAUTH; }
+                if !armored && eherr != OK { return empty_credential(), false, ERR_PREAUTH; }
+                let e, sl, pr, ok = pick_etype_info(hints, etypes, cname.name, realm);
+                if !ok || e == 0 { return empty_credential(), false, ERR_PREAUTH; }
                 let k, err = secret_key(sec, cname.name, realm, e, sl, pr);
-                if err != OK { return empty_credential(), err; }
+                if err != OK { return empty_credential(), false, err; }
                 pk = PreauthKey { have: true, key: k, has_kvno: false, kvno: 0 };
                 known_etype = e;
                 salt.clear();
                 salt.append(sl);
                 params.clear();
                 params.append(pr);
+                let cv, offered = find_padata(hints, PA_ENCRYPTED_CHALLENGE);
+                challenge = armored && offered;
+                // MIT's disable_encrypted_timestamp: never the timestamp,
+                // which anyone who sees it can guess the password from.
+                if !challenge && conf_bool(cfg, str("realms/", realm, "/disable_encrypted_timestamp"), false) {
+                    return empty_credential(), false, ERR_PREAUTH;
+                }
                 continue;
             }
             if code == KRB_AP_ERR_SKEW && !skew_fixed && s.kdc_timesync {
-                let now, us = kdc_now(s);
                 s.time_offset += kerr.stime - now;
                 skew_fixed = true;
                 continue;
@@ -276,53 +344,76 @@ fn as_exchange(cfg: const Config&, s: Settings&, cname: const PrincipalName&, re
                 realm.clear();
                 realm.append(kerr.crealm);
                 pk = PreauthKey { have: false, key: no_key(), has_kvno: false, kvno: 0 };
+                has_cookie = false;
                 referrals++;
                 continue;
             }
-            return empty_credential(), code;
+            return empty_credential(), false, code;
         }
-        if message_type(reply) != MSG_AS_REP { return empty_credential(), ERR_UNEXPECTED; }
-        let rep, derr = decode_kdc_rep(reply);
-        if derr != OK { return empty_credential(), derr; }
+        if message_type(reply) != MSG_AS_REP { return empty_credential(), false, ERR_UNEXPECTED; }
+        let rep0, derr = decode_kdc_rep(reply);
+        if derr != OK { return empty_credential(), false, derr; }
+        // Armored: the FAST response checked, and its padata and names
+        // (the finished part's) are the reply's.
+        let fr, frerr = fast_reply_if(armored, st, rep0, nonce);
+        if frerr != OK { return empty_credential(), false, frerr; }
+        let rep = if armored {
+            KdcRep { msg_type: rep0.msg_type, has_padata: true, padata: copy(fr.padata), crealm: copy(fr.finished.crealm),
+                     cname: copy(fr.finished.cname), ticket: copy(rep0.ticket), enc_part: copy(rep0.enc_part) }
+        } else { copy(rep0) };
         // Only a type we asked for (as MIT checks): a KDC, or someone in
         // the middle, cannot push us onto a weaker one.
         var asked = false;
         for e in etypes { if e == rep.enc_part.etype { asked = true; } }
-        if !asked { return empty_credential(), KDC_ERR_ETYPE_NOSUPP; }
+        if !asked { return empty_credential(), false, KDC_ERR_ETYPE_NOSUPP; }
+        // The KDC's answer to our encrypted challenge proves it knows our
+        // key (RFC 6113 §5.4.6).
+        if armored && challenge && pk.have {
+            let cerr = check_kdc_challenge(st, pk.key, rep.padata);
+            if cerr != OK { return empty_credential(), false, cerr; }
+        }
         // The reply key: the one we pre-authenticated with if the reply
-        // uses its type, else one made from the reply's salt.
+        // uses its type, else one made from the reply's salt; then
+        // strengthened by FAST's strengthen key.
         var key = pk.key;
         if !pk.have || pk.key.etype != rep.enc_part.etype {
             let one: i32[1] = [rep.enc_part.etype];
             let e, sl, pr, ok = pick_etype_info(rep.padata, one, cname.name, realm);
             let use_salt = if ok { copy(sl) } else { default_salt_of(cname.name, realm) };
             let k, err = secret_key(sec, cname.name, realm, rep.enc_part.etype, use_salt, if ok { pr } else { params });
-            if err != OK { return empty_credential(), err; }
+            if err != OK { return empty_credential(), false, err; }
             key = k;
         }
+        let reply_key, rkerr = fast_reply_key(fr, key);
+        if rkerr != OK { return empty_credential(), false, rkerr; }
         var plain: u8[>..] = [];
-        let cerr = decrypt(key, USAGE_AS_REP_ENCPART, rep.enc_part.cipher, plain);
-        if cerr != OK { return empty_credential(), if cerr == ERR_INTEGRITY { KDC_ERR_PREAUTH_FAILED } else { cerr }; }
+        let cerr = decrypt(reply_key, USAGE_AS_REP_ENCPART, rep.enc_part.cipher, plain);
+        if cerr != OK { return empty_credential(), false, if cerr == ERR_INTEGRITY { KDC_ERR_PREAUTH_FAILED } else { cerr }; }
         let part, perr = decode_enc_kdc_rep_part(plain);
-        if perr != OK { return empty_credential(), perr; }
-        if part.nonce != nonce { return empty_credential(), ERR_NONCE; }
+        if perr != OK { return empty_credential(), false, perr; }
+        if part.nonce != nonce { return empty_credential(), false, ERR_NONCE; }
         var key_asked = false;
         for e in etypes { if e == part.key.etype { key_asked = true; } }
-        if !key_asked { return empty_credential(), KDC_ERR_ETYPE_NOSUPP; }
+        if !key_asked { return empty_credential(), false, KDC_ERR_ETYPE_NOSUPP; }
         // Names: as asked, unless the KDC canonicalized them and proved it
         // saw our request (RFC 6806 §11).
         let same = rep.cname.name == cname.name && rep.crealm == realm && part.sname.name == sname.name && part.srealm == realm;
         if !same {
-            if !s.canonicalize { return empty_credential(), ERR_NAME_MISMATCH; }
-            let ck = check_req_checksum(part, key, req);
-            if ck != OK { return empty_credential(), ck; }
+            if !s.canonicalize { return empty_credential(), false, ERR_NAME_MISMATCH; }
+            let ck = check_req_checksum(part, reply_key, req);
+            if ck != OK { return empty_credential(), false, ck; }
         } else if part.flags & flag(TKT_ENC_PA_REP) != 0 {
-            let ck = check_req_checksum(part, key, req);
-            if ck == ERR_INTEGRITY { return empty_credential(), ck; }
+            let ck = check_req_checksum(part, reply_key, req);
+            if ck == ERR_INTEGRITY { return empty_credential(), false, ck; }
         }
-        return credential_of(rep, part), OK;
+        var fast_avail = false;
+        if part.flags & flag(TKT_ENC_PA_REP) != 0 && part.has_enc_padata && check_req_checksum(part, reply_key, req) == OK {
+            let fv, ff = find_padata(part.enc_padata, PA_FX_FAST);
+            fast_avail = ff;
+        }
+        return credential_of(rep, part), fast_avail, OK;
     }
-    return empty_credential(), ERR_PREAUTH;
+    return empty_credential(), false, ERR_PREAUTH;
 }
 
 // "user@REALM" (or "user", in the default realm) as a client name and
@@ -344,28 +435,65 @@ fn client_name(cfg: const Config&, text: const u8[:]) -> PrincipalName, u8[>..],
 
 // A TGT for `principal` with a password.
 fn get_tgt_password(cfg: const Config&, principal: const u8[:], password: const u8[:]) -> Credential, i64 {
-    let cn, realm, err = client_name(cfg, principal);
-    if err != OK { return empty_credential(), err; }
-    var s = settings(cfg);
-    let sn = krbtgt(realm, realm);
     let sec = secret_password(password);
-    return as_exchange(cfg, s, cn, realm, sn, sec);
+    let none = empty_credential();
+    let c, fast, err = get_tgt(cfg, principal, sec, none, false);
+    return c, err;
 }
 
 // A TGT for `principal` with its keys from a keytab.
 fn get_tgt_keytab(cfg: const Config&, principal: const u8[:], kt: const KeytabEntry[:]) -> Credential, i64 {
+    let sec = secret_keytab(kt);
+    let none = empty_credential();
+    let c, fast, err = get_tgt(cfg, principal, sec, none, false);
+    return c, err;
+}
+
+// The same, armored with FAST (RFC 6113): `armor` is a TGT for the
+// client's realm, a host's say (as MIT's kinit -T takes it from a cache:
+// armor_tgt).
+fn get_tgt_password_fast(cfg: const Config&, principal: const u8[:], password: const u8[:], armor: const Credential&)
+    -> Credential, i64 {
+    let sec = secret_password(password);
+    let c, fast, err = get_tgt(cfg, principal, sec, armor, true);
+    return c, err;
+}
+
+fn get_tgt_keytab_fast(cfg: const Config&, principal: const u8[:], kt: const KeytabEntry[:], armor: const Credential&)
+    -> Credential, i64 {
+    let sec = secret_keytab(kt);
+    let c, fast, err = get_tgt(cfg, principal, sec, armor, true);
+    return c, err;
+}
+
+fn get_tgt(cfg: const Config&, principal: const u8[:], sec: const Secret&, armor: const Credential&, armored: bool)
+    -> Credential, bool, i64 {
     let cn, realm, err = client_name(cfg, principal);
-    if err != OK { return empty_credential(), err; }
+    if err != OK { return empty_credential(), false, err; }
     var s = settings(cfg);
     let sn = krbtgt(realm, realm);
-    let sec = secret_keytab(kt);
-    return as_exchange(cfg, s, cn, realm, sn, sec);
+    return as_exchange(cfg, s, cn, realm, sn, sec, armor, armored);
+}
+
+// The TGT for `realm` (krbtgt/REALM@REALM) in a cache, to armor with.
+fn armor_tgt(cache_name: const u8[:], realm: const u8[:]) -> Credential, i64 {
+    let cc, err = ccache_load(cache_name);
+    if err != OK { return empty_credential(), ERR_NO_CREDS; }
+    let c, ok = ccache_find(cc, name_join("krbtgt", realm), realm, 0);
+    return c, if ok { OK } else { ERR_NO_CREDS };
 }
 
 // --- The TGS exchange ----------------------------------------------------------------
 
 // One TGS exchange with the KDC that `tgt` is for (krbtgt/R@...: realm R),
 // for `sname` in `srealm`; extra KDC options (renew, validate) or'd in.
+//
+// The authenticator carries a new subkey, and the request is armored with
+// FAST by the TGT itself (implicit armor, RFC 6113 §5.4.1.1), as MIT's
+// client always does. A KDC that does not do FAST answers in the clear,
+// which is taken as MIT takes it: the reply is still under the subkey. An
+// armored reply must check (ERR_FAST otherwise), and then its finished
+// names are the reply's and its strengthen key strengthens the reply key.
 fn tgs_exchange(cfg: const Config&, s: Settings&, tgt: const Credential&, sname: const PrincipalName&, srealm: const u8[:],
                 extra: u32) -> Credential, i64 {
     let kdc_realm = name_part(tgt.server, 1);
@@ -391,10 +519,14 @@ fn tgs_exchange(cfg: const Config&, s: Settings&, tgt: const Credential&, sname:
         var ck: u8[>..] = [];
         let cerr = checksum(tgt.key, 0, USAGE_TGS_REQ_PA_TGS_REQ_AP_REQ_AUTHENTICATOR_CKSUM, body_der, ck);
         if cerr != OK { return empty_credential(), cerr; }
+        let subkey = random_key(tgt.key.etype);
+        if subkey.etype == 0 { return empty_credential(), ERR_ETYPE; }
+        let st, sterr = fast_armor_tgs(subkey, tgt.key);
+        if sterr != OK { return empty_credential(), sterr; }
         let auth = Authenticator {
             crealm: copy(tgt.client_realm), cname: PrincipalName { name_type: tgt.client_type, name: copy(tgt.client) },
             has_cksum: true, cksum: Checksum { ctype: cksum_type_for(tgt.key.etype), sum: copy(ck) }, cusec: usec, ctime: now,
-            has_subkey: false, subkey: no_key(), has_seq_number: false, seq_number: 0, has_authz: false, authz: [],
+            has_subkey: true, subkey: subkey, has_seq_number: false, seq_number: 0, has_authz: false, authz: [],
         };
         var auth_der: u8[>..] = [];
         encode_authenticator(auth_der, auth);
@@ -405,16 +537,22 @@ fn tgs_exchange(cfg: const Config&, s: Settings&, tgt: const Credential&, sname:
         let apr = ApReq { ap_options: 0, ticket: copy(tgt.ticket),
                           authenticator: EncryptedData { etype: tgt.key.etype, has_kvno: false, kvno: 0, cipher: copy(auth_enc) } };
         encode_ap_req(ap, apr);
-        var pa: PaData[>..] = [];
-        pa.push(PaData { pa_type: PA_TGS_REQ, value: copy(ap) });
+        var outer: PaData[>..] = [];
+        outer.push(PaData { pa_type: PA_TGS_REQ, value: copy(ap) });
+        var inner: PaData[>..] = [];
         var req: u8[>..] = [];
-        let r = KdcReq { msg_type: MSG_TGS_REQ, has_padata: true, padata: copy(pa), body: copy(body) };
-        encode_kdc_req(req, r);
+        let werr = fast_wrap(st, MSG_TGS_REQ, inner, outer, body, ap, req);
+        if werr != OK { return empty_credential(), werr; }
         var reply: u8[>..] = [];
         let nerr = send_to_kdc(cfg, kdc_realm, req, reply);
         if nerr != OK { return empty_credential(), nerr; }
-        let code, kerr = reply_error(reply);
-        if code != 0 {
+        let code0, kerr0 = reply_error(reply);
+        if code0 != 0 {
+            // The error inside the armor if there is one (MIT's KDC armors
+            // its errors to an armored request); else the error as it is.
+            let inner_err, hints, ferr = fast_error(true, st, kerr0, nonce);
+            let kerr = if ferr == OK { copy(inner_err) } else { copy(kerr0) };
+            let code = if ferr != OK { code0 } else if kerr.error_code == 0 { KRB_ERR_GENERIC } else { kerr.error_code };
             if code == KRB_AP_ERR_SKEW && !skew_fixed && s.kdc_timesync {
                 s.time_offset += kerr.stime - now;
                 skew_fixed = true;
@@ -423,10 +561,27 @@ fn tgs_exchange(cfg: const Config&, s: Settings&, tgt: const Credential&, sname:
             return empty_credential(), code;
         }
         if message_type(reply) != MSG_TGS_REP { return empty_credential(), ERR_UNEXPECTED; }
-        let rep, derr = decode_kdc_rep(reply);
+        let rep0, derr = decode_kdc_rep(reply);
         if derr != OK { return empty_credential(), derr; }
+        let fv, armored = find_padata(rep0.padata, PA_FX_FAST);
+        let fr, frerr = fast_reply_if(armored, st, rep0, nonce);
+        if frerr != OK { return empty_credential(), frerr; }
+        let rep = if armored {
+            KdcRep { msg_type: rep0.msg_type, has_padata: true, padata: copy(fr.padata), crealm: copy(fr.finished.crealm),
+                     cname: copy(fr.finished.cname), ticket: copy(rep0.ticket), enc_part: copy(rep0.enc_part) }
+        } else { copy(rep0) };
+        // Under the subkey (usage 9), or under the session key (8) as
+        // Heimdal before 1.3 does it.
+        let k9, k9err = fast_reply_key(fr, subkey);
+        if k9err != OK { return empty_credential(), k9err; }
         var plain: u8[>..] = [];
-        let xerr = decrypt(tgt.key, USAGE_TGS_REP_ENCPART_SESSION_KEY, rep.enc_part.cipher, plain);
+        var xerr = decrypt(k9, USAGE_TGS_REP_ENCPART_SUBKEY, rep.enc_part.cipher, plain);
+        if xerr != OK {
+            let k8, k8err = fast_reply_key(fr, tgt.key);
+            if k8err != OK { return empty_credential(), k8err; }
+            plain.clear();
+            xerr = decrypt(k8, USAGE_TGS_REP_ENCPART_SESSION_KEY, rep.enc_part.cipher, plain);
+        }
         if xerr != OK { return empty_credential(), xerr; }
         let part, perr = decode_enc_kdc_rep_part(plain);
         if perr != OK { return empty_credential(), perr; }
@@ -553,24 +708,58 @@ fn renew(cfg: const Config&, c: const Credential&) -> Credential, i64 {
 
 // --- With a credential cache --------------------------------------------------------
 
-// kinit: a TGT with a password, stored as a new cache.
+// kinit: a TGT with a password, stored as a new cache. When the KDC says
+// it does FAST, the cache says so too (MIT's fast_avail entry), and MIT's
+// kinit -T can armor with it.
 fn kinit_password(cfg: const Config&, cache_name: const u8[:], principal: const u8[:], password: const u8[:]) -> Credential, i64 {
-    let c, err = get_tgt_password(cfg, principal, password);
-    if err != OK { return c, err; }
-    let base = ccache_new(c.client_type, c.client, c.client_realm);
-    let cc = ccache_add(base, c);
-    let serr = ccache_save(cache_name, cc);
-    return c, serr;
+    let sec = secret_password(password);
+    let none = empty_credential();
+    let c, fast, err = get_tgt(cfg, principal, sec, none, false);
+    return kinit_save(cache_name, c, fast, err);
 }
 
 // kinit -k: a TGT with a keytab's key, stored as a new cache.
 fn kinit_keytab(cfg: const Config&, cache_name: const u8[:], principal: const u8[:], kt: const KeytabEntry[:]) -> Credential, i64 {
-    let c, err = get_tgt_keytab(cfg, principal, kt);
-    if err != OK { return c, err; }
+    let sec = secret_keytab(kt);
+    let none = empty_credential();
+    let c, fast, err = get_tgt(cfg, principal, sec, none, false);
+    return kinit_save(cache_name, c, fast, err);
+}
+
+// kinit -T: the same, armored with the TGT for the client's realm in
+// `armor_cache`.
+fn kinit_password_fast(cfg: const Config&, cache_name: const u8[:], principal: const u8[:], password: const u8[:],
+                       armor_cache: const u8[:]) -> Credential, i64 {
+    let armor, aerr = armor_for(cfg, principal, armor_cache);
+    if aerr != OK { return empty_credential(), aerr; }
+    let sec = secret_password(password);
+    let c, fast, err = get_tgt(cfg, principal, sec, armor, true);
+    return kinit_save(cache_name, c, fast, err);
+}
+
+fn kinit_keytab_fast(cfg: const Config&, cache_name: const u8[:], principal: const u8[:], kt: const KeytabEntry[:],
+                     armor_cache: const u8[:]) -> Credential, i64 {
+    let armor, aerr = armor_for(cfg, principal, armor_cache);
+    if aerr != OK { return empty_credential(), aerr; }
+    let sec = secret_keytab(kt);
+    let c, fast, err = get_tgt(cfg, principal, sec, armor, true);
+    return kinit_save(cache_name, c, fast, err);
+}
+
+fn armor_for(cfg: const Config&, principal: const u8[:], armor_cache: const u8[:]) -> Credential, i64 {
+    let cn, realm, err = client_name(cfg, principal);
+    if err != OK { return empty_credential(), err; }
+    return armor_tgt(armor_cache, realm);
+}
+
+fn kinit_save(cache_name: const u8[:], c: const Credential&, fast: bool, err: i64) -> Credential, i64 {
+    if err != OK { return copy(c), err; }
     let base = ccache_new(c.client_type, c.client, c.client_realm);
-    let cc = ccache_add(base, c);
+    let with_tgt = ccache_add(base, c);
+    let cc = if fast { ccache_with_config(with_tgt, "fast_avail", principal_string(c.server, c.server_realm), "yes") }
+             else { copy(with_tgt) };
     let serr = ccache_save(cache_name, cc);
-    return c, serr;
+    return copy(c), serr;
 }
 
 // kvno: a service ticket from the cache, or from the KDCs with the

@@ -306,6 +306,32 @@ fn ccache_config(cc: const CCache&, key: const u8[:], principal: const u8[:]) ->
     return out, false;
 }
 
+// The cache with a configuration entry set: `key` for `principal` (a
+// principal's text, or empty), as MIT's krb5_cc_set_config stores it,
+// replacing one there.
+fn ccache_with_config(cc: const CCache&, key: const u8[:], principal: const u8[:], value: const u8[:]) -> CCache {
+    var server: u8[>..] = [];
+    name_escape(server, "krb5_ccache_conf_data");
+    server.push('/');
+    name_escape(server, key);
+    if principal.len > 0 {
+        server.push('/');
+        name_escape(server, principal);
+    }
+    var creds: Credential[>..] = [];
+    for x in cc.creds {
+        if !(is_config_cred(x) && x.server == server) { creds.push(copy(x)); }
+    }
+    creds.push(Credential {
+        client_type: cc.principal_type, client: copy(cc.principal), client_realm: copy(cc.realm), server_type: NT_PRINCIPAL,
+        server: copy(server), server_realm: CONF_REALM, key: Key { etype: 0, value: [] }, authtime: 0, starttime: 0,
+        endtime: 0, renew_till: 0, is_skey: false, flags: 0, addresses: [], authdata: [], ticket: value, second_ticket: "",
+    });
+    return CCache { version: 4, has_time_offset: cc.has_time_offset, time_offset: cc.time_offset,
+                    time_offset_usec: cc.time_offset_usec, principal_type: cc.principal_type, principal: copy(cc.principal),
+                    realm: copy(cc.realm), creds: creds };
+}
+
 // --- Files ----------------------------------------------------------------------
 
 // The path in a cache name: "FILE:/path" or a plain path. Other types

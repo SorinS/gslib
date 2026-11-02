@@ -12,13 +12,14 @@ reading theirs. Only `krb5.net`, the file functions and the tools do I/O.
 | Module | What |
 |---|---|
 | `krb5` | The protocol's numbers (encryption, checksum and pre-authentication types, key usages, flags, name types) and error codes, with their names and texts: `error_text` |
-| `krb5.crypto` | Encryption types (RFC 3961, 3962, 4757, 6803, 8009): des3-cbc-sha1-kd, aes128/256-cts-hmac-sha1-96, aes128-cts-hmac-sha256-128, aes256-cts-hmac-sha384-192, rc4-hmac, camellia128/256-cts-cmac: `string_to_key`, `encrypt`, `decrypt`, `checksum`, `verify_checksum`, `prf`, `random_key`, n-fold, DK/DR, KDF-HMAC-SHA2, KDF-FEEDBACK-CMAC, CTS over AES or Camellia |
-| `krb5.messages` | Every message of RFC 4120 §5 as a struct, decoded and encoded (DER out, DER and BER's long lengths in): tickets, AS/TGS-REQ and REP and their encrypted parts, AP-REQ, Authenticator, AP-REP, KRB-SAFE, KRB-PRIV, KRB-CRED, KRB-ERROR, PA-ENC-TS-ENC, ETYPE-INFO(2), TYPED-DATA; principal names |
+| `krb5.crypto` | Encryption types (RFC 3961, 3962, 4757, 6803, 8009): des3-cbc-sha1-kd, aes128/256-cts-hmac-sha1-96, aes128-cts-hmac-sha256-128, aes256-cts-hmac-sha384-192, rc4-hmac, camellia128/256-cts-cmac: `string_to_key`, `encrypt`, `decrypt`, `checksum`, `verify_checksum`, `prf`, `prf_plus`, `fx_cf2` (RFC 6113's KRB-FX-CF2), `random_key`, n-fold, DK/DR, KDF-HMAC-SHA2, KDF-FEEDBACK-CMAC, CTS over AES or Camellia |
+| `krb5.messages` | Every message of RFC 4120 §5 as a struct, decoded and encoded (DER out, DER and BER's long lengths in): tickets, AS/TGS-REQ and REP and their encrypted parts, AP-REQ, Authenticator, AP-REP, KRB-SAFE, KRB-PRIV, KRB-CRED, KRB-ERROR, PA-ENC-TS-ENC, ETYPE-INFO(2), TYPED-DATA; FAST's (RFC 6113): PA-FX-FAST request and reply, KrbFastArmor, KrbFastReq, KrbFastResponse, KrbFastFinished; principal names |
 | `krb5.keytab` | MIT keytabs (versions 1 and 2, holes, 32-bit key versions): `keytab_load`, `keytab_save_private`, `keytab_key`, `keytab_entries_from_password` (ktutil's addent) |
-| `krb5.ccache` | MIT FILE credential caches (versions 1 to 4, configuration entries): `ccache_load`, `ccache_save` (0600), `ccache_find`, `ccache_add`, `default_ccache_name` |
+| `krb5.ccache` | MIT FILE credential caches (versions 1 to 4, configuration entries): `ccache_load`, `ccache_save` (0600), `ccache_find`, `ccache_add`, `ccache_config`, `ccache_with_config`, `default_ccache_name` |
 | `krb5.config` | krb5.conf in MIT's profile syntax (sections, subsections, `include`, `includedir`, final markers): `default_config`, the realms' KDCs, `domain_realm`, `capaths`, enctype lists, durations |
 | `krb5.net` | Sending to a realm's KDCs: UDP first below `udp_preference_limit`, TCP above it or on KRB_ERR_RESPONSE_TOO_BIG, each KDC in turn, as MIT does |
-| `krb5.client` | AS exchanges (`get_tgt_password`, `get_tgt_keytab`, encrypted-timestamp pre-authentication from ETYPE-INFO2, enterprise names and client referrals), TGS exchanges (`get_service_ticket`: cross-realm along `capaths` or the hierarchy, server referrals), `renew`, `forward_tgt`, clock skew learned from the KDC; `kinit_password`, `kinit_keytab`, `get_service_ticket_cached` keep a cache |
+| `krb5.client` | AS exchanges (`get_tgt_password`, `get_tgt_keytab`, encrypted-timestamp pre-authentication from ETYPE-INFO2, enterprise names and client referrals; armored with FAST: `get_tgt_password_fast`, `get_tgt_keytab_fast`, with encrypted challenge; `disable_encrypted_timestamp` as MIT has it), TGS exchanges (`get_service_ticket`: cross-realm along `capaths` or the hierarchy, server referrals; armored by the TGT, as MIT's are), `renew`, `forward_tgt`, clock skew learned from the KDC; `kinit_password`, `kinit_keytab`, `kinit_password_fast`, `kinit_keytab_fast` (MIT's `kinit -T`), `get_service_ticket_cached` keep a cache (with MIT's `fast_avail` entry when the KDC does FAST) |
+| `krb5.fast` | FAST (RFC 6113), the client's side: armor from a TGT (`fast_armor_as`) or a TGS request's own (`fast_armor_tgs`), `fast_wrap`, the reply's checks (`fast_reply`: nonce, finished part, the ticket's checksum), `fast_reply_key` (the strengthen key), `fast_error` (the error inside the armor, the cookie), encrypted challenge both ways |
 | `krb5.service` | The acceptor: `verify_ap_req` (keytab, ticket times, skew, authenticator, replay cache), `make_ap_rep`, `verify_ap_rep`, `make_ap_req` |
 | `krb5.gssapi` | RFC 4121: `gss_init`, `gss_init_continue`, `gss_accept` (mutual authentication, channel bindings, delegation through KRB-CRED, acceptor subkeys), `gss_get_mic`, `gss_verify_mic`, `gss_wrap`, `gss_unwrap` (sealed or not, any RRC), sequence checks; RFC 4757's tokens for RC4 session keys |
 | `krb5.spnego` | RFC 4178: `spnego_init`, `spnego_init_continue`, `spnego_accept` (Kerberos under RFC 4121's OID or Microsoft's, a second round when another mechanism was preferred, mechListMIC both ways, NegTokenInit2, bare Kerberos tokens); `negotiate_header`, `negotiate_token` |
@@ -64,7 +65,7 @@ apart: `parse_principal`, `principal_string`, `name_parts`.
 
 ## Tools
 
-`tools/krb5.goose` (goose-krb5): `kinit [-k KEYTAB] PRINCIPAL`, `kvno
+`tools/krb5.goose` (goose-krb5): `kinit [-T ARMOR_CACHE] [-k KEYTAB] PRINCIPAL`, `kvno
 [-gss] SERVICE`, `klist [-k KEYTAB]`, `renew`, on `$KRB5_CONFIG` and
 `$KRB5CCNAME`. `tools/gss.goose` (goose-gss): a GSS-API client and server
 speaking MIT's gss-sample protocol, and an HTTP Negotiate client and
@@ -82,13 +83,20 @@ server; servers listen on 127.0.0.1 only.
   derivation, encryption and checksum); RC4's string-to-key; MIT's
   libk5crypto's answers for every type (`test/vectors/mit_crypto.txt`:
   string-to-key with UTF-8 passwords and explicit iteration counts, PRF,
-  checksums, and MIT's ciphertexts decrypted); every type's round trips,
-  tampering and wrong usages.
+  checksums, KRB-FX-CF2 for every pair of types, and MIT's ciphertexts
+  decrypted); every type's round trips, tampering and wrong usages.
+- `test/fast.goose`: FAST with the test as the KDC, for every type as the
+  armor's: the armor key the KDC makes from our AP-REQ, the armored
+  request (padata, checksum, inner request), replies and errors read,
+  and each refused: no FAST response, another nonce, no finished part,
+  an altered ticket, an unkeyed checksum, another armor key, a KDC
+  challenge missing, crossed in direction or under another key.
 - `test/messages.goose`: MIT's reference encodings
   (`src/tests/asn.1/reference_encode.out`, through go-krb5's
   `test_vectors.go`) decode, carry MIT's test values, and re-encode to the
   same bytes (but two whose key versions MIT writes as signed INTEGERs,
-  which we read and write as RFC 4120's UInt32); truncations.
+  which we read and write as RFC 4120's UInt32), KrbFastResponse and
+  PA-FX-FAST-REPLY among them; truncations.
 - `test/files.goose`: go-krb5's keytabs and cache (MIT-written): testuser1's
   keys are our string-to-key of its password, the cache re-encodes byte
   for byte; version 1 keytabs, holes, 32-bit key versions.
@@ -105,7 +113,8 @@ server; servers listen on 127.0.0.1 only.
 
 `make interop-krb5` (`scripts/interop.py`, macOS with Homebrew's
 `krb5`): two MIT 1.22 realms (`scripts/kdc.py`, on 127.0.0.1, trusting
-each other), and 99 checks: kinit with each user (pre-auth required,
+each other) and a third, F.TEST, whose KDC refuses the encrypted
+timestamp, and 119 checks: kinit with each user (pre-auth required,
 RC4-only, DES3-only, Camellia-only with pre-auth, keytab), every
 encryption type for TGT and service ticket (Camellia's keys from MIT's
 keytab too), cross-realm both ways, our cache in MIT's klist and kvno and
@@ -117,7 +126,18 @@ integrity-only, delegation) and MIT's gss-client against our acceptor
 Camellia session keys both ways, a Camellia-only service whose ticket
 and PAC signature (cmac-camellia256) are Camellia's, the PAC of MIT's
 tickets verified, our HTTP
-Negotiate client and `curl --negotiate` against our server.
+Negotiate client and `curl --negotiate` against our server. FAST in
+F.TEST: kinit -T with a host keytab's TGT as armor (encrypted challenge,
+a Camellia reply key under AES armor, a keytab exchange armored, a wrong
+password read from the armored error), unarmored kinit refused, kvno
+armored by the TGT, MIT's kinit -T armored by our cache (our
+`fast_avail` entry read) and ours by MIT's, MIT's kvno with our armored
+TGT, armor of another realm refused, `disable_encrypted_timestamp` on the
+client; and a relay on 127.0.0.1 that alters the KDC's replies: an
+AS-REP's or TGS-REP's ticket (the finished checksum fails), PA-FX-FAST
+stripped from an AS-REP (refused) or a TGS-REP (its strengthened key
+fails), the AS-REP's client name (the finished part's name used), the
+armor stripped from an error (no retry in the clear).
 
 `scripts/mit_crypto.py` writes `test/vectors/mit_crypto.txt`: it builds
 a small C program against MIT's libk5crypto (Homebrew's `krb5`) and asks
@@ -128,8 +148,12 @@ Go, and `tools/krb5oracle/go.mod` points (`replace`) at that checkout.
 
 ## Not done yet
 
-- FAST (RFC 6113) and what needs it (encrypted challenge), PKINIT (RFC
-  4556), SPAKE, OTP.
+- PKINIT (RFC 4556, and with it anonymous PKINIT as armor: MIT's
+  `kinit -n`), SPAKE, OTP. Of FAST: the hide-client-names and
+  kdc-follow-referrals options, explicit armor in a TGS exchange
+  (Windows' compound identity: MIT's KDC refuses it, so it waits for
+  AD), armor across a realm referral (the armor TGT is for the realm
+  asked), and the KDC's side.
 - S4U2Self and S4U2Proxy (constrained delegation), user-to-user.
 - DNS SRV discovery of KDCs (`dns_lookup_kdc`), kpasswd (RFC 3244),
   KKDCP, MEMORY/KEYRING/KCM caches.
@@ -142,6 +166,16 @@ Go, and `tools/krb5oracle/go.mod` points (`replace`) at that checkout.
   and against MIT's live PACs, but a KDC exchange with AD, its referrals,
   a ktpass keytab, a live logon-info PAC, the LDAP GSSAPI bind with
   signing and SID lookups are untested against AD.
+
+FAST follows MIT's client with one difference: given armor, every AS
+request is armored from the first, where MIT's kinit -T tries without
+it unless the armor cache says the KDC does FAST, and upgrades on
+seeing PA-FX-FAST in an error (which an attacker in the middle can
+strip). Its TGS exchanges are MIT's: always armored by the TGT, a reply
+without FAST taken as a KDC that does not do it. We also require the
+KDC's answer to our encrypted challenge, which MIT's client checks only
+when it is there. The FAST response and challenge are plain SEQUENCEs, so DES3's
+block padding is cut off them before they decode.
 
 DES3 and RC4 are legacy and kept for old KDCs and keytabs only; RFC
 1964's per-message tokens for DES3 session keys are not planned (such

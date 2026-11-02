@@ -75,6 +75,14 @@ let USAGE_GSSAPI_ACCEPTOR_SEAL: i64 = 22;
 let USAGE_GSSAPI_ACCEPTOR_SIGN: i64 = 23;
 let USAGE_GSSAPI_INITIATOR_SEAL: i64 = 24;
 let USAGE_GSSAPI_INITIATOR_SIGN: i64 = 25;
+// FAST (RFC 6113 §5.4), and the request's checksum in an AS-REP (RFC 6806 §11).
+let USAGE_FAST_REQ_CHKSUM: i64 = 50;
+let USAGE_FAST_ENC: i64 = 51;
+let USAGE_FAST_REP: i64 = 52;
+let USAGE_FAST_FINISHED: i64 = 53;
+let USAGE_ENC_CHALLENGE_CLIENT: i64 = 54;
+let USAGE_ENC_CHALLENGE_KDC: i64 = 55;
+let USAGE_AS_REQ: i64 = 56;
 
 // --- Message types and their APPLICATION tags (RFC 4120 §5.10) --------------
 
@@ -147,6 +155,11 @@ let PA_ENCRYPTED_CHALLENGE: i32 = 138;
 let PA_REQ_ENC_PA_REP: i32 = 149;
 let PA_SUPPORTED_ENCTYPES: i32 = 165;
 let PA_PAC_OPTIONS: i32 = 167;
+
+// FAST armor types and options (RFC 6113 §5.4.1, §5.4.2).
+let FX_FAST_ARMOR_AP_REQUEST: i32 = 1;
+let FAST_OPT_HIDE_CLIENT_NAMES: i64 = 1;
+let FAST_OPT_KDC_FOLLOW_REFERRALS: i64 = 16;
 
 // --- Authorization data types -----------------------------------------------
 
@@ -314,6 +327,7 @@ let ERR_NDR: i64 = 1024;               // NDR that does not decode
 let ERR_PREAUTH: i64 = 1025;           // pre-authentication we cannot do
 let ERR_TIME: i64 = 1026;              // a time out of range
 let ERR_CONTEXT: i64 = 1027;           // a GSS-API context used in the wrong state
+let ERR_FAST: i64 = 1028;              // a KDC reply not armored as FAST requires, or altered
 
 fn error_text(code: i64) -> const u8[:] {
     match code {
@@ -416,6 +430,7 @@ fn error_text(code: i64) -> const u8[:] {
         1025 => "krb5: unsupported pre-authentication",
         1026 => "krb5: time out of range",
         1027 => "krb5: GSS-API context in the wrong state",
+        1028 => "krb5: KDC reply without the FAST armor it needs, or altered",
         _ => "krb5: unknown error",
     }
 }

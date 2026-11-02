@@ -262,9 +262,85 @@ fn malformed() {
     tv::check_eq("ktime 2050", g2, "\x18\x0f20500101000000Z");
 }
 
+// FAST: MIT's reference encodings of KrbFastResponse and PA-FX-FAST-REPLY
+// (src/tests/asn.1/reference_encode.out, 1.22), and round trips of the
+// request side, which MIT's file does not have.
+fn fast() {
+    let resp_der = tv::hex(str(
+        "30 81 9F A0 26 30 24 30 10 A1 03 02 01 0D A2 09 04 07 70 61 2D 64 61 74 61 30 10 A1 03 02 01 0D A2 09 04 07 70 61 2D 64 ",
+        "61 74 61 A1 13 30 11 A0 03 02 01 01 A1 0A 04 08 31 32 33 34 35 36 37 38 A2 5B 30 59 A0 11 18 0F 31 39 39 34 30 36 31 30 ",
+        "30 36 30 33 31 37 5A A1 05 02 03 01 E2 40 A2 10 1B 0E 41 54 48 45 4E 41 2E 4D 49 54 2E 45 44 55 A3 1A 30 18 A0 03 02 01 ",
+        "01 A1 11 30 0F 1B 06 68 66 74 73 61 69 1B 05 65 78 74 72 61 A4 0F 30 0D A0 03 02 01 01 A1 06 04 04 31 32 33 34 A3 03 02 ",
+        "01 2A "));
+    let r, err = krb5::decode_fast_response(resp_der);
+    tv::check_int("decode fast_response", err, krb5::OK);
+    var n = 0;
+    for p in r.padata { tv::check(str("fast_response padata ", n), p.pa_type == 13 && p.value == "pa-data"); n++; }
+    tv::check_int("fast_response padata count", n, 2);
+    tv::check("fast_response strengthen key", r.has_strengthen_key && r.strengthen_key.etype == 1 && r.strengthen_key.value == "12345678");
+    tv::check("fast_response finished", r.has_finished && r.finished.timestamp == T && r.finished.usec == 123456
+              && r.finished.crealm == REALM && r.finished.cname.name == NAME && r.finished.ticket_checksum.ctype == 1
+              && r.finished.ticket_checksum.sum == "1234");
+    tv::check_int("fast_response nonce", r.nonce, 42);
+    var out: u8[>..] = [];
+    krb5::encode_fast_response(out, r);
+    rt("fast_response", out, resp_der);
+    for i in resp_der.len {
+        let x, e = krb5::decode_fast_response(resp_der[..i]);
+        tv::check(str("truncated fast_response ", i), e == krb5::ERR_MALFORMED);
+    }
+
+    let reply_der = tv::hex("A0293027A0253023A003020100A103020105A21704156B726241534E2E312074657374206D657373616765");
+    let d, derr = krb5::decode_pa_fx_fast_reply(reply_der);
+    tv::check("decode pa_fx_fast_reply", derr == krb5::OK && d.etype == 0 && d.has_kvno && d.kvno == 5 && d.cipher == CIPHER);
+    var out2: u8[>..] = [];
+    krb5::encode_pa_fx_fast_reply(out2, d);
+    rt("pa_fx_fast_reply", out2, reply_der);
+    // A reply's CHOICE is [0]; a bare EncryptedData is not one.
+    var bare: u8[>..] = [];
+    krb5::encode_enc_data(bare, d);
+    let b, berr = krb5::decode_pa_fx_fast_reply(bare);
+    tv::check("bare enc data refused", berr == krb5::ERR_MALFORMED);
+
+    let body = krb5::KdcReqBody {
+        kdc_options: 0x40810010, has_cname: true, cname: krb5::principal_name(1, NAME), realm: REALM, has_sname: true,
+        sname: krb5::principal_name(2, "krbtgt/ATHENA.MIT.EDU"), has_from: false, from: 0, till: T, has_rtime: false, rtime: 0,
+        nonce: 42, etypes: [18, 17], has_addresses: false, addresses: [], has_enc_authz: false, enc_authz: krb5::no_enc_data(),
+        has_tickets: false, tickets: [],
+    };
+    let fr = krb5::KrbFastReq { fast_options: 0, padata: [krb5::PaData { pa_type: 133, value: "cookie" }], req_body: copy(body) };
+    var fder: u8[>..] = [];
+    krb5::encode_fast_req(fder, fr);
+    let fr2, ferr = krb5::decode_fast_req(fder);
+    tv::check("fast_req round trip", ferr == krb5::OK && fr2.fast_options == 0 && fr2.req_body.nonce == 42
+              && fr2.req_body.cname.name == NAME && fr2.req_body.etypes.len == 2);
+    var fder2: u8[>..] = [];
+    krb5::encode_fast_req(fder2, fr2);
+    rt("fast_req", fder2, fder);
+
+    for with_armor in 2 {
+        let ar = krb5::KrbFastArmoredReq {
+            has_armor: with_armor == 1, armor: krb5::KrbFastArmor { armor_type: krb5::FX_FAST_ARMOR_AP_REQUEST, value: "ap-req" },
+            req_checksum: krb5::Checksum { ctype: 16, sum: "sum" },
+            enc_fast_req: krb5::EncryptedData { etype: 18, has_kvno: false, kvno: 0, cipher: "cipher" },
+        };
+        var ader: u8[>..] = [];
+        krb5::encode_pa_fx_fast_request(ader, ar);
+        tv::check(str("armored req is [0] ", with_armor), ader[0] == 0xa0);
+        let ar2, aerr = krb5::decode_pa_fx_fast_request(ader);
+        tv::check(str("armored req round trip ", with_armor), aerr == krb5::OK && ar2.has_armor == (with_armor == 1)
+                  && ar2.req_checksum.sum == "sum" && ar2.enc_fast_req.cipher == "cipher"
+                  && (with_armor == 0 || (ar2.armor.armor_type == 1 && ar2.armor.value == "ap-req")));
+        var ader2: u8[>..] = [];
+        krb5::encode_pa_fx_fast_request(ader2, ar2);
+        rt(str("armored req ", with_armor), ader2, ader);
+    }
+}
+
 fn main() {
     mit_vectors();
     names();
     malformed();
+    fast();
     tv::done("messages");
 }

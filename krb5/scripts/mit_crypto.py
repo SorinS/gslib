@@ -9,9 +9,11 @@ type krb5.crypto has, on random keys and inputs:
     prf   etype key input output                krb5_c_prf
     cksum etype ctype key usage data checksum   krb5_c_make_checksum
     enc   etype key usage plain ciphertext      krb5_c_encrypt (MIT's confounder)
+    cf2   etype1 key1 pepper1 etype2 key2 pepper2 key   krb5_c_fx_cf2_simple
 
-test/crypto.goose must give the same keys, PRF outputs and checksums, and
-decrypt MIT's ciphertexts. MIT picks its confounders at random, so the enc
+test/crypto.goose must give the same keys, PRF outputs, checksums and
+KRB-FX-CF2 keys (every pair of types, FAST's peppers), and decrypt MIT's
+ciphertexts. MIT picks its confounders at random, so the enc
 lines change on every run; the rest are fixed by the seed.
 
     python3 scripts/mit_crypto.py [--mit PREFIX]
@@ -109,6 +111,17 @@ int main(void) {
             e = krb5_c_encrypt(ctx, &k, usage, NULL, &in, &out);
             if (e) die("encrypt", e);
             hex(y, out.ciphertext.length); printf("\n");
+        } else if (strcmp(op, "cf2") == 0) {
+            int et2;
+            static unsigned char kb2[64];
+            char p1[256], p2[256];
+            scanf("%d %4095s %255s %d %4095s %255s", &et, a, p1, &et2, b, p2);
+            krb5_keyblock k1 = { 0, et, unhex(a, kb), kb }, k2 = { 0, et2, unhex(b, kb2), kb2 };
+            krb5_keyblock *k;
+            krb5_error_code e = krb5_c_fx_cf2_simple(ctx, &k1, p1, &k2, p2, &k);
+            if (e) die("fx_cf2_simple", e);
+            hex(k->contents, k->length); printf("\n");
+            krb5_free_keyblock(ctx, k);
         } else {
             fprintf(stderr, "unknown op %s\n", op);
             return 1;
@@ -182,6 +195,15 @@ def main():
             plain = rb(n)
             queries.append(("enc", et, key, usage, plain, f"enc {et} {hx(key)} {usage} {hx(plain)}"))
 
+    # KRB-FX-CF2 for every pair of types, with RFC 6113's peppers.
+    peppers = [("subkeyarmor", "ticketarmor"), ("clientchallengearmor", "challengelongterm"),
+               ("kdcchallengearmor", "challengelongterm"), ("strengthenkey", "replykey"), ("explicitarmor", "tgsarmor")]
+    for e1 in ETYPES:
+        for e2 in ETYPES:
+            p1, p2 = rng.choice(peppers)
+            k1, k2 = rkey(e1), rkey(e2)
+            queries.append(("cf2", e1, k1, p1, e2, k2, p2, f"cf2 {e1} {hx(k1)} {p1} {e2} {hx(k2)} {p2}"))
+
     with tempfile.TemporaryDirectory() as tmp:
         src, exe = os.path.join(tmp, "mit_crypto.c"), os.path.join(tmp, "mit_crypto")
         with open(src, "w") as f:
@@ -207,6 +229,9 @@ def main():
         elif q[0] == "cksum":
             _, et, ct, key, usage, data, _ = q
             lines.append(f"cksum {et} {ct} {hx(key)} {usage} {hx(data)} {a}")
+        elif q[0] == "cf2":
+            _, e1, k1, p1, e2, k2, p2, _ = q
+            lines.append(f"cf2 {e1} {hx(k1)} {p1} {e2} {hx(k2)} {p2} {a}")
         else:
             _, et, key, usage, plain, _ = q
             lines.append(f"enc {et} {hx(key)} {usage} {hx(plain)} {a}")

@@ -242,6 +242,231 @@ def transport_tests(k, tool):
     check("forwardable and proxiable TGT", p.returncode == 0 and "Flags: FPI" in q.stdout, out(p) + q.stdout)
 
 
+def der(b, i):
+    """The DER element at b[i]: (tag, content start, end)."""
+    tag, n = b[i], b[i + 1]
+    i += 2
+    if n & 0x80:
+        k = n & 0x7f
+        n = int.from_bytes(b[i:i + k], "big")
+        i += k
+    return tag, i, i + n
+
+
+def der_field(b, start, end, tag):
+    """The element with `tag` among those in b[start:end], or None."""
+    i = start
+    while i < end:
+        t, cs, e = der(b, i)
+        if t == tag:
+            return t, cs, e
+        i = e
+    return None
+
+
+class TamperRelay:
+    """A KDC on 127.0.0.1 (TCP) that forwards to the F.TEST KDC and alters
+    its replies as `mode` says: as-ticket, as-cname, as-strip (an AS-REP's
+    ticket, client name, or PA-FX-FAST), tgs-ticket, tgs-strip, err-strip
+    (an armored KRB-ERROR's PA-FX-FAST), or none."""
+
+    def __init__(self, port):
+        self.kdc_port = port
+        self.mode = "none"
+        self.requests = 0
+        self.altered = 0
+        self.sock = socket.socket()
+        self.sock.bind(("127.0.0.1", 0))
+        self.sock.listen(8)
+        self.port = self.sock.getsockname()[1]
+        threading.Thread(target=self.serve, daemon=True).start()
+
+    def serve(self):
+        while True:
+            try:
+                c, _ = self.sock.accept()
+            except OSError:
+                return
+            try:
+                c.settimeout(10)
+                req = self.read(c)
+                self.requests += 1
+                k = socket.create_connection(("127.0.0.1", self.kdc_port), timeout=10)
+                k.sendall(len(req).to_bytes(4, "big") + req)
+                rep = bytearray(self.read(k))
+                k.close()
+                self.tamper(rep)
+                c.sendall(len(rep).to_bytes(4, "big") + bytes(rep))
+            except OSError:
+                pass
+            finally:
+                c.close()
+
+    @staticmethod
+    def read(s):
+        buf = b""
+        while len(buf) < 4:
+            buf += s.recv(4 - len(buf))
+        n = int.from_bytes(buf, "big")
+        data = b""
+        while len(data) < n:
+            data += s.recv(n - len(data))
+        return data
+
+    @staticmethod
+    def unfast(b, start, end):
+        # Each PA-DATA of type 136 (PA-FX-FAST) made 135.
+        _, cs, e = der(b, start)
+        i = cs
+        while i < e:
+            _, ps, pe = der(b, i)
+            f = der_field(b, ps, pe, 0xa1)
+            if f:
+                _, is_, ie = der(b, f[1])
+                if int.from_bytes(b[is_:ie], "big") == 136:
+                    b[ie - 1] = 135
+            i = pe
+
+    def tamper(self, b):
+        mode = self.mode
+        if mode == "none" or not b:
+            return
+        kind = {0x6b: "as", 0x6d: "tgs", 0x7e: "err"}.get(b[0])
+        if kind is None or not mode.startswith(kind + "-"):
+            return
+        _, cs, end = der(b, 0)
+        _, ss, se = der(b, cs)
+        before = bytes(b)
+        if mode.endswith("-ticket"):
+            _, ts, te = der_field(b, ss, se, 0xa5)
+            b[te - 1] ^= 1
+        elif mode == "as-cname":
+            _, ns, ne = der_field(b, ss, se, 0xa4)
+            i = bytes(b).find(b"grace", ns, ne)
+            b[i:i + 5] = b"mallo"
+        elif mode.endswith("-strip") and kind != "err":
+            _, ps, pe = der_field(b, ss, se, 0xa2)
+            self.unfast(b, ps, pe)
+        elif mode == "err-strip":
+            f = der_field(b, ss, se, 0xac)
+            if f:
+                _, os_, oe = der(b, f[1])
+                self.unfast(b, os_, oe)
+        if bytes(b) != before:
+            self.altered += 1
+
+    def close(self):
+        self.sock.close()
+
+
+def fast_tests(k, tool):
+    """FAST (RFC 6113) in F.TEST, whose KDC refuses the encrypted
+    timestamp: a password works there only armored."""
+    keytab = k.path("fast.keytab")
+    armor = "FILE:" + k.path("armor.cc")
+    mit_armor = "FILE:" + k.path("mit-armor.cc")
+
+    def cc(name):
+        return dict(k.env, KRB5CCNAME="FILE:" + k.path(name))
+
+    p = run(k, [tool, "kinit", "-k", keytab, "host/fast.f.test@F.TEST"], env=cc("armor.cc"))
+    check("FAST: armor TGT from the host keytab", p.returncode == 0, out(p))
+    p = run(k, [k.bin("klist"), "-C"], env=cc("armor.cc"))
+    check("FAST: our cache says fast_avail, as MIT's do", "fast_avail(krbtgt/F.TEST@F.TEST) = yes" in p.stdout, out(p))
+    p = run(k, [tool, "kinit", "grace@F.TEST"], "grace-pw\n", env=cc("grace.cc"))
+    check("FAST: unarmored kinit refused (no encrypted timestamp)", p.returncode == 1, out(p))
+    p = run(k, [tool, "kinit", "-T", armor, "grace@F.TEST"], "grace-pw\n", env=cc("grace.cc"))
+    q = run(k, [k.bin("klist")], env=cc("grace.cc"))
+    check("FAST: kinit -T grace (encrypted challenge)", p.returncode == 0 and "krbtgt/F.TEST@F.TEST" in q.stdout,
+          out(p) + out(q))
+    p = run(k, [tool, "kinit", "-T", armor, "grace@F.TEST"], "wrong\n", env=cc("wrong.cc"))
+    check("FAST: wrong password, the armored error read", p.returncode == 1 and "PREAUTH_FAILED" in out(p), out(p))
+    p = run(k, [tool, "kinit", "-T", armor, "heidi@F.TEST"], "heidi-pw\n", env=cc("heidi.cc"))
+    log = open(k.path("kdc-f.log")).read()
+    check("FAST: camellia reply key under aes armor (heidi)", p.returncode == 0 and any(
+        "heidi@F.TEST for krbtgt" in l and "rep=camellia256-cts-cmac(26)" in l for l in log.splitlines()), out(p))
+    p = run(k, [tool, "kvno", "HTTP/svc.f.test@F.TEST"], env=cc("grace.cc"))
+    check("FAST: kvno, the TGS exchange armored by the TGT", p.returncode == 0, out(p))
+    p = run(k, [k.bin("kvno"), "HTTP/svc.f.test@F.TEST"], env=cc("grace.cc"))
+    check("FAST: MIT kvno with our armored TGT", p.returncode == 0, out(p))
+    p = run(k, [tool, "kinit", "-T", armor, "-k", keytab, "host/fast.f.test@F.TEST"], env=cc("armored-kt.cc"))
+    check("FAST: kinit -T -k (armored keytab exchange)", p.returncode == 0, out(p))
+
+    # MIT's kinit armored by our cache; ours by MIT's.
+    trace = k.path("fast-trace.log")
+    p = run(k, [k.bin("kinit"), "-T", armor, "grace@F.TEST"], "grace-pw\n", env=dict(cc("mit-grace.cc"), KRB5_TRACE=trace))
+    t = open(trace).read() if os.path.exists(trace) else ""
+    check("FAST: MIT kinit -T with our armor cache (our fast_avail read, encrypted challenge)",
+          p.returncode == 0 and "Using FAST due to armor ccache negotiation result" in t
+          and "encrypted_challenge (138) (real) returned: 0/Success" in t, out(p) + t[-1500:])
+    p = run(k, [k.bin("kinit"), "-k", "-t", keytab, "host/fast.f.test@F.TEST"], env=cc("mit-armor.cc"))
+    q = run(k, [tool, "kinit", "-T", mit_armor, "grace@F.TEST"], "grace-pw\n", env=cc("grace2.cc"))
+    check("FAST: our kinit -T with MIT's armor cache", p.returncode == 0 and q.returncode == 0, out(p) + out(q))
+    # Armor for another realm is no armor for this one.
+    p = run(k, [tool, "kinit", "alice"], "alice-pw\n", env=cc("alice.cc"))
+    q = run(k, [tool, "kinit", "-T", "FILE:" + k.path("alice.cc"), "grace@F.TEST"], "grace-pw\n", env=cc("grace3.cc"))
+    check("FAST: armor TGT of another realm refused", q.returncode == 1, out(p) + out(q))
+
+    # disable_encrypted_timestamp on the client side (MIT's krb5.conf
+    # relation): bob's timestamp is never sent, so kinit fails.
+    base = open(k.path("krb5.conf")).read()
+    conf = k.path("krb5-nots.conf")
+    with open(conf, "w") as f:
+        f.write(base.replace(f"kdc = 127.0.0.1:{k.port_a}", f"kdc = 127.0.0.1:{k.port_a}\n        disable_encrypted_timestamp = true"))
+    env = dict(cc("bob.cc"), KRB5_CONFIG=conf)
+    p = run(k, [tool, "kinit", "bob"], "bob-pw\n", env=env)
+    q = run(k, [k.bin("kinit"), "bob"], "bob-pw\n", env=env)
+    check("FAST: client disable_encrypted_timestamp, ours and MIT's refuse", p.returncode == 1 and q.returncode != 0,
+          out(p) + out(q))
+
+    # A KDC in the middle that alters replies: the armor catches it.
+    relay = TamperRelay(k.port_f)
+    conf = k.path("krb5-relay.conf")
+    with open(conf, "w") as f:
+        f.write(base.replace(f"kdc = 127.0.0.1:{k.port_f}", f"kdc = tcp/127.0.0.1:{relay.port}"))
+    env = dict(cc("relay.cc"), KRB5_CONFIG=conf)
+    try:
+        relay.mode = "none"
+        p = run(k, [tool, "kinit", "-T", armor, "grace@F.TEST"], "grace-pw\n", env=env)
+        check("FAST relay: unaltered", p.returncode == 0, out(p))
+        relay.mode = "as-ticket"
+        a = relay.altered
+        p = run(k, [tool, "kinit", "-T", armor, "grace@F.TEST"], "grace-pw\n", env=env)
+        check("FAST relay: AS-REP ticket altered, finished checksum fails", p.returncode == 1 and "FAST" in out(p) and relay.altered > a, out(p))
+        relay.mode = "as-strip"
+        a = relay.altered
+        p = run(k, [tool, "kinit", "-T", armor, "grace@F.TEST"], "grace-pw\n", env=env)
+        check("FAST relay: AS-REP without PA-FX-FAST refused", p.returncode == 1 and "FAST" in out(p) and relay.altered > a,
+              out(p))
+        relay.mode = "as-cname"
+        a = relay.altered
+        p = run(k, [tool, "kinit", "-T", armor, "grace@F.TEST"], "grace-pw\n", env=env)
+        q = run(k, [k.bin("klist")], env=env)
+        check("FAST relay: AS-REP client name altered, the finished name used",
+              p.returncode == 0 and "grace@F.TEST" in p.stdout and "Default principal: grace@F.TEST" in q.stdout
+              and relay.altered > a, out(p) + out(q))
+        relay.mode = "err-strip"
+        before, a = relay.requests, relay.altered
+        p = run(k, [tool, "kinit", "-T", armor, "grace@F.TEST"], "grace-pw\n", env=env)
+        check("FAST relay: unarmored error not acted on (one request, no retry)",
+              p.returncode == 1 and relay.requests - before == 1 and relay.altered > a,
+              out(p) + f"requests: {relay.requests - before}")
+        relay.mode = "none"
+        p = run(k, [tool, "kinit", "-T", armor, "grace@F.TEST"], "grace-pw\n", env=env)
+        relay.mode = "tgs-ticket"
+        a = relay.altered
+        q = run(k, [tool, "kvno", "HTTP/svc.f.test@F.TEST"], env=env)
+        check("FAST relay: TGS-REP ticket altered, finished checksum fails",
+              p.returncode == 0 and q.returncode == 1 and "FAST" in out(q) and relay.altered > a, out(p) + out(q))
+        relay.mode = "tgs-strip"
+        a = relay.altered
+        q = run(k, [tool, "kvno", "HTTP/svc.f.test@F.TEST"], env=env)
+        check("FAST relay: TGS-REP without PA-FX-FAST fails (its key was strengthened)",
+              q.returncode == 1 and relay.altered > a, out(q))
+    finally:
+        relay.close()
+
+
 def skew_tests(mit, tool, goose):
     # A KDC whose clock is ten minutes ahead: pre-authentication fails on
     # skew, the client learns the offset from the error and retries.
@@ -397,6 +622,7 @@ def main():
         with Kdc(mit=args.mit) as k:
             tgs_tests(k, tool)
             transport_tests(k, tool)
+            fast_tests(k, tool)
             gss_tests(k, tool, gss)
             http_tests(k, tool, gss)
         skew_tests(args.mit, tool, goose)

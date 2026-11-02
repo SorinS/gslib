@@ -859,3 +859,41 @@ fn prf(key: Key, input: const u8[:], out: u8[>..]&) -> i64 {
     out.append(block_encrypt(e, k.value, h[..20 / bs * bs]));
     return OK;
 }
+
+// --- PRF+ and KRB-FX-CF2 (RFC 6113 §5.1) ------------------------------------------
+
+// PRF+(key, input): PRF(key, 1 || input) || PRF(key, 2 || input) || ...,
+// cut to n bytes (at most 255 PRF outputs).
+fn prf_plus(key: Key, input: const u8[:], n: i64, out: u8[>..]&) -> i64 {
+    var x: u8[>..] = [0];
+    x.append(input);
+    var got: u8[>..] = [];
+    var i = 1;
+    while got.len < n {
+        if i > 255 { return ERR_KEY_SIZE; }
+        x[0] = i as! u8;
+        let err = prf(key, x, got);
+        if err != OK { return err; }
+        i++;
+    }
+    out.append(got[..n]);
+    return OK;
+}
+
+// KRB-FX-CF2(k1, k2, pepper1, pepper2): random-to-key of PRF+(k1,
+// pepper1) XOR PRF+(k2, pepper2), each as long as k1's type's random
+// string; the key is of k1's type, whatever k2's is. FAST's armor,
+// challenge and reply keys are made this way.
+fn fx_cf2(k1: Key, pepper1: const u8[:], k2: Key, pepper2: const u8[:]) -> Key, i64 {
+    let e = k1.etype;
+    if !etype_supported(e) { return make_key(0, ""), ERR_ETYPE; }
+    let n = seed_len(e);
+    var a: u8[>..] = [];
+    let err1 = prf_plus(k1, pepper1, n, a);
+    if err1 != OK { return make_key(0, ""), err1; }
+    var b: u8[>..] = [];
+    let err2 = prf_plus(k2, pepper2, n, b);
+    if err2 != OK { return make_key(0, ""), err2; }
+    for i in n { a[i] ^= b[i]; }
+    return random_to_key(e, a), OK;
+}

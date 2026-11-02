@@ -316,11 +316,16 @@ fn mit_vectors() {
                       && (e == 16 || out.len == plain.len));
             var other: u8[>..] = [];
             tv::check(str("mit other usage ", line), krb5::decrypt(k, usage + 1, h(w[5]), other) == krb5::ERR_INTEGRITY);
+        } else if w[0] == "cf2" {
+            let k1 = krb5::make_key(e, h(w[2]));
+            let k2 = krb5::make_key(num(w[4]) as! i32, h(w[5]));
+            let k, err = krb5::fx_cf2(k1, w[3], k2, w[6]);
+            tv::check(str("mit ", line), err == krb5::OK && k.etype == e && k.value[..] == h(w[7])[..]);
         } else {
             tv::check(str("mit line ", line), false);
         }
     }
-    tv::check("mit lines", lines > 200);
+    tv::check("mit lines", lines > 300);
 }
 
 fn rc4_vectors() {

@@ -5,6 +5,7 @@
 //
 //   krb5 kinit PRINCIPAL            the password from stdin's first line
 //   krb5 kinit -k KEYTAB PRINCIPAL
+//   krb5 kinit -T ARMOR_CACHE [-k KEYTAB] PRINCIPAL   armored with FAST by the cache's TGT
 //   krb5 kvno [-gss] SERVICE        service/host[@REALM], or service@host with -gss
 //   krb5 klist                      the cache
 //   krb5 klist -k KEYTAB            the keytab
@@ -29,10 +30,10 @@ fn fail(what: const u8[:], err: i64) {
 }
 
 fn time_text(t: i64) -> u8[>..] {
-    var b: u8[>..] = [];
-    if t == 0 { b.append("-"); return b; }
-    krb5::put_ktime(b, t);
     var out: u8[>..] = [];
+    if t == 0 { out.append("-"); return out; }
+    var b: u8[>..] = [];
+    krb5::put_ktime(b, t);
     out.append(b[2..]);
     return out;
 }
@@ -64,6 +65,11 @@ fn klist_keytab(path: const u8[:]) {
     for e in es { print(e.kvno, " ", krb5::principal_string(e.name, e.realm), " (", krb5::etype_name(e.key.etype), ")"); }
 }
 
+fn kinit_done(c: const krb5::Credential&, err: i64) {
+    if err != krb5::OK { fail("kinit", err); }
+    print(krb5::principal_string(c.client, c.client_realm));
+}
+
 fn main() {
     let a = args();
     if a.len < 2 { write_stderr("usage: krb5 kinit|kvno|klist|renew ...\n"); exit(2); }
@@ -72,20 +78,36 @@ fn main() {
     let ccname = krb5::default_ccache_name();
     let cmd = a[1];
     if cmd == "kinit" {
-        if a.len == 5 && a[2] == "-k" {
-            let kt, kerr = krb5::keytab_load(a[3]);
-            if kerr != krb5::OK { fail(a[3], kerr); }
-            let c, err = krb5::kinit_keytab(cfg, ccname, a[4], kt);
-            if err != krb5::OK { fail("kinit", err); }
-            print(krb5::principal_string(c.client, c.client_realm));
+        var keytab: u8[>..] = [];
+        var armor: u8[>..] = [];
+        var i = 2;
+        while i + 1 < a.len && (a[i] == "-k" || a[i] == "-T") {
+            if a[i] == "-k" { keytab.append(a[i + 1]); } else { armor.append(a[i + 1]); }
+            i += 2;
+        }
+        if i != a.len - 1 { write_stderr("usage: krb5 kinit [-T ARMOR_CACHE] [-k KEYTAB] PRINCIPAL\n"); exit(2); }
+        let principal = a[i];
+        if keytab.len > 0 {
+            let kt, kerr = krb5::keytab_load(keytab);
+            if kerr != krb5::OK { fail(keytab, kerr); }
+            if armor.len > 0 {
+                let c, err = krb5::kinit_keytab_fast(cfg, ccname, principal, kt, armor);
+                kinit_done(c, err);
+            } else {
+                let c, err = krb5::kinit_keytab(cfg, ccname, principal, kt);
+                kinit_done(c, err);
+            }
             return;
         }
-        if a.len != 3 { write_stderr("usage: krb5 kinit [-k KEYTAB] PRINCIPAL\n"); exit(2); }
         var pw: u8[>..] = [];
         read_line(pw);
-        let c, err = krb5::kinit_password(cfg, ccname, a[2], pw);
-        if err != krb5::OK { fail("kinit", err); }
-        print(krb5::principal_string(c.client, c.client_realm));
+        if armor.len > 0 {
+            let c, err = krb5::kinit_password_fast(cfg, ccname, principal, pw, armor);
+            kinit_done(c, err);
+        } else {
+            let c, err = krb5::kinit_password(cfg, ccname, principal, pw);
+            kinit_done(c, err);
+        }
         return;
     }
     if cmd == "kvno" {
