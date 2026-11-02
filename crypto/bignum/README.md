@@ -640,8 +640,9 @@ tools/govectors.sh > test/vectors/xcrypto.txt   # regenerate it
 - `camellia_vectors` (`scripts/camellia_vectors.py`): s1 computed as
   camellia.goose computes it (A1, the AES circuit, A2, on planes) against
   RFC 3713's SBOX1 on all 256 bytes; F on random and edge inputs; RFC
-  3713's Appendix A and random blocks at each key size (all-zero and
-  all-one keys among them), both ways; CBC, CFB, OFB and CTR (counters
+  3713's Appendix A, every one-bit plaintext under the zero key (MIT's
+  known-answer set, which agrees) and every one-bit key, and random blocks
+  at each key size (all-zero and all-one keys among them), both ways; CBC, CFB, OFB and CTR (counters
   that wrap) through `bignum.modes`; CMAC over AES, Camellia and 3DES at
   every length around the block edges, RFC 4493's examples, and keys
   chosen so that both arms of the subkey doubling run, with altered,

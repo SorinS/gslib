@@ -8,7 +8,7 @@ later.
 
 | Library | What | |
 |---|---|---|
-| `crypto/bignum` | Integers of any size, constant-time arithmetic, and cryptography: AES, ChaCha20, the SHA-1/2/3 and BLAKE2 hashes, HMAC, HKDF, PBKDF2, scrypt, Argon2, bcrypt, RSA, DSA, ECDH and ECDSA (P-224 to P-521), X25519, Ed25519, ML-KEM, ML-DSA, HPKE, NaCl, the legacy ciphers | [README](crypto/bignum/README.md) |
+| `crypto/bignum` | Integers of any size, constant-time arithmetic, and cryptography: AES, Camellia, ChaCha20, the SHA-1/2/3 and BLAKE2 hashes, HMAC, CMAC, HKDF, PBKDF2, scrypt, Argon2, bcrypt, RSA, DSA, ECDH and ECDSA (P-224 to P-521), X25519, Ed25519, ML-KEM, ML-DSA, HPKE, NaCl, the legacy ciphers | [README](crypto/bignum/README.md) |
 | `encoding/asn1` | DER and BER reading and writing, PEM | [README](encoding/asn1/README.md) |
 | `crypto/x509` | Certificates: parsing, path building and verification, name constraints, policies, system roots, creating certificates, CSRs and CRLs, OCSP, PKCS #12 | [README](crypto/x509/README.md) |
 | `crypto/tls` | TLS 1.3 and 1.2, client and server, without I/O: resumption, client certificates, ECH, post-quantum key exchange | [README](crypto/tls/README.md) |

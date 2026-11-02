@@ -1,7 +1,8 @@
 // krb5.crypto against the RFCs' vectors: n-fold and DES3's DR and DK and
 // string-to-key (RFC 3961 Appendix A), AES string-to-key and CTS (RFC 3962
 // Appendix B), the SHA-2 types (RFC 8009 Appendix A), Camellia (RFC 6803
-// §10: every string-to-key, derivation, encryption and checksum),
+// §10: every string-to-key, derivation, encryption and checksum), MIT's
+// libk5crypto's answers for every type (vectors/mit_crypto.txt),
 // RC4-HMAC's string-to-key; then every type's encrypt, decrypt and checksum round
 // trips, and tampering caught.
 
@@ -269,6 +270,59 @@ fn rfc6803_vectors() {
         "3FA0B42355E52B189187294AA252AB64");
 }
 
+// vectors/mit_crypto.txt (scripts/mit_crypto.py): MIT's libk5crypto's
+// string-to-key, PRF, checksums and ciphertexts for every type, on random
+// keys and inputs. The keys, PRF outputs and checksums must be MIT's, and
+// MIT's ciphertexts must decrypt (and fail under another usage).
+fn mit_vectors() {
+    fn num(s: const u8[:]) -> i64 {
+        let neg = s.len > 0 && s[0] == '-';
+        let v, ok = parse_int(if neg { s[1..] } else { s }, 10);
+        assert(ok);
+        return if neg { -v } else { v };
+    }
+    fn h(s: const u8[:]) -> u8[>..] {
+        var out: u8[>..] = [];
+        if s != "-" { out.append(tv::hex(s)); }
+        return out;
+    }
+    var lines = 0;
+    for line in split(embed_file("vectors/mit_crypto.txt"), '\n') {
+        if line.len == 0 { continue; }
+        let w = split(line, ' ');
+        let e = num(w[1]) as! i32;
+        lines++;
+        if w[0] == "s2k" {
+            let k, err = krb5::string_to_key(e, h(w[2]), h(w[3]), h(w[4]));
+            tv::check(str("mit ", line), err == krb5::OK && k.value[..] == h(w[5])[..]);
+        } else if w[0] == "prf" {
+            let k = krb5::make_key(e, h(w[2]));
+            var out: u8[>..] = [];
+            let err = krb5::prf(k, h(w[3]), out);
+            tv::check(str("mit ", line), err == krb5::OK && out == h(w[4]));
+        } else if w[0] == "cksum" {
+            let k = krb5::make_key(e, h(w[3]));
+            var out: u8[>..] = [];
+            let err = krb5::checksum(k, num(w[2]) as! i32, num(w[4]), h(w[5]), out);
+            tv::check(str("mit ", line), err == krb5::OK && out == h(w[6]));
+        } else if w[0] == "enc" {
+            let k = krb5::make_key(e, h(w[2]));
+            let usage = num(w[3]);
+            let plain = h(w[4]);
+            var out: u8[>..] = [];
+            let err = krb5::decrypt(k, usage, h(w[5]), out);
+            // DES3 keeps the zeros that pad to its block.
+            tv::check(str("mit ", line), err == krb5::OK && out.len >= plain.len && out[..plain.len] == plain[..]
+                      && (e == 16 || out.len == plain.len));
+            var other: u8[>..] = [];
+            tv::check(str("mit other usage ", line), krb5::decrypt(k, usage + 1, h(w[5]), other) == krb5::ERR_INTEGRITY);
+        } else {
+            tv::check(str("mit line ", line), false);
+        }
+    }
+    tv::check("mit lines", lines > 200);
+}
+
 fn rc4_vectors() {
     let k, err = krb5::string_to_key(krb5::ETYPE_RC4_HMAC, "foo", "");
     tv::check_int("rc4 s2k err", err, krb5::OK);
@@ -343,6 +397,7 @@ fn main() {
     aes_vectors();
     rfc8009_vectors();
     rfc6803_vectors();
+    mit_vectors();
     rc4_vectors();
     round_trips();
     names();

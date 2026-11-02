@@ -76,10 +76,13 @@ server; servers listen on 127.0.0.1 only.
 `--debug`, and `--native`):
 
 - `test/crypto.goose`: the vectors of RFC 3961 Appendix A (n-fold, DES3
-  DR/DK and string-to-key), RFC 3962 Appendix B (PBKDF2 string-to-key, CTS)
-  RFC 8009 Appendix A (string-to-key, key derivation, encryption,
+  DR/DK and string-to-key), RFC 3962 Appendix B (PBKDF2 string-to-key,
+  CTS), RFC 8009 Appendix A (string-to-key, key derivation, encryption,
   checksums, PRF) and RFC 6803 §10 (Camellia: every string-to-key,
-  derivation, encryption and checksum); RC4's string-to-key; every type's round trips,
+  derivation, encryption and checksum); RC4's string-to-key; MIT's
+  libk5crypto's answers for every type (`test/vectors/mit_crypto.txt`:
+  string-to-key with UTF-8 passwords and explicit iteration counts, PRF,
+  checksums, and MIT's ciphertexts decrypted); every type's round trips,
   tampering and wrong usages.
 - `test/messages.goose`: MIT's reference encodings
   (`src/tests/asn.1/reference_encode.out`, through go-krb5's
@@ -116,7 +119,10 @@ and PAC signature (cmac-camellia256) are Camellia's, the PAC of MIT's
 tickets verified, our HTTP
 Negotiate client and `curl --negotiate` against our server.
 
-`scripts/gen_vectors.py` writes `test/vectors` from go-krb5's checkout
+`scripts/mit_crypto.py` writes `test/vectors/mit_crypto.txt`: it builds
+a small C program against MIT's libk5crypto (Homebrew's `krb5`) and asks
+it (MIT picks its confounders, so the ciphertexts change on every run).
+`scripts/gen_vectors.py` writes the rest of `test/vectors` from go-krb5's checkout
 (`--oracle`, `~/Dev/Go.Code/krb5.git` by default); `pac_oracle.txt` needs
 Go, and `tools/krb5oracle/go.mod` points (`replace`) at that checkout.
 
@@ -142,15 +148,21 @@ DES3 and RC4 are legacy and kept for old KDCs and keytabs only; RFC
 contexts establish, but `gss_get_mic` and `gss_wrap` refuse them).
 
 Camellia (bignum's, constant time) is checked against all of RFC
-6803's vectors and against MIT. The RFC doesn't give its sample
-encryptions' key usages: they are 0 to 4 in order. Its PRF (CMAC under
-KDF-FEEDBACK-CMAC(key, "prf")) has no published vector and is not
-exercised against MIT; it follows §6 as written.
+6803's vectors and against MIT (libk5crypto, PRF included, and its KDC).
+The RFC doesn't give its sample encryptions' key usages: they are 0 to 4
+in order.
+
+MIT refuses PBKDF2 iteration counts below a type's default (4096 for
+RFC 3962, 32768 for RFC 8009 and 6803) as weak; `string_to_key` takes
+any count from 1 to 2^24, as the RFCs' own vectors need.
 
 RFC 4757 §7.2's pseudocode puts the direction bytes of RC4 tokens the
 wrong way round; we follow RFC 1964 and MIT (00 from the initiator), and
 its Wrap checksum's salt is 13, not the 15 it writes, as MIT, Heimdal and
-Windows have it. Where go-krb5 differs, we follow the RFCs: RC4's string-to-key encodes
+Windows have it. Its table also gives key usage 9 (the TGS-REP under a
+subkey) the message type 8; MIT and Heimdal use 9, and so do we (MIT's
+ciphertexts decrypt only so; go-krb5 has 8). Where go-krb5 differs
+otherwise, we follow the RFCs: RC4's string-to-key encodes
 the password as UTF-16LE (go-krb5 leaves gaps after non-ASCII bytes), the
 RC4 usage number is little-endian (go-krb5 writes a varint, the same
 below 128), and XPRESS_HUFF claims are MS-XCA's LZ77+Huffman, not HPACK's Huffman

@@ -616,9 +616,13 @@ fn default_salt(realm: const u8[:], components: const u8[][:]) -> u8[>..] {
 
 // --- RC4-HMAC (RFC 4757) ------------------------------------------------------
 
-// The message type T for a key usage (RFC 4757 §3).
+// The message type T for a key usage (RFC 4757 §3), as MIT and Heimdal
+// have it: 3 (the AS-REP's encrypted part) is 8 and 23 (the GSS Wrap
+// token) 13, the rest are themselves. RFC 4757's table also makes 9 (the
+// TGS-REP's encrypted part under a subkey) 8; MIT and Heimdal keep 9, and
+// MIT's own ciphertexts decrypt only so (test/vectors/mit_crypto.txt).
 fn rc4_usage(usage: i64) -> u8[4] {
-    let u: u32 = match usage { 3 => 8, 9 => 8, 23 => 13, _ => usage as! u32 };
+    let u: u32 = match usage { 3 => 8, 23 => 13, _ => usage as! u32 };
     return [u as! u8, (u >> 8) as! u8, (u >> 16) as! u8, (u >> 24) as! u8];
 }
 

@@ -332,7 +332,8 @@ def ossl_cmac(cipher, key, msg):
 
 def generate():
     if not cv.OPENSSL:
-        sys.exit("camellia_vectors.py needs the openssl command")
+        print("openssl not found: camellia.txt left as it is")
+        return {}
     check_equivalence()
     out = ["sbox1 " + hx(bytes(SBOX1))]
     count = 0
@@ -363,6 +364,23 @@ def generate():
             count += 1
             for i in range(0, 64, 16):
                 out.append(f"block {hx(key)} {hx(pt[i:i + 16])} {hx(ct[i:i + 16])}")
+
+    # The NESSIE-style known-answer sets: every one-bit plaintext under the
+    # zero key (MIT's camellia-expect-vt.txt for 128 and 256 bits are this
+    # set) and every one-bit key on the zero block, at each key size.
+    for n in (16, 24, 32):
+        pts = b"".join((1 << (127 - i)).to_bytes(16, "big") for i in range(128))
+        cts = ecb(bytes(n), pts)
+        assert openssl(["enc", f"-camellia-{8 * n}-ecb", "-K", bytes(n).hex(), "-nopad"], pts) == cts
+        count += 1
+        for i in range(128):
+            out.append(f"block {hx(bytes(n))} {hx(pts[16 * i:16 * i + 16])} {hx(cts[16 * i:16 * i + 16])}")
+        for i in range(8 * n):
+            key = (1 << (8 * n - 1 - i)).to_bytes(n, "big")
+            ct = camellia(key, bytes(16))
+            assert openssl(["enc", f"-camellia-{8 * n}-ecb", "-K", key.hex(), "-nopad"], bytes(16)) == ct
+            count += 1
+            out.append(f"block {hx(key)} {hx(bytes(16))} {hx(ct)}")
 
     # Modes, through bignum.modes.
     for mode in ("cbc", "cfb", "ofb", "ctr"):

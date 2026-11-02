@@ -1,10 +1,11 @@
 // Camellia and CMAC against vectors/camellia.txt (scripts/camellia_vectors.py:
 // RFC 3713 and RFC 4493's examples, a transcription of both, every vector
 // checked against openssl): s1 as A2(S_aes(A1(x))) on the planes, against
-// RFC 3713's SBOX1 on all 256 bytes; F; blocks both ways at each key size;
-// CBC, CFB, OFB and CTR through bignum.modes; CMAC over AES, Camellia and
-// 3DES at every length around the block edges, with truncated and altered
-// tags refused.
+// RFC 3713's SBOX1 on all 256 bytes; F; blocks both ways at each key size
+// (every one-bit plaintext and every one-bit key among them); CBC, CFB,
+// OFB and CTR through bignum.modes; CMAC over AES, Camellia and 3DES at
+// every length around the block edges, with truncated and altered tags
+// refused.
 import std;
 import gslib from "../../..";
 import gslib.crypto.bignum;
