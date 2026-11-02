@@ -2,7 +2,7 @@
 # before promote.ps1: block rules win over the allow rules the promotion
 # adds. Loopback is not filtered, so ssh tunnels to 127.0.0.1 still reach
 # the KDC and LDAP. Run it again at any time; it replaces its rules.
-$tcp = @('53','88','135','139','389','445','464','636','3268','3269','5722','9389','49152-65535')
+$tcp = @('53','88','135','139','389','445','464','593','636','3268','3269','5722','9389','49152-65535')
 $udp = @('53','88','123','137','138','389','464','500','4500')
 Remove-NetFirewallRule -DisplayName 'Goose: block AD (TCP)' -ErrorAction SilentlyContinue
 Remove-NetFirewallRule -DisplayName 'Goose: block AD (UDP)' -ErrorAction SilentlyContinue

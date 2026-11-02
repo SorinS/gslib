@@ -59,7 +59,7 @@ Set-ADUser -Identity 'alice' -Department 'Engineering'
 # with `goose-krb5 kvno` and `klist -k`); -mapop add keeps the host/ SPN.
 $netbios = (Get-ADDomain).NetBIOSName
 ktpass -out C:\Goose\dc\web.keytab -princ "HTTP/$host_@$realm" -mapuser "$netbios\svc-web" `
-    -crypto AES256-SHA1 -ptype KRB5_NT_PRINCIPAL -pass $plain -mapop add | Out-Null
+    -crypto AES256-SHA1 -ptype KRB5_NT_PRINCIPAL -pass $plain -mapop add 2>&1 | Out-Null
 "keytab: C:\Goose\dc\web.keytab"
 
 # The KDC reads the claims policy at start.

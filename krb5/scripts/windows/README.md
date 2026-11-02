@@ -6,15 +6,16 @@ from outside. The host is public with no other firewall; the KDC (88),
 LDAP (389) and DNS are reached only through ssh tunnels to its 127.0.0.1
 (`ssh -L 8888:127.0.0.1:88 ...`).
 
-Run as Administrator over ssh, in this order:
+The scripts go in `C:\Goose\scripts` on the host; `C:\Goose\dc` holds
+only what they make or read once (logs, password files, the keytab).
+Run them as Administrator over ssh, in this order:
 
 1. `state.ps1`: DNS, interfaces, the inbound rules that admit ssh, what
    listens. Read-only; run it before and after.
 2. `firewall.ps1`: inbound block rules for AD's TCP and UDP ports, then
    the AD DS role (no reboot needed).
 3. `schedule.ps1 [-Domain goose.test] [-NetBios GOOSE]`, after copying
-   `promote.ps1` and the DSRM password (`dc_p.txt`, one line, 0600 on the
-   way) to `C:\Goose`: runs `promote.ps1` as SYSTEM, which creates the
+   the DSRM password to `C:\Goose\dc_p.txt` (one line, 0600 on the way): runs `promote.ps1` as SYSTEM, which creates the
    forest and reboots. Its log is `C:\Goose\dc\promote.log`; the password
    file is deleted once read and the task unregisters itself.
 
@@ -34,4 +35,3 @@ listening but blocked inbound. Then:
 locally (an `/etc/hosts` entry to 127.0.0.1 with a tunnel to the service,
 or the name only, for tickets).
 
-`setup.ps1` has not run against a DC yet (the promotion is still to do).
