@@ -191,11 +191,20 @@ fn as_padata(s: const Settings&, st: const FastState&, armored: bool, challenge:
         var pr: u8[>..] = [];
         encode_pa_pac_request(pr, true);
         out.push(PaData { pa_type: PA_PAC_REQUEST, value: copy(pr) });
+        push_pac_options(out);
     }
     // Ask for the request's checksum in the reply (RFC 6806 §11), which
     // lets a canonicalized reply be trusted.
     out.push(PaData { pa_type: PA_REQ_ENC_PA_REP, value: "" });
     return OK;
+}
+
+// We take claims (MS-KILE §2.2.10): without this an AD KDC leaves them
+// out of the PAC. Windows clients send it in every AS and TGS request.
+fn push_pac_options(out: PaData[>..]&) {
+    var po: u8[>..] = [];
+    encode_pa_pac_options(po, flag(PAC_OPT_CLAIMS));
+    out.push(PaData { pa_type: PA_PAC_OPTIONS, value: copy(po) });
 }
 
 fn as_req_body(s: const Settings&, cname: const PrincipalName&, realm: const u8[:], sname: const PrincipalName&, nonce: u32,
@@ -553,6 +562,7 @@ fn tgs_exchange(cfg: const Config&, s: Settings&, tgt: const Credential&, sname:
         var outer: PaData[>..] = [];
         outer.push(PaData { pa_type: PA_TGS_REQ, value: copy(ap) });
         var inner: PaData[>..] = [];
+        if s.request_pac { push_pac_options(inner); }
         var req: u8[>..] = [];
         let werr = fast_wrap(st, MSG_TGS_REQ, inner, outer, body, ap, req);
         if werr != OK { return empty_credential(), werr; }

@@ -1390,6 +1390,23 @@ fn encode_pa_pac_request(out: u8[>..]&, include: bool) {
     put_seq(out, s);
 }
 
+// PA-PAC-OPTIONS (MS-KILE §2.2.10): { flags [0] PAC-OPTIONS-FLAGS }.
+fn encode_pa_pac_options(out: u8[>..]&, flags: u32) {
+    var s: u8[>..] = [];
+    put_flags_f(s, 0, flags);
+    put_seq(out, s);
+}
+
+fn decode_pa_pac_options(buf: const u8[:]) -> u32, i64 {
+    let t, ok = asn1::parse(buf, true);
+    var fs = fields_at(buf, if ok { t } else { no_tlv() });
+    require(fs, 1);
+    let v = f_flags(buf, fs, 0);
+    let err = result(fs);
+    if err != OK { return 0, err; }
+    return v, OK;
+}
+
 // A SEQUENCE OF PA-DATA: METHOD-DATA, a KRB-ERROR's e-data when
 // pre-authentication is required, or a message's padata.
 fn decode_padata(buf: const u8[:]) -> PaData[>..], i64 {

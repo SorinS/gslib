@@ -337,10 +337,34 @@ fn fast() {
     }
 }
 
+// PA-PAC-OPTIONS: the claims bit is KerberosFlags bit 0, the first bit of
+// a 32-bit BIT STRING. An AD KDC given these bytes puts claims in the PAC.
+fn pac_options() {
+    let der = tv::hex("30 09 A0 07 03 05 00 80 00 00 00");
+    var out: u8[>..] = [];
+    krb5::encode_pa_pac_options(out, krb5::flag(krb5::PAC_OPT_CLAIMS));
+    rt("pa_pac_options", out, der);
+    let f, err = krb5::decode_pa_pac_options(der);
+    tv::check("decode pa_pac_options", err == krb5::OK && f == krb5::flag(krb5::PAC_OPT_CLAIMS));
+    var out2: u8[>..] = [];
+    let all = krb5::flag(krb5::PAC_OPT_CLAIMS) | krb5::flag(krb5::PAC_OPT_RBCD);
+    krb5::encode_pa_pac_options(out2, all);
+    rt("pa_pac_options claims+rbcd", out2, tv::hex("30 09 A0 07 03 05 00 90 00 00 00"));
+    let f2, err2 = krb5::decode_pa_pac_options(out2);
+    tv::check("decode pa_pac_options claims+rbcd", err2 == krb5::OK && f2 == all);
+    for i in der.len {
+        let x, e = krb5::decode_pa_pac_options(der[..i]);
+        tv::check(str("truncated pa_pac_options ", i), e == krb5::ERR_MALFORMED);
+    }
+    let empty, eerr = krb5::decode_pa_pac_options(tv::hex("30 00"));
+    tv::check("pa_pac_options without flags", eerr == krb5::ERR_MALFORMED);
+}
+
 fn main() {
     mit_vectors();
     names();
     malformed();
     fast();
+    pac_options();
     tv::done("messages");
 }

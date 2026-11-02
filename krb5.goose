@@ -156,6 +156,12 @@ let PA_REQ_ENC_PA_REP: i32 = 149;
 let PA_SUPPORTED_ENCTYPES: i32 = 165;
 let PA_PAC_OPTIONS: i32 = 167;
 
+// PA-PAC-OPTIONS flags (MS-KILE §2.2.10), KerberosFlags numbered as KDCOptions.
+let PAC_OPT_CLAIMS: i64 = 0;
+let PAC_OPT_BRANCH_AWARE: i64 = 1;
+let PAC_OPT_FORWARD_TO_FULL_DC: i64 = 2;
+let PAC_OPT_RBCD: i64 = 3;
+
 // FAST armor types and options (RFC 6113 §5.4.1, §5.4.2).
 let FX_FAST_ARMOR_AP_REQUEST: i32 = 1;
 let FAST_OPT_HIDE_CLIENT_NAMES: i64 = 1;
