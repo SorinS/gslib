@@ -153,13 +153,19 @@ def tgs_tests(k, tool):
     check("kinit alice, wrong password (no pre-auth)", p.returncode == 1, out(p))
     p = run(k, [tool, "kinit", "nobody"], "x\n")
     check("kinit unknown client", p.returncode == 1 and "C_PRINCIPAL_UNKNOWN" in out(p), out(p))
-    for user, et in (("carol", "arcfour-hmac"), ("dave", "des3-cbc-sha1")):
+    for user, et in (("carol", "arcfour-hmac"), ("dave", "des3-cbc-sha1"), ("frank", "camellia256-cts-cmac")):
         p = run(k, [tool, "kinit", user], f"{user}-pw\n")
         check(f"kinit {user} ({et} keys only)", p.returncode == 0, out(p))
         p = run(k, [k.bin("klist"), "-e"])
         check(f"{user}'s TGT reads in MIT klist", f"{user}@A.TEST" in p.stdout, out(p))
         p = run(k, [tool, "kvno", "HTTP/svc.a.test"])
         check(f"kvno as {user}", p.returncode == 0, out(p))
+    # The KDC logs the AS reply's etype: frank's long-term camellia key.
+    log = open(k.path("kdc.log")).read()
+    check("frank's AS reply under camellia256-cts-cmac (pre-authenticated with it)",
+          any("frank@A.TEST" in l and "rep=camellia256-cts-cmac(26)" in l for l in log.splitlines()), log[-2000:])
+    p = run(k, [tool, "kinit", "frank"], "wrong\n")
+    check("kinit frank, wrong password (camellia pre-auth refused)", p.returncode == 1 and "PREAUTH_FAILED" in out(p), out(p))
     p = run(k, [tool, "kinit", "-k", k.path("svc.keytab"), "host/svc.a.test"])
     check("kinit -k with MIT's keytab", p.returncode == 0, out(p))
     p = run(k, [tool, "kinit", "erin@B.TEST"], "erin-pw\n")
@@ -169,7 +175,8 @@ def tgs_tests(k, tool):
 
     # Every encryption type of the TGS reply, through MIT's keytab.
     for et in ("aes256-cts-hmac-sha1-96", "aes128-cts-hmac-sha1-96", "aes256-cts-hmac-sha384-192",
-               "aes128-cts-hmac-sha256-128", "arcfour-hmac", "des3-cbc-sha1"):
+               "aes128-cts-hmac-sha256-128", "arcfour-hmac", "des3-cbc-sha1", "camellia256-cts-cmac",
+               "camellia128-cts-cmac"):
         conf = k.path(f"krb5-{et}.conf")
         with open(k.path("krb5.conf")) as f:
             text = f.read()
@@ -182,6 +189,11 @@ def tgs_tests(k, tool):
         r = run(k, [k.bin("klist"), "-e"], env=env)
         check(f"TGT and service ticket as {et}", p.returncode == 0 and q.returncode == 0 and f"{et}, " in r.stdout,
               out(p) + out(q) + r.stdout)
+        if et.startswith("camellia"):
+            # The service's camellia key from MIT's keytab: a TGT with it.
+            p = run(k, [tool, "kinit", "-k", k.path("svc.keytab"), "host/svc.a.test"], env=env)
+            r = run(k, [k.bin("klist"), "-e"], env=env)
+            check(f"kinit -k with MIT's keytab, {et}", p.returncode == 0 and f"{et}, " in r.stdout, out(p) + r.stdout)
 
 
 def transport_tests(k, tool):
@@ -297,6 +309,45 @@ def gss_tests(k, tool, gss):
         ok = (p.returncode == 0 and "Signature verified" in out(p) and "message: hello goose" in log
               and "arcfour-hmac" in q.stdout)
         check(f"RC4 context: MIT gss-client {' '.join(opts) or 'krb5'} -> our acceptor", ok, out(p) + log)
+
+    # Camellia session keys: RFC 4121's tokens with CMAC checksums, both
+    # ways; the PAC MIT signs into the ticket carries cmac-camellia.
+    for et in ("camellia256-cts-cmac", "camellia128-cts-cmac"):
+        cam = dict(k.env, KRB5_CONFIG=k.path(f"krb5-{et}.conf"), KRB5CCNAME="FILE:" + k.path(f"ccache-{et}"))
+        run(k, [tool, "kinit", "alice"], "alice-pw\n", env=cam)
+        for mech in ("", "-spnego"):
+            for extra in ([], ["-noconf"], ["-seq"]):
+                b = InetdBridge(k, k.path("svc.keytab"), "host@svc.a.test")
+                args = [gss, "client", "127.0.0.1", str(b.port), "host@svc.a.test", "hello camellia"] + ([mech] if mech else []) + extra
+                p = run(k, args, env=cam)
+                log = b.output()
+                check(f"{et} context: our initiator -> MIT gss-server {mech or 'krb5'} {' '.join(extra)}".strip(),
+                      p.returncode == 0 and "Signature verified." in p.stdout and 'Received message: "hello camellia"' in log,
+                      out(p) + log)
+        run(k, [k.bin("kinit"), "-f", "alice"], "alice-pw\n", env=cam)
+        for opts in ([], ["-nx"], ["-spnego"], ["-d"]):
+            srv, port = start_server([gss, "server", "0", "-once", "-keytab", k.path("svc.keytab")], cam)
+            p = run(k, [k.bin("gss-client"), "-port", str(port)] + opts + ["127.0.0.1", "host@svc.a.test", "hello goose"], env=cam)
+            log = stop_server(srv)
+            q = run(k, [k.bin("klist"), "-e"], env=cam)
+            # MIT picks the ticket's etype from the service's keys (AES
+            # here); the session key is the one asked for.
+            ok = (p.returncode == 0 and "Signature verified" in out(p) and "message: hello goose" in log
+                  and f"Etype (skey, tkt): {et}, " in q.stdout)
+            check(f"{et} context: MIT gss-client {' '.join(opts) or 'krb5'} -> our acceptor", ok, out(p) + log + q.stdout)
+        # A service with camellia keys only: the ticket is encrypted with
+        # one, and the PAC's server signature is cmac-camellia256.
+        for opts in ([], ["-spnego"]):
+            srv, port = start_server([gss, "server", "0", "-once", "-keytab", k.path("svc.keytab")], cam)
+            p = run(k, [k.bin("gss-client"), "-port", str(port)] + opts + ["127.0.0.1", "host@cam.a.test", "hello cam"], env=cam)
+            log = stop_server(srv)
+            q = run(k, [k.bin("klist"), "-e"], env=cam)
+            ok = (p.returncode == 0 and "Signature verified" in out(p) and "message: hello cam" in log
+                  and "pac: verified client=alice" in log and f"{et}, camellia256-cts-cmac" in q.stdout)
+            check(f"{et} session, camellia256 ticket and PAC: MIT gss-client {' '.join(opts) or 'krb5'} -> our acceptor",
+                  ok, out(p) + log + q.stdout)
+        p = run(k, [tool, "kvno", "host/cam.a.test"], env=cam)
+        check(f"our kvno of a camellia-only service ({et} session)", p.returncode == 0, out(p))
 
     # An acceptor without the key refuses.
     srv, port = start_server([gss, "server", "0", "-once", "-keytab", k.path("web.keytab")], k.env)

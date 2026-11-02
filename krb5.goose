@@ -35,7 +35,8 @@ let ETYPE_AES256_CTS_HMAC_SHA1_96: i32 = 18;
 let ETYPE_AES128_CTS_HMAC_SHA256_128: i32 = 19;
 let ETYPE_AES256_CTS_HMAC_SHA384_192: i32 = 20;
 let ETYPE_RC4_HMAC: i32 = 23;
-// Not yet: camellia128-cts-cmac (25) and camellia256-cts-cmac (26).
+let ETYPE_CAMELLIA128_CTS_CMAC: i32 = 25;
+let ETYPE_CAMELLIA256_CTS_CMAC: i32 = 26;
 
 // --- Checksum types ---------------------------------------------------------
 
@@ -44,6 +45,8 @@ let CKSUM_HMAC_SHA1_DES3_KD: i32 = 12;
 let CKSUM_SHA1: i32 = 14;
 let CKSUM_HMAC_SHA1_96_AES128: i32 = 15;
 let CKSUM_HMAC_SHA1_96_AES256: i32 = 16;
+let CKSUM_CMAC_CAMELLIA128: i32 = 17;
+let CKSUM_CMAC_CAMELLIA256: i32 = 18;
 let CKSUM_HMAC_SHA256_128_AES128: i32 = 19;
 let CKSUM_HMAC_SHA384_192_AES256: i32 = 20;
 let CKSUM_GSSAPI: i32 = 0x8003;

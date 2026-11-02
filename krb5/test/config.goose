@@ -26,7 +26,8 @@ fn parse() {
     let et = krb5::conf_etypes(cfg, "default_tkt_enctypes");
     tv::check("tkt enctypes", et.len == 1 && et[0] == 18);
     let pe = krb5::conf_etypes(cfg, "permitted_enctypes");
-    tv::check("permitted default", pe.len == 6 && pe[0] == 18 && pe[5] == 23);
+    let want_pe: i32[8] = [18, 17, 20, 19, 16, 23, 26, 25];
+    tv::check("permitted default", pe[..] == want_pe[..]);
 
     let kdcs = krb5::realm_kdcs(cfg, "TEST.GOKRB5");
     var n = 0;
@@ -112,10 +113,13 @@ fn etypes() {
     }
     e("aes256-cts aes128-cts", [18, 17]);
     e("aes", [18, 17, 20, 19]);
-    e("DEFAULT -rc4 -des3", [18, 17, 20, 19]);
+    e("DEFAULT -rc4 -des3", [18, 17, 20, 19, 26, 25]);
+    e("DEFAULT -rc4 -des3 -camellia", [18, 17, 20, 19]);
+    e("camellia aes128-cts", [26, 25, 17]);
+    e("camellia128-cts 26 -camellia256-cts-cmac", [25]);
     e("aes256-sha2,aes128-sha2", [20, 19]);
     e("rc4-hmac des3-cbc-sha1 rc4-hmac", [23, 16]);
-    e("camellia256-cts-cmac aes256-cts", [18]);
+    e("camellia256-cts-cmac aes256-cts", [26, 18]);
     e("des-cbc-crc 23", [23]);
 }
 

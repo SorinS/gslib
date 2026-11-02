@@ -1,7 +1,8 @@
 // krb5.crypto against the RFCs' vectors: n-fold and DES3's DR and DK and
 // string-to-key (RFC 3961 Appendix A), AES string-to-key and CTS (RFC 3962
-// Appendix B), the SHA-2 types (RFC 8009 Appendix A), RC4-HMAC's
-// string-to-key; then every type's encrypt, decrypt and checksum round
+// Appendix B), the SHA-2 types (RFC 8009 Appendix A), Camellia (RFC 6803
+// §10: every string-to-key, derivation, encryption and checksum),
+// RC4-HMAC's string-to-key; then every type's encrypt, decrypt and checksum round
 // trips, and tampering caught.
 
 import std;
@@ -174,6 +175,100 @@ fn rfc8009_vectors() {
                   "9801F69A368C2BF675E59521E177D9A07F67EFE1CFDE8D3C8D6F6A0256E3B17DB3C1B62AD1B8553360D17367EB1514D2");
 }
 
+fn cam_s2k(iter: i64, pw: const u8[:], salt: const u8[:], k128: const u8[:], k256: const u8[:]) {
+    let a, e1 = krb5::string_to_key(krb5::ETYPE_CAMELLIA128_CTS_CMAC, pw, salt, iter_params(iter));
+    tv::check_int("camellia128 s2k err", e1, krb5::OK);
+    tv::check_hex(str("camellia128 s2k ", iter, " ", salt), a.value, k128);
+    let b, e2 = krb5::string_to_key(krb5::ETYPE_CAMELLIA256_CTS_CMAC, pw, salt, iter_params(iter));
+    tv::check_int("camellia256 s2k err", e2, krb5::OK);
+    tv::check_hex(str("camellia256 s2k ", iter, " ", salt), b.value, k256);
+}
+
+fn rfc6803_vectors() {
+    cam_s2k(1, "password", "ATHENA.MIT.EDUraeburn", "57D0297298FFD9D35DE5A47FB4BDE24B",
+            "B9D6828B2056B7BE656D88A123B1FAC68214AC2B727ECF5F69AFE0C4DF2A6D2C");
+    cam_s2k(2, "password", "ATHENA.MIT.EDUraeburn", "73F1B53AA0F310F93B1DE8CCAA0CB152",
+            "83FC5866E5F8F4C6F38663C65C87549F342BC47ED394DC9D3CD4D163ADE375E3");
+    cam_s2k(1200, "password", "ATHENA.MIT.EDUraeburn", "8E571145452855575FD916E7B04487AA",
+            "77F421A6F25E138395E837E5D85D385B4C1BFD772E112CD9208CE72A530B15E6");
+    cam_s2k(5, "password", tv::hex("1234567878563412"), "00498FD916BFC1C2B1031C170801B381",
+            "11083A00BDFE6A41B2F19716D6202F0AFA94289AFE8B27A049BD28B1D76C389A");
+    var x64: u8[>..] = [];
+    for i in 64 { x64.push('X'); }
+    cam_s2k(1200, x64, "pass phrase equals block size", "8BF6C3EF709B981DBB585D086843BE05",
+            "119FE2A1CB0B1BE010B9067A73DB63ED4665B4E53A98D178035DCFE843A6B9B0");
+    x64.push('X');
+    cam_s2k(1200, x64, "pass phrase exceeds block size", "5752AC8D6AD1CCFE8430B312871C2F74",
+            "614D5DFC0BA6D390B412B89AE4D5B088B612B316510994679DDB4383C7126DDF");
+    cam_s2k(50, tv::hex("F09D849E"), "EXAMPLE.COMpianist", "CC75C7FD260F1C1658011FCC0D560616",
+            "163B768C6DB148B4EEC7163DF5AED70E206B68CEC078BC069ED68A7ED36B1ECC");
+    // The default parameters: 32768 iterations (RFC 6803 §6).
+    let d, de = krb5::string_to_key(krb5::ETYPE_CAMELLIA128_CTS_CMAC, "password", "ATHENA.MIT.EDUraeburn");
+    let d2, de2 = krb5::string_to_key(krb5::ETYPE_CAMELLIA128_CTS_CMAC, "password", "ATHENA.MIT.EDUraeburn", iter_params(32768));
+    tv::check("camellia default iterations", de == krb5::OK && de2 == krb5::OK && d.value[..] == d2.value[..]);
+
+    let k128 = krb5::make_key(krb5::ETYPE_CAMELLIA128_CTS_CMAC, tv::hex("57D0297298FFD9D35DE5A47FB4BDE24B"));
+    tv::check_hex("6803 Kc 128", krb5::derive_key(k128, 2, 0x99), "D155775A209D05F02B38D42A389E5A56");
+    tv::check_hex("6803 Ke 128", krb5::derive_key(k128, 2, 0xaa), "64DF83F85A532F17577D8C37035796AB");
+    tv::check_hex("6803 Ki 128", krb5::derive_key(k128, 2, 0x55), "3E4FBDF30FB8259C425CB6C96F1F4635");
+    let k256 = krb5::make_key(krb5::ETYPE_CAMELLIA256_CTS_CMAC,
+                              tv::hex("B9D6828B2056B7BE656D88A123B1FAC68214AC2B727ECF5F69AFE0C4DF2A6D2C"));
+    tv::check_hex("6803 Kc 256", krb5::derive_key(k256, 2, 0x99), "E467F9A9552BC7D3155A6220AF9C19220EEED4FF78B0D1E6A1544991461A9E50");
+    tv::check_hex("6803 Ke 256", krb5::derive_key(k256, 2, 0xaa), "412AEFC362A7285FC3966C6A5181E7605AE675235B6D549FBFC9AB6630A4C604");
+    tv::check_hex("6803 Ki 256", krb5::derive_key(k256, 2, 0x55), "FA624FA0E523993FA388AEFDC67E67EBCD8C08E8A0246B1D73B0D1DD9FC582B0");
+
+    // The RFC doesn't name the sample encryptions' key usages: they are 0
+    // to 4 in the order given (the empty plaintext 0, "1" 1, ...), the
+    // only reading under which all ten match.
+    fn enc(e: i32, key: const u8[:], conf: const u8[:], plain: const u8[:], want: const u8[:]) {
+        let usage: i64 = if plain.len == 0 { 0 } else if plain.len == 1 { 1 } else if plain.len == 9 { 2 }
+                         else if plain.len == 13 { 3 } else { 4 };
+        let k = krb5::make_key(e, tv::hex(key));
+        var c: u8[>..] = [];
+        tv::check_int("6803 encrypt err", krb5::encrypt_with(k, usage, tv::hex(conf), plain, c), krb5::OK);
+        tv::check_hex(str("6803 encrypt ", e, " ", plain), c, want);
+        var back: u8[>..] = [];
+        tv::check_int("6803 decrypt err", krb5::decrypt(k, usage, tv::hex(want), back), krb5::OK);
+        tv::check(str("6803 decrypt ", e, " ", plain), back == plain);
+    }
+    let c1 = krb5::ETYPE_CAMELLIA128_CTS_CMAC;
+    let c2 = krb5::ETYPE_CAMELLIA256_CTS_CMAC;
+    enc(c1, "1DC46A8D763F4F93742BCBA3387576C3", "B69822A19A6B09C0EBC8557D1F1B6C0A", "",
+        "C466F1871069921EDB7C6FDE244A52DB0BA10EDC197BDB8006658CA3CCCE6EB8");
+    enc(c1, "5027BC231D0F3A9D23333F1CA6FDBE7C", "6F2FC3C2A166FD8898967A83DE9596D9", "1",
+        "842D21FD950311C0DD464A3F4BE8D6DA88A56D559C9B47D3F9A85067AF661559B8");
+    enc(c1, "A1BB61E805F9BA6DDE8FDBDDC05CDEA0", "A5B4A71E077AEEF93C8763C18FDB1F10", "9 bytesss",
+        "619FF072E36286FF0A28DEB3A352EC0D0EDF5C5160D663C901758CCF9D1ED33D71DB8F23AABF8348A0");
+    enc(c1, "2CA27A5FAF5532244506434E1CEF6676", "19FEE40D810C524B5B22F01874C693DA", "13 bytes byte",
+        "B8ECA3167AE6315512E59F98A7C500205E5F63FF3BB389AF1C41A21D640D8615C9ED3FBEB05AB6ACB67689B5EA");
+    enc(c1, "7824F8C16F83FF354C6BF7515B973F43", "CA7A7AB4BE192DABD603506DB19C39E2", "30 bytes bytes bytes bytes byt",
+        "A26A3905A4FFD5816B7B1E27380D08090C8EC1F304496E1ABDCD2BDCD1DFFC660989E117A713DDBB57A4146C1587CBA4356665591D2240282F5842B105A5");
+    enc(c2, "B61C86CC4E5D2757545AD423399FB7031ECAB913CBB900BD7A3C6DD8BF92015B", "3CBBD2B45917941067F96599BB98926C", "",
+        "03886D03310B47A6D8F06D7B94D1DD837ECCE315EF652AFF620859D94A259266");
+    enc(c2, "1B97FE0A190E2021EB30753E1B6E1E77B0754B1D684610355864104963463833", "DEF487FCEBE6DE6346D4DA4521BBA2D2", "1",
+        "2C9C1570133C99BF6A34BC1B0212002FD194338749DB4135497A347CFCD9D18A12");
+    enc(c2, "32164C5B434D1D1538E4CFD9BE8040FE8C4AC7ACC4B93D3314D2133668147A05", "AD4FF904D34E555384B14100FC465F88", "9 bytesss",
+        "9C6DE75F812DE7ED0D28B2963557A115640998275B0AF5152709913FF52A2A9C8E63B872F92E64C839");
+    enc(c2, "B038B132CD8E06612267FAB7170066D88AECCBA0B744BFC60DC89BCA182D0715", "CF9BCA6DF1144E0C0AF9B8F34C90D514", "13 bytes byte",
+        "EEEC85A9813CDC536772AB9B42DEFC5706F726E975DDE05A87EB5406EA324CA185C9986B42AABE794B84821BEE");
+    enc(c2, "CCFCD349BF4C6677E86E4B02B8EAB924A546AC731CF9BF6989B996E7D6BFBBA7", "644DEF38DA35007275878D216855E228", "30 bytes bytes bytes bytes byt",
+        "0E44680985855F2D1F1812529CA83BFD8E349DE6FD9ADA0BAAA048D68E265FEBF34AD1255A344999AD37146887A6C6845731AC7F46376A0504CD06571474");
+
+    fn sum(e: i32, key: const u8[:], usage: i64, data: const u8[:], want: const u8[:]) {
+        let k = krb5::make_key(e, tv::hex(key));
+        var s: u8[>..] = [];
+        tv::check_int("6803 cksum err", krb5::checksum(k, 0, usage, data, s), krb5::OK);
+        tv::check_hex(str("6803 checksum ", e, " ", usage), s, want);
+        tv::check_int("6803 verify", krb5::verify_checksum(k, krb5::cksum_type_for(e), usage, data, tv::hex(want)), krb5::OK);
+    }
+    sum(c1, "1DC46A8D763F4F93742BCBA3387576C3", 7, "abcdefghijk", "1178E6C5C47A8C1AE0C4B9C7D4EB7B6B");
+    sum(c1, "5027BC231D0F3A9D23333F1CA6FDBE7C", 8, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "D1B34F7004A731F23A0C00BF6C3F753A");
+    sum(c2, "B61C86CC4E5D2757545AD423399FB7031ECAB913CBB900BD7A3C6DD8BF92015B", 9, "123456789",
+        "87A12CFD2B96214810F01C826E7744B1");
+    sum(c2, "32164C5B434D1D1538E4CFD9BE8040FE8C4AC7ACC4B93D3314D2133668147A05", 10, "!@#$%^&*()!@#$%^&*()!@#$%^&*()",
+        "3FA0B42355E52B189187294AA252AB64");
+}
+
 fn rc4_vectors() {
     let k, err = krb5::string_to_key(krb5::ETYPE_RC4_HMAC, "foo", "");
     tv::check_int("rc4 s2k err", err, krb5::OK);
@@ -186,7 +281,7 @@ fn rc4_vectors() {
     tv::check("utf16le refuses a cut sequence", !ok2 && bad.len == 0);
 }
 
-let ETYPES: i32[6] = [16, 17, 18, 19, 20, 23];
+let ETYPES: i32[8] = [16, 17, 18, 19, 20, 23, 25, 26];
 
 fn round_trips() {
     for e in ETYPES {
@@ -247,6 +342,7 @@ fn main() {
     des3_vectors();
     aes_vectors();
     rfc8009_vectors();
+    rfc6803_vectors();
     rc4_vectors();
     round_trips();
     names();

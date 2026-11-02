@@ -9,7 +9,9 @@ cross-realm krbtgt keys are in both databases). In A.TEST:
     bob       password "bob-pw", pre-authentication required
     carol     password "carol-pw", rc4-hmac keys only
     dave      password "dave-pw", des3 keys only
+    frank     password "frank-pw", camellia keys only, pre-authentication required
     host/svc.a.test, HTTP/svc.a.test   random keys, in svc.keytab
+    host/cam.a.test   random camellia keys only, in svc.keytab
     alice's alias "alice-alias"
 In B.TEST:
     HTTP/web.b.test   random key, in web.keytab
@@ -38,7 +40,7 @@ REALM_A = "A.TEST"
 REALM_B = "B.TEST"
 ENCTYPES = ("aes256-cts-hmac-sha1-96:normal aes128-cts-hmac-sha1-96:normal "
             "aes256-cts-hmac-sha384-192:normal aes128-cts-hmac-sha256-128:normal "
-            "arcfour-hmac:normal")
+            "arcfour-hmac:normal camellia256-cts-cmac:normal camellia128-cts-cmac:normal")
 
 
 def mit_prefix(arg=None):
@@ -116,7 +118,7 @@ class Kdc:
     allow_weak_crypto = true
     allow_rc4 = true
     allow_des3 = true
-    permitted_enctypes = aes256-cts aes128-cts aes256-sha2 aes128-sha2 rc4-hmac des3-cbc-sha1
+    permitted_enctypes = aes256-cts aes128-cts aes256-sha2 aes128-sha2 rc4-hmac des3-cbc-sha1 camellia256-cts-cmac camellia128-cts-cmac
 
 [realms]
     {REALM_A} = {{
@@ -182,9 +184,14 @@ class Kdc:
         self.kadmin(a, "addprinc -pw bob-pw +requires_preauth bob")
         self.kadmin(a, "addprinc -pw carol-pw -e arcfour-hmac:normal carol")
         self.kadmin(a, "addprinc -pw dave-pw -e des3-cbc-sha1:normal dave")
+        self.kadmin(a, "addprinc -pw frank-pw +requires_preauth "
+                       "-e camellia256-cts-cmac:normal,camellia128-cts-cmac:normal frank")
         self.kadmin(a, "addprinc -randkey host/svc.a.test")
         self.kadmin(a, "addprinc -randkey HTTP/svc.a.test")
+        self.kadmin(a, "addprinc -randkey -e camellia256-cts-cmac:normal,camellia128-cts-cmac:normal host/cam.a.test")
         self.kadmin(a, f"ktadd -k {self.path('svc.keytab')} host/svc.a.test HTTP/svc.a.test")
+        self.kadmin(a, f"ktadd -k {self.path('svc.keytab')} -e camellia256-cts-cmac:normal,camellia128-cts-cmac:normal "
+                       "host/cam.a.test")
         try:
             self.kadmin(a, "add_alias alice-alias alice")
             self.alias = True

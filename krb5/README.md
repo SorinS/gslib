@@ -12,7 +12,7 @@ reading theirs. Only `krb5.net`, the file functions and the tools do I/O.
 | Module | What |
 |---|---|
 | `krb5` | The protocol's numbers (encryption, checksum and pre-authentication types, key usages, flags, name types) and error codes, with their names and texts: `error_text` |
-| `krb5.crypto` | Encryption types (RFC 3961, 3962, 4757, 8009): des3-cbc-sha1-kd, aes128/256-cts-hmac-sha1-96, aes128-cts-hmac-sha256-128, aes256-cts-hmac-sha384-192, rc4-hmac: `string_to_key`, `encrypt`, `decrypt`, `checksum`, `verify_checksum`, `prf`, `random_key`, n-fold, DK/DR, KDF-HMAC-SHA2, CTS |
+| `krb5.crypto` | Encryption types (RFC 3961, 3962, 4757, 6803, 8009): des3-cbc-sha1-kd, aes128/256-cts-hmac-sha1-96, aes128-cts-hmac-sha256-128, aes256-cts-hmac-sha384-192, rc4-hmac, camellia128/256-cts-cmac: `string_to_key`, `encrypt`, `decrypt`, `checksum`, `verify_checksum`, `prf`, `random_key`, n-fold, DK/DR, KDF-HMAC-SHA2, KDF-FEEDBACK-CMAC, CTS over AES or Camellia |
 | `krb5.messages` | Every message of RFC 4120 §5 as a struct, decoded and encoded (DER out, DER and BER's long lengths in): tickets, AS/TGS-REQ and REP and their encrypted parts, AP-REQ, Authenticator, AP-REP, KRB-SAFE, KRB-PRIV, KRB-CRED, KRB-ERROR, PA-ENC-TS-ENC, ETYPE-INFO(2), TYPED-DATA; principal names |
 | `krb5.keytab` | MIT keytabs (versions 1 and 2, holes, 32-bit key versions): `keytab_load`, `keytab_save_private`, `keytab_key`, `keytab_entries_from_password` (ktutil's addent) |
 | `krb5.ccache` | MIT FILE credential caches (versions 1 to 4, configuration entries): `ccache_load`, `ccache_save` (0600), `ccache_find`, `ccache_add`, `default_ccache_name` |
@@ -77,8 +77,9 @@ server; servers listen on 127.0.0.1 only.
 
 - `test/crypto.goose`: the vectors of RFC 3961 Appendix A (n-fold, DES3
   DR/DK and string-to-key), RFC 3962 Appendix B (PBKDF2 string-to-key, CTS)
-  and RFC 8009 Appendix A (string-to-key, key derivation, encryption,
-  checksums, PRF); RC4's string-to-key; every type's round trips,
+  RFC 8009 Appendix A (string-to-key, key derivation, encryption,
+  checksums, PRF) and RFC 6803 §10 (Camellia: every string-to-key,
+  derivation, encryption and checksum); RC4's string-to-key; every type's round trips,
   tampering and wrong usages.
 - `test/messages.goose`: MIT's reference encodings
   (`src/tests/asn.1/reference_encode.out`, through go-krb5's
@@ -101,15 +102,18 @@ server; servers listen on 127.0.0.1 only.
 
 `make interop-krb5` (`scripts/interop.py`, macOS with Homebrew's
 `krb5`): two MIT 1.22 realms (`scripts/kdc.py`, on 127.0.0.1, trusting
-each other), and 64 checks: kinit with each user (pre-auth required,
-RC4-only, DES3-only, keytab), every encryption type for TGT and service
-ticket, cross-realm both ways, our cache in MIT's klist and kvno and
+each other), and 99 checks: kinit with each user (pre-auth required,
+RC4-only, DES3-only, Camellia-only with pre-auth, keytab), every
+encryption type for TGT and service ticket (Camellia's keys from MIT's
+keytab too), cross-realm both ways, our cache in MIT's klist and kvno and
 MIT's in ours, TCP only, `tcp/` and `udp/` KDCs, a silent KDC skipped,
 renewal, forwardable flags, clock skew corrected against a KDC ten minutes
 ahead; our initiator against MIT's gss-server (krb5, SPNEGO, sequence,
 integrity-only, delegation) and MIT's gss-client against our acceptor
 (the same and `-d`), RC4 session keys both ways (RFC 4757's tokens),
-the PAC of MIT's tickets verified, our HTTP
+Camellia session keys both ways, a Camellia-only service whose ticket
+and PAC signature (cmac-camellia256) are Camellia's, the PAC of MIT's
+tickets verified, our HTTP
 Negotiate client and `curl --negotiate` against our server.
 
 `scripts/gen_vectors.py` writes `test/vectors` from go-krb5's checkout
@@ -118,7 +122,6 @@ Go, and `tools/krb5oracle/go.mod` points (`replace`) at that checkout.
 
 ## Not done yet
 
-- Camellia (RFC 6803; bignum has neither Camellia nor CMAC).
 - FAST (RFC 6113) and what needs it (encrypted challenge), PKINIT (RFC
   4556), SPAKE, OTP.
 - S4U2Self and S4U2Proxy (constrained delegation), user-to-user.
@@ -128,15 +131,21 @@ Go, and `tools/krb5oracle/go.mod` points (`replace`) at that checkout.
 - An acceptor taking any name (`any_name`) tries the first keytab key of
   the ticket's realm, type and version, where MIT tries each in turn.
 - No live Active Directory yet (`scripts/windows` makes a test DC: the
-  firewall, the promotion, users, SPNs, a ktpass keytab, claims): the PAC and claims are checked against
-  Windows AD PACs recorded by go-krb5 and against MIT's live PACs, but a
-  KDC exchange with AD, its referrals, a ktpass keytab, a live logon-info
-  PAC, the LDAP GSSAPI bind with signing and SID lookups are untested
-  against AD.
+  firewall, the promotion, users, SPNs, a ktpass keytab, claims): the
+  PAC and claims are checked against Windows AD PACs recorded by go-krb5
+  and against MIT's live PACs, but a KDC exchange with AD, its referrals,
+  a ktpass keytab, a live logon-info PAC, the LDAP GSSAPI bind with
+  signing and SID lookups are untested against AD.
 
 DES3 and RC4 are legacy and kept for old KDCs and keytabs only; RFC
 1964's per-message tokens for DES3 session keys are not planned (such
 contexts establish, but `gss_get_mic` and `gss_wrap` refuse them).
+
+Camellia (bignum's, constant time) is checked against all of RFC
+6803's vectors and against MIT. The RFC doesn't give its sample
+encryptions' key usages: they are 0 to 4 in order. Its PRF (CMAC under
+KDF-FEEDBACK-CMAC(key, "prf")) has no published vector and is not
+exercised against MIT; it follows §6 as written.
 
 RFC 4757 §7.2's pseudocode puts the direction bytes of RC4 tokens the
 wrong way round; we follow RFC 1964 and MIT (00 from the initiator), and

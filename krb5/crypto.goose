@@ -6,14 +6,16 @@
 //   aes128-cts-hmac-sha256-128    19  RFC 8009
 //   aes256-cts-hmac-sha384-192    20  RFC 8009
 //   rc4-hmac (arcfour-hmac)       23  RFC 4757 (deprecated, RFC 8429)
+//   camellia128-cts-cmac          25  RFC 6803
+//   camellia256-cts-cmac          26  RFC 6803
 //
-// Camellia (RFC 6803) is not here yet. Every function takes a Key, which
+// Every function takes a Key, which
 // carries its type; encrypt and decrypt use a key usage number to derive
 // the keys they use (RFC 3961 §3), and a checksum is of the type that
 // goes with its key's encryption type unless one is named.
 //
-// MACs are compared in constant time, and AES and DES come from
-// bignum, which is constant time itself.
+// MACs are compared in constant time, and AES, Camellia, CMAC and DES
+// come from bignum, which is constant time itself.
 
 namespace krb5;
 
@@ -21,6 +23,8 @@ import std;
 import crypto.bignum;
 import crypto.bignum.aes;
 import crypto.bignum.des;
+import crypto.bignum.camellia;
+import crypto.bignum.cmac;
 import crypto.bignum.rc4;
 import crypto.bignum.md4;
 import crypto.bignum.md5;
@@ -44,8 +48,10 @@ fn make_key(etype: i32, value: const u8[:]) -> Key {
 fn etype_supported(e: i32) -> bool {
     e == ETYPE_DES3_CBC_SHA1_KD || e == ETYPE_AES128_CTS_HMAC_SHA1_96 ||
     e == ETYPE_AES256_CTS_HMAC_SHA1_96 || e == ETYPE_AES128_CTS_HMAC_SHA256_128 ||
-    e == ETYPE_AES256_CTS_HMAC_SHA384_192 || e == ETYPE_RC4_HMAC
+    e == ETYPE_AES256_CTS_HMAC_SHA384_192 || e == ETYPE_RC4_HMAC || is_camellia(e)
 }
+
+fn is_camellia(e: i32) -> bool { e == ETYPE_CAMELLIA128_CTS_CMAC || e == ETYPE_CAMELLIA256_CTS_CMAC }
 
 // The protocol key's length in bytes.
 fn key_len(e: i32) -> i64 {
@@ -56,6 +62,8 @@ fn key_len(e: i32) -> i64 {
         ETYPE_AES128_CTS_HMAC_SHA256_128 => 16,
         ETYPE_AES256_CTS_HMAC_SHA384_192 => 32,
         ETYPE_RC4_HMAC => 16,
+        ETYPE_CAMELLIA128_CTS_CMAC => 16,
+        ETYPE_CAMELLIA256_CTS_CMAC => 32,
         _ => 0,
     }
 }
@@ -76,6 +84,8 @@ fn mac_len(e: i32) -> i64 {
         ETYPE_AES128_CTS_HMAC_SHA256_128 => 16,
         ETYPE_AES256_CTS_HMAC_SHA384_192 => 24,
         ETYPE_RC4_HMAC => 16,
+        ETYPE_CAMELLIA128_CTS_CMAC => 16,
+        ETYPE_CAMELLIA256_CTS_CMAC => 16,
         _ => 0,
     }
 }
@@ -94,6 +104,8 @@ fn cksum_type_for(e: i32) -> i32 {
         ETYPE_AES128_CTS_HMAC_SHA256_128 => CKSUM_HMAC_SHA256_128_AES128,
         ETYPE_AES256_CTS_HMAC_SHA384_192 => CKSUM_HMAC_SHA384_192_AES256,
         ETYPE_RC4_HMAC => CKSUM_HMAC_MD5,
+        ETYPE_CAMELLIA128_CTS_CMAC => CKSUM_CMAC_CAMELLIA128,
+        ETYPE_CAMELLIA256_CTS_CMAC => CKSUM_CMAC_CAMELLIA256,
         _ => 0,
     }
 }
@@ -108,6 +120,8 @@ fn cksum_etype(c: i32) -> i32 {
         CKSUM_HMAC_SHA256_128_AES128 => ETYPE_AES128_CTS_HMAC_SHA256_128,
         CKSUM_HMAC_SHA384_192_AES256 => ETYPE_AES256_CTS_HMAC_SHA384_192,
         CKSUM_HMAC_MD5 => ETYPE_RC4_HMAC,
+        CKSUM_CMAC_CAMELLIA128 => ETYPE_CAMELLIA128_CTS_CMAC,
+        CKSUM_CMAC_CAMELLIA256 => ETYPE_CAMELLIA256_CTS_CMAC,
         _ => 0,
     }
 }
@@ -122,6 +136,8 @@ fn cksum_len(c: i32) -> i64 {
         CKSUM_HMAC_SHA256_128_AES128 => 16,
         CKSUM_HMAC_SHA384_192_AES256 => 24,
         CKSUM_HMAC_MD5 => 16,
+        CKSUM_CMAC_CAMELLIA128 => 16,
+        CKSUM_CMAC_CAMELLIA256 => 16,
         _ => 0,
     }
 }
@@ -137,8 +153,8 @@ fn etype_name(e: i32) -> const u8[:] {
         ETYPE_AES128_CTS_HMAC_SHA256_128 => "aes128-cts-hmac-sha256-128",
         ETYPE_AES256_CTS_HMAC_SHA384_192 => "aes256-cts-hmac-sha384-192",
         ETYPE_RC4_HMAC => "arcfour-hmac",
-        25 => "camellia128-cts-cmac",
-        26 => "camellia256-cts-cmac",
+        ETYPE_CAMELLIA128_CTS_CMAC => "camellia128-cts-cmac",
+        ETYPE_CAMELLIA256_CTS_CMAC => "camellia256-cts-cmac",
         _ => "",
     }
 }
@@ -155,8 +171,8 @@ fn etype_by_name(name: const u8[:]) -> i32 {
     if s == "aes128-cts-hmac-sha256-128" || s == "aes128-sha2" { return ETYPE_AES128_CTS_HMAC_SHA256_128; }
     if s == "aes256-cts-hmac-sha384-192" || s == "aes256-sha2" { return ETYPE_AES256_CTS_HMAC_SHA384_192; }
     if s == "arcfour-hmac" || s == "rc4-hmac" || s == "arcfour-hmac-md5" { return ETYPE_RC4_HMAC; }
-    if s == "camellia128-cts-cmac" || s == "camellia128-cts" { return 25; }
-    if s == "camellia256-cts-cmac" || s == "camellia256-cts" { return 26; }
+    if s == "camellia128-cts-cmac" || s == "camellia128-cts" { return ETYPE_CAMELLIA128_CTS_CMAC; }
+    if s == "camellia256-cts-cmac" || s == "camellia256-cts" { return ETYPE_CAMELLIA256_CTS_CMAC; }
     var v: i64 = 0;
     if s.len == 0 || s.len > 6 { return 0; }
     for c in s {
@@ -207,11 +223,11 @@ fn nfold(input: const u8[:], nbits: i64) -> u8[>..] {
 
 // --- Block ciphers ----------------------------------------------------------
 
-// AES in CBC mode with ciphertext stealing (RFC 3962 §5): the last two
-// blocks are swapped always, the last one cut to the data's length. One
-// block is plain CBC. data.len >= 16.
-fn aes_cts_encrypt(key: const u8[:], iv: const u8[:], data: const u8[:]) -> u8[>..] {
-    let k = bignum::aes_init(key);
+// CBC mode with ciphertext stealing (RFC 3962 §5, and RFC 6803 for
+// Camellia) over a 16-byte block cipher: the last two blocks are swapped
+// always, the last one cut to the data's length. One block is plain CBC.
+// data.len >= 16.
+fn cts_encrypt<K>(k: const K&, iv: const u8[:], data: const u8[:]) -> u8[>..] {
     var out: u8[>..] = [];
     let n = data.len;
     assert(n >= 16 && iv.len == 16);
@@ -220,7 +236,7 @@ fn aes_cts_encrypt(key: const u8[:], iv: const u8[:], data: const u8[:]) -> u8[>
     if n == 16 {
         var b: u8[16] = [0; 16];
         for i in 16 { b[i] = data[i] ^ prev[i]; }
-        out.append(bignum::aes_encrypt_block(k, b));
+        out.append(bignum::cipher_encrypt(k, b));
         return out;
     }
     let nblocks = (n + 15) / 16;
@@ -228,49 +244,69 @@ fn aes_cts_encrypt(key: const u8[:], iv: const u8[:], data: const u8[:]) -> u8[>
     var blk: u8[16] = [0; 16];
     for j in nblocks - 2 {
         for i in 16 { blk[i] = data[j * 16 + i] ^ prev[i]; }
-        prev = bignum::aes_encrypt_block(k, blk);
+        prev = bignum::cipher_encrypt(k, blk);
         out.append(prev);
     }
     let p = (nblocks - 2) * 16;
     let tail = n - p - 16;
     for i in 16 { blk[i] = data[p + i] ^ prev[i]; }
-    let cn1 = bignum::aes_encrypt_block(k, blk);
+    let cn1 = bignum::cipher_encrypt(k, blk);
     for i in 16 { blk[i] = (if i < tail { data[p + 16 + i] } else { 0 }) ^ cn1[i]; }
-    let cn = bignum::aes_encrypt_block(k, blk);
+    let cn = bignum::cipher_encrypt(k, blk);
     out.append(cn);
     out.append(cn1[..tail]);
     return out;
 }
 
-fn aes_cts_decrypt(key: const u8[:], iv: const u8[:], data: const u8[:]) -> u8[>..] {
-    let k = bignum::aes_init(key);
+fn cts_decrypt<K>(k: const K&, iv: const u8[:], data: const u8[:]) -> u8[>..] {
     var out: u8[>..] = [];
     let n = data.len;
     assert(n >= 16 && iv.len == 16);
     var prev: u8[16] = [0; 16];
     for i in 16 { prev[i] = iv[i]; }
     if n == 16 {
-        let d = bignum::aes_decrypt_block(k, data);
+        let d = bignum::cipher_decrypt(k, data);
         for i in 16 { out.push(d[i] ^ prev[i]); }
         return out;
     }
     let nblocks = (n + 15) / 16;
     for j in nblocks - 2 {
         let c = data[j * 16..j * 16 + 16];
-        let d = bignum::aes_decrypt_block(k, c);
+        let d = bignum::cipher_decrypt(k, c);
         for i in 16 { out.push(d[i] ^ prev[i]); prev[i] = c[i]; }
     }
     let p = (nblocks - 2) * 16;
     let tail = n - p - 16;
     // The block sent first is the last one, encrypted over the (cut)
     // second-to-last: decrypting it gives that block xor the padded tail.
-    let d = bignum::aes_decrypt_block(k, data[p..p + 16]);
+    let d = bignum::cipher_decrypt(k, data[p..p + 16]);
     var cn1: u8[16] = [0; 16];
     for i in 16 { cn1[i] = if i < tail { data[p + 16 + i] } else { d[i] }; }
-    let d1 = bignum::aes_decrypt_block(k, cn1);
+    let d1 = bignum::cipher_decrypt(k, cn1);
     for i in 16 { out.push(d1[i] ^ prev[i]); }
     for i in tail { out.push(d[i] ^ cn1[i]); }
     return out;
+}
+
+// CTS with the cipher of an encryption type: AES, or Camellia for RFC
+// 6803's types.
+fn etype_cts(e: i32, key: const u8[:], iv: const u8[:], data: const u8[:], decrypt: bool) -> u8[>..] {
+    if is_camellia(e) {
+        let k = bignum::camellia_init(key);
+        return if decrypt { cts_decrypt(k, iv, data) } else { cts_encrypt(k, iv, data) };
+    }
+    let k = bignum::aes_init(key);
+    return if decrypt { cts_decrypt(k, iv, data) } else { cts_encrypt(k, iv, data) };
+}
+
+fn aes_cts_encrypt(key: const u8[:], iv: const u8[:], data: const u8[:]) -> u8[>..] {
+    let k = bignum::aes_init(key);
+    return cts_encrypt(k, iv, data);
+}
+
+fn aes_cts_decrypt(key: const u8[:], iv: const u8[:], data: const u8[:]) -> u8[>..] {
+    let k = bignum::aes_init(key);
+    return cts_decrypt(k, iv, data);
 }
 
 // Triple DES in CBC mode; data.len is a multiple of 8.
@@ -400,6 +436,39 @@ fn kdf_hmac_sha2(e: i32, key: const u8[:], label: const u8[:], kbits: i64) -> u8
     return out;
 }
 
+// KDF-FEEDBACK-CMAC(key, constant) (RFC 6803 §3, SP 800-108 §5.2 with
+// Camellia's CMAC): K(i) = CMAC(key, K(i-1) | i | constant | 00 | k), from
+// K(0) zero, i and k (the key's bits) 4 bytes big-endian; the K(i) strung
+// together and cut to k bits.
+fn kdf_feedback_cmac(key: const u8[:], constant: const u8[:], kbits: i64) -> u8[>..] {
+    let c = bignum::camellia_init(key);
+    var out: u8[>..] = [];
+    var prev: u8[>..] = [];
+    prev.resize(16, 0);
+    var i: i64 = 1;
+    while out.len * 8 < kbits {
+        var msg: u8[>..] = [];
+        msg.append(prev);
+        msg.push((i >> 24) as! u8);
+        msg.push((i >> 16) as! u8);
+        msg.push((i >> 8) as! u8);
+        msg.push(i as! u8);
+        msg.append(constant);
+        msg.push(0);
+        msg.push((kbits >> 24) as! u8);
+        msg.push((kbits >> 16) as! u8);
+        msg.push((kbits >> 8) as! u8);
+        msg.push(kbits as! u8);
+        let t = bignum::cmac(c, msg);
+        out.append(t);
+        prev.clear();
+        prev.append(t);
+        i++;
+    }
+    out.resize(kbits / 8, 0);
+    return out;
+}
+
 fn is_sha2_etype(e: i32) -> bool { e == ETYPE_AES128_CTS_HMAC_SHA256_128 || e == ETYPE_AES256_CTS_HMAC_SHA384_192 }
 
 // The constant usage | kind (0x99 checksum, 0xaa encryption, 0x55
@@ -410,10 +479,12 @@ fn usage_constant(usage: i64, kind: u8) -> u8[5] {
 }
 
 // DK(base, usage | kind) for the RFC 3961 and RFC 3962 types, KDF-HMAC-SHA2
-// for RFC 8009's: the key for one purpose. For RFC 8009 the integrity and
-// checksum keys are as long as the MAC; the encryption key, as the base.
+// for RFC 8009's, KDF-FEEDBACK-CMAC for RFC 6803's: the key for one
+// purpose. For RFC 8009 the integrity and checksum keys are as long as the
+// MAC; the encryption key, as the base. RFC 6803's are all as the base.
 fn derive_key(base: Key, usage: i64, kind: u8) -> u8[>..] {
     let c = usage_constant(usage, kind);
+    if is_camellia(base.etype) { return kdf_feedback_cmac(base.value, c, key_len(base.etype) * 8); }
     if is_sha2_etype(base.etype) {
         let bits = if kind == 0xaa { key_len(base.etype) * 8 } else { mac_len(base.etype) * 8 };
         return kdf_hmac_sha2(base.etype, base.value, c, bits);
@@ -427,9 +498,9 @@ fn derive_key(base: Key, usage: i64, kind: u8) -> u8[>..] {
 
 // --- String to key ----------------------------------------------------------
 
-// The default string-to-key parameters (RFC 3962 §4, RFC 8009 §4): the
-// iteration count, big-endian.
-fn default_iterations(e: i32) -> i64 { if is_sha2_etype(e) { 32768 } else { 4096 } }
+// The default string-to-key parameters (RFC 3962 §4, RFC 8009 §4, RFC
+// 6803 §4): the iteration count, big-endian.
+fn default_iterations(e: i32) -> i64 { if is_sha2_etype(e) || is_camellia(e) { 32768 } else { 4096 } }
 
 // The UTF-16LE form of a UTF-8 password, as Windows hashes it; ok false
 // for bytes that are not UTF-8.
@@ -509,6 +580,16 @@ fn string_to_key(e: i32, password: const u8[:], salt: const u8[:], params: const
         let bits = if e == ETYPE_AES256_CTS_HMAC_SHA384_192 { 384 } else { 256 };
         let t = bignum::pbkdf2(bits, password, saltp, iter, key_len(e));
         return make_key(e, kdf_hmac_sha2(e, t, "kerberos", key_len(e) * 8)), OK;
+    }
+    if is_camellia(e) {
+        // RFC 6803 §4: the enctype's name and a zero before the salt,
+        // PBKDF2-HMAC-SHA1, then KDF-FEEDBACK-CMAC(tkey, "kerberos").
+        var saltp: u8[>..] = [];
+        saltp.append(etype_name(e));
+        saltp.push(0);
+        saltp.append(salt);
+        let t = bignum::pbkdf2(160, password, saltp, iter, key_len(e));
+        return make_key(e, kdf_feedback_cmac(t, "kerberos", key_len(e) * 8)), OK;
     }
     let t = make_key(e, bignum::pbkdf2(160, password, salt, iter, key_len(e)));
     return make_key(e, derive_key_const(t, "kerberos")), OK;
@@ -604,9 +685,13 @@ fn encrypt_with(key: Key, usage: i64, confounder: const u8[:], plain: const u8[:
         return OK;
     }
     let z: u8[16] = [0; 16];
-    let c = aes_cts_encrypt(ke, z, p);
+    let c = etype_cts(e, ke, z, p, false);
     out.append(c);
-    if is_sha2_etype(e) {
+    if is_camellia(e) {
+        // RFC 6803 §6: the MAC is CMAC over the plaintext.
+        let ck = bignum::camellia_init(ki);
+        out.append(bignum::cmac(ck, p));
+    } else if is_sha2_etype(e) {
         // RFC 8009 §5: the MAC is over the IV and the ciphertext.
         var m: u8[>..] = [];
         m.append(z);
@@ -656,7 +741,13 @@ fn decrypt(key: Key, usage: i64, cipher: const u8[:], out: u8[>..]&) -> i64 {
         out.append(p[cl..]);
         return OK;
     }
-    let p = aes_cts_decrypt(ke, z, c);
+    let p = etype_cts(e, ke, z, c, true);
+    if is_camellia(e) {
+        let ck = bignum::camellia_init(ki);
+        if !bignum::cmac_verify(ck, p, tag) { return ERR_INTEGRITY; }
+        out.append(p[cl..]);
+        return OK;
+    }
     let h = bignum::hmac(160, ki, p);
     if bignum::ct_eq_bytes(h[..12], tag) != 1 { return ERR_INTEGRITY; }
     out.append(p[cl..]);
@@ -690,7 +781,11 @@ fn checksum(key: Key, ctype0: i32, usage: i64, data: const u8[:], out: u8[>..]&)
         return OK;
     }
     let kc = derive_key(key, usage, 0x99);
-    if is_sha2_etype(ce) {
+    if is_camellia(ce) {
+        // RFC 6803 §7: CMAC(Kc, message).
+        let ck = bignum::camellia_init(kc);
+        out.append(bignum::cmac(ck, data));
+    } else if is_sha2_etype(ce) {
         let h = bignum::hmac(if ce == ETYPE_AES256_CTS_HMAC_SHA384_192 { 384 } else { 256 }, kc, data);
         out.append(h[..cksum_len(ctype)]);
     } else {
@@ -724,11 +819,19 @@ fn random_key(e: i32) -> Key {
 
 // The pseudo-random function: for RFC 3962 and DES3, SHA-1 of the input
 // cut to a multiple of the cipher's block and encrypted under
-// DK(key, "prf"); for RFC 8009, KDF-HMAC-SHA2(key, "prf", input); for RC4,
-// which RFC 4757 leaves out, HMAC-SHA1(key, input) as MIT has it.
+// DK(key, "prf"); for RFC 8009, KDF-HMAC-SHA2(key, "prf", input); for RFC
+// 6803, CMAC(KDF-FEEDBACK-CMAC(key, "prf"), input); for RC4, which RFC
+// 4757 leaves out, HMAC-SHA1(key, input) as MIT has it.
 fn prf(key: Key, input: const u8[:], out: u8[>..]&) -> i64 {
     let e = key.etype;
     if !etype_supported(e) { return ERR_ETYPE; }
+    if key.value.len != key_len(e) { return ERR_KEY_SIZE; }
+    if is_camellia(e) {
+        let kp = kdf_feedback_cmac(key.value, "prf", key_len(e) * 8);
+        let c = bignum::camellia_init(kp);
+        out.append(bignum::cmac(c, input));
+        return OK;
+    }
     if is_sha2_etype(e) {
         var label: u8[>..] = [];
         label.append("prf");

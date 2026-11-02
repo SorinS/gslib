@@ -330,8 +330,8 @@ fn conf_duration(cfg: const Config&, path: const u8[:], dflt: i64) -> i64 {
     return if nok { n } else { dflt };
 }
 
-// MIT 1.22's default enctype list, less Camellia, which we do not have.
-let DEFAULT_ETYPES: i32[6] = [18, 17, 20, 19, 16, 23];
+// MIT 1.22's default enctype list.
+let DEFAULT_ETYPES: i32[8] = [18, 17, 20, 19, 16, 23, 26, 25];
 
 // An enctype list (MIT's): names, numbers and families (aes, aes-sha1,
 // aes-sha2, des3, rc4, camellia, DEFAULT), separated by spaces or commas,
@@ -353,7 +353,7 @@ fn parse_etypes(s: const u8[:]) -> i32[>..] {
         else if name == "aes-sha2" { add.push(20); add.push(19); }
         else if name == "des3" { add.push(16); }
         else if name == "rc4" { add.push(23); }
-        else if name == "camellia" { }
+        else if name == "camellia" { add.push(26); add.push(25); }
         else {
             let e = etype_by_name(name);
             if e != 0 { add.push(e); }
