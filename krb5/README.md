@@ -114,7 +114,7 @@ server; servers listen on 127.0.0.1 only.
 `make interop-krb5` (`scripts/interop.py`, macOS with Homebrew's
 `krb5`): two MIT 1.22 realms (`scripts/kdc.py`, on 127.0.0.1, trusting
 each other) and a third, F.TEST, whose KDC refuses the encrypted
-timestamp, and 119 checks: kinit with each user (pre-auth required,
+timestamp, and 120 checks: kinit with each user (pre-auth required,
 RC4-only, DES3-only, Camellia-only with pre-auth, keytab), every
 encryption type for TGT and service ticket (Camellia's keys from MIT's
 keytab too), cross-realm both ways, our cache in MIT's klist and kvno and
@@ -132,8 +132,9 @@ a Camellia reply key under AES armor, a keytab exchange armored, a wrong
 password read from the armored error), unarmored kinit refused, kvno
 armored by the TGT, MIT's kinit -T armored by our cache (our
 `fast_avail` entry read) and ours by MIT's, MIT's kvno with our armored
-TGT, armor of another realm refused, `disable_encrypted_timestamp` on the
-client; and a relay on 127.0.0.1 that alters the KDC's replies: an
+TGT, armor of another realm refused, clock skew corrected under armor (the
+KDC refuses the armor's authenticator in the clear),
+`disable_encrypted_timestamp` on the client; and a relay on 127.0.0.1 that alters the KDC's replies: an
 AS-REP's or TGS-REP's ticket (the finished checksum fails), PA-FX-FAST
 stripped from an AS-REP (refused) or a TGS-REP (its strengthened key
 fails), the AS-REP's client name (the finished part's name used), the

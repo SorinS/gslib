@@ -303,7 +303,18 @@ fn as_exchange(cfg: const Config&, s: Settings&, cname: const PrincipalName&, re
             // Armored, the error that counts is the one inside the armor,
             // with its padata; unarmored, the error itself and its e-data.
             let inner, fhints, ferr = fast_error(armored, st, kerr0, nonce);
-            if ferr != OK { return empty_credential(), false, code0; }
+            if ferr != OK {
+                // The KDC could not read our armor, so its error is in the
+                // clear. Skew alone is acted on (MIT does too): the armor's
+                // authenticator is checked against the KDC's clock, and
+                // the next request is armored all the same.
+                if code0 == KRB_AP_ERR_SKEW && !skew_fixed && s.kdc_timesync {
+                    s.time_offset += kerr0.stime - now;
+                    skew_fixed = true;
+                    continue;
+                }
+                return empty_credential(), false, code0;
+            }
             let kerr = if armored { copy(inner) } else { copy(kerr0) };
             let code = if kerr.error_code == 0 { KRB_ERR_GENERIC } else { kerr.error_code };
             let ehints, eherr = decode_padata(kerr0.edata);
@@ -475,11 +486,13 @@ fn get_tgt(cfg: const Config&, principal: const u8[:], sec: const Secret&, armor
     return as_exchange(cfg, s, cn, realm, sn, sec, armor, armored);
 }
 
-// The TGT for `realm` (krbtgt/REALM@REALM) in a cache, to armor with.
+// The TGT for `realm` (krbtgt/REALM@REALM) in a cache, to armor with:
+// one not expired by the cache's clock (its offset from the KDC's).
 fn armor_tgt(cache_name: const u8[:], realm: const u8[:]) -> Credential, i64 {
     let cc, err = ccache_load(cache_name);
     if err != OK { return empty_credential(), ERR_NO_CREDS; }
-    let c, ok = ccache_find(cc, name_join("krbtgt", realm), realm, 0);
+    let now = now_ns() / 1000000000 + (if cc.has_time_offset { cc.time_offset } else { 0 });
+    let c, ok = ccache_find(cc, name_join("krbtgt", realm), realm, now);
     return c, if ok { OK } else { ERR_NO_CREDS };
 }
 

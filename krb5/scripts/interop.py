@@ -475,6 +475,14 @@ def skew_tests(mit, tool, goose):
         check("clock skew corrected (KDC 10 minutes ahead)", p.returncode == 0, out(p))
         q = run(k, [tool, "kvno", "HTTP/svc.a.test"])
         check("service ticket after skew correction", q.returncode == 0, out(q))
+        # FAST: the KDC reads the armor's authenticator against its clock
+        # and refuses it in the clear; the client corrects and stays armored.
+        armor = "FILE:" + k.path("armor.cc")
+        p = run(k, [tool, "kinit", "-k", k.path("fast.keytab"), "host/fast.f.test@F.TEST"],
+                env=dict(k.env, KRB5CCNAME=armor))
+        q = run(k, [tool, "kinit", "-T", armor, "grace@F.TEST"], "grace-pw\n")
+        check("FAST: clock skew corrected with armor (KDC 10 minutes ahead)", p.returncode == 0 and q.returncode == 0,
+              out(p) + out(q))
 
 
 def gss_tests(k, tool, gss):
