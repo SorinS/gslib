@@ -43,9 +43,18 @@ struct Settings {
     clockskew: i64,
     time_offset: i64,
     kdc_timesync: bool,
+    // A device's TGT to armor TGS requests to its realm with (explicit
+    // armor: AD's compound identity); else each TGT armors its own.
+    has_device: bool,
+    device: Credential,
 }
 
 fn settings(cfg: const Config&) -> Settings {
+    let none = empty_credential();
+    return settings_device(cfg, false, none);
+}
+
+fn settings_device(cfg: const Config&, has_device: bool, device: const Credential&) -> Settings {
     return Settings {
         lifetime: conf_duration(cfg, "libdefaults/ticket_lifetime", 86400),
         renew_lifetime: conf_duration(cfg, "libdefaults/renew_lifetime", 0),
@@ -56,6 +65,8 @@ fn settings(cfg: const Config&) -> Settings {
         clockskew: conf_duration(cfg, "libdefaults/clockskew", 300),
         time_offset: 0,
         kdc_timesync: conf_bool(cfg, "libdefaults/kdc_timesync", true),
+        has_device: has_device,
+        device: copy(device),
     };
 }
 
@@ -543,7 +554,7 @@ fn tgs_exchange(cfg: const Config&, s: Settings&, tgt: const Credential&, sname:
         if cerr != OK { return empty_credential(), cerr; }
         let subkey = random_key(tgt.key.etype);
         if subkey.etype == 0 { return empty_credential(), ERR_ETYPE; }
-        let st, sterr = fast_armor_tgs(subkey, tgt.key);
+        let st, sterr = tgs_armor(s, kdc_realm, subkey, tgt.key, now, usec);
         if sterr != OK { return empty_credential(), sterr; }
         let auth = Authenticator {
             crealm: copy(tgt.client_realm), cname: PrincipalName { name_type: tgt.client_type, name: copy(tgt.client) },
@@ -619,6 +630,16 @@ fn tgs_exchange(cfg: const Config&, s: Settings&, tgt: const Credential&, sname:
     return empty_credential(), KRB_AP_ERR_SKEW;
 }
 
+// The armor of a TGS request to `kdc_realm`: explicit, by the device's
+// TGT, when there is one for that realm; else implicit, by the TGT the
+// request is made with.
+fn tgs_armor(s: const Settings&, kdc_realm: const u8[:], subkey: Key, session_key: Key, now: i64, usec: i64) -> FastState, i64 {
+    if s.has_device && s.device.server == name_join("krbtgt", kdc_realm) && s.device.server_realm == kdc_realm {
+        return fast_armor_tgs_explicit(s.device, subkey, now, usec);
+    }
+    return fast_armor_tgs(subkey, session_key);
+}
+
 fn is_tgt_name(name: const u8[:]) -> bool { name_count(name) == 2 && name_part(name, 0) == "krbtgt" }
 
 // A service ticket for `sname` in `srealm` (empty: unknown, and the
@@ -626,8 +647,23 @@ fn is_tgt_name(name: const u8[:]) -> bool { name_count(name) == 2 && name_part(n
 // credential got, cross-realm TGTs first and the service's last.
 fn get_service_ticket(cfg: const Config&, tgt: const Credential&, sname: const PrincipalName&, srealm: const u8[:])
     -> Credential[>..], i64 {
-    var got: Credential[>..] = [];
     var s = settings(cfg);
+    return service_ticket_with(cfg, s, tgt, sname, srealm);
+}
+
+// get_service_ticket with each TGS request to the device's realm armored
+// by `device`, a TGT for that realm (explicit armor): an AD KDC then adds
+// the device's groups and claims to the PAC of a service that takes
+// compound identity.
+fn get_service_ticket_armored(cfg: const Config&, tgt: const Credential&, sname: const PrincipalName&, srealm: const u8[:],
+                              device: const Credential&) -> Credential[>..], i64 {
+    var s = settings_device(cfg, true, device);
+    return service_ticket_with(cfg, s, tgt, sname, srealm);
+}
+
+fn service_ticket_with(cfg: const Config&, s: Settings&, tgt: const Credential&, sname: const PrincipalName&, srealm: const u8[:])
+    -> Credential[>..], i64 {
+    var got: Credential[>..] = [];
     var visited: u8[][>..] = [];
     for hop in 12 {
         let cur = if got.len == 0 { copy(tgt) } else { last_credential(got) };
@@ -801,6 +837,27 @@ fn get_service_ticket_cached(cfg: const Config&, cache_name: const u8[:], servic
     let tgt, ok = ccache_find(cc, name_join("krbtgt", cc.realm), cc.realm, now);
     if !ok { return empty_credential(), ERR_NO_CREDS; }
     let got, gerr = get_service_ticket(cfg, tgt, sn, srealm);
+    if gerr != OK { return empty_credential(), gerr; }
+    let next = ccache_add_all(cc, got);
+    let serr = ccache_save(cache_name, next);
+    return last_credential(got), serr;
+}
+
+// kvno -T: as get_service_ticket_cached, but always from the KDCs, armored
+// by the TGT for the cache's realm in `armor_cache` (a computer's).
+fn get_service_ticket_cached_armored(cfg: const Config&, cache_name: const u8[:], service: const u8[:], gss_form: bool,
+                                     armor_cache: const u8[:]) -> Credential, i64 {
+    let cc, err = ccache_load(cache_name);
+    if err != OK { return empty_credential(), ERR_NO_CREDS; }
+    let sn, srealm, nerr = service_name(cfg, service, gss_form);
+    if nerr != OK { return empty_credential(), nerr; }
+    let device, derr = armor_tgt(armor_cache, cc.realm);
+    if derr != OK { return empty_credential(), derr; }
+    var s = settings(cfg);
+    let now, us = kdc_now(s);
+    let tgt, ok = ccache_find(cc, name_join("krbtgt", cc.realm), cc.realm, now);
+    if !ok { return empty_credential(), ERR_NO_CREDS; }
+    let got, gerr = get_service_ticket_armored(cfg, tgt, sn, srealm, device);
     if gerr != OK { return empty_credential(), gerr; }
     let next = ccache_add_all(cc, got);
     let serr = ccache_save(cache_name, next);

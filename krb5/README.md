@@ -66,7 +66,9 @@ apart: `parse_principal`, `principal_string`, `name_parts`.
 ## Tools
 
 `tools/krb5.goose` (goose-krb5): `kinit [-T ARMOR_CACHE] [-k KEYTAB] PRINCIPAL`, `kvno
-[-gss] SERVICE`, `klist [-k KEYTAB]`, `renew`, on `$KRB5_CONFIG` and
+[-gss] [-T ARMOR_CACHE] SERVICE` (with -T: from the KDC, the TGS request
+armored by the cache's TGT, a computer's for AD's compound identity),
+`klist [-k KEYTAB]`, `renew`, on `$KRB5_CONFIG` and
 `$KRB5CCNAME`. `tools/gss.goose` (goose-gss): a GSS-API client and server
 speaking MIT's gss-sample protocol, and an HTTP Negotiate client and
 server; servers listen on 127.0.0.1 only.
@@ -90,7 +92,9 @@ server; servers listen on 127.0.0.1 only.
   request (padata, checksum, inner request), replies and errors read,
   and each refused: no FAST response, another nonce, no finished part,
   an altered ticket, an unkeyed checksum, another armor key, a KDC
-  challenge missing, crossed in direction or under another key.
+  challenge missing, crossed in direction or under another key; a TGS
+  request's implicit armor and its explicit armor by another TGT, each
+  key the one the KDC makes.
 - `test/messages.goose`: MIT's reference encodings
   (`src/tests/asn.1/reference_encode.out`, through go-krb5's
   `test_vectors.go`) decode, carry MIT's test values, and re-encode to the
@@ -140,6 +144,32 @@ stripped from an AS-REP (refused) or a TGS-REP (its strengthened key
 fails), the AS-REP's client name (the finished part's name used), the
 armor stripped from an error (no retry in the clear).
 
+`scripts/ad.py`: against Active Directory, the DC `scripts/windows`
+makes (goose.test on Windows Server 2022, reached by an ssh tunnel to its
+loopback; the script's header has the commands), 36 checks: kinit with a
+password (AES; RC4 for bob), a computer account (goosepc$, its salt from
+ETYPE-INFO2) and ktpass's keytab, wrong passwords and unknown users,
+FAST (kinit -T, an error read inside AD's armor), renewal; kvno for both
+of svc-web's SPNs at the keytab's kvno, an unknown SPN, an RC4 ticket
+for an AES-only service refused; our acceptor verifying AD's PAC (logon
+info, both signatures, client info, UPN_DNS_INFO with its SAM name and
+SID, claims, the ticket and full checksums), the claim
+`department = Engineering`, Claims Valid, no claim for bob, SPNEGO,
+delegation, HTTP Negotiate; compound identity (kvno -T with goosepc$'s
+TGT: device info and device claims in the PAC, the device in Domain
+Computers, Compounded Authentication in the user's SIDs, none of it
+without the armor); LDAP with SASL GSSAPI at each protection layer (Who
+am I?), the PAC's user and device SIDs found by SID, and tokenGroups
+equal to the PAC's domain groups.
+
+AD leaves the claims out of the PAC unless the request carries
+PA-PAC-OPTIONS with the claims bit (MS-KILE §2.2.10), as Windows' does;
+ours do (MIT's KDC ignores it). AD's `msDS-SupportedEncryptionTypes`
+governs the tickets issued to an account as a service, not its own
+keys: every account keeps an RC4 key (its NT hash). MIT's tools don't
+take `tcp/` in `kdc =` (Heimdal's form, which ours take);
+`udp_preference_limit = 1` sends them over TCP.
+
 `scripts/mit_crypto.py` writes `test/vectors/mit_crypto.txt`: it builds
 a small C program against MIT's libk5crypto (Homebrew's `krb5`) and asks
 it (MIT picks its confounders, so the ciphertexts change on every run).
@@ -151,22 +181,18 @@ Go, and `tools/krb5oracle/go.mod` points (`replace`) at that checkout.
 
 - PKINIT (RFC 4556, and with it anonymous PKINIT as armor: MIT's
   `kinit -n`), SPAKE, OTP. Of FAST: the hide-client-names and
-  kdc-follow-referrals options, explicit armor in a TGS exchange
-  (Windows' compound identity: MIT's KDC refuses it, so it waits for
-  AD), armor across a realm referral (the armor TGT is for the realm
-  asked), and the KDC's side.
+  kdc-follow-referrals options, armor across a realm referral (the
+  armor TGT is for the realm asked; compound identity likewise only in
+  the device's realm), and the KDC's side.
 - S4U2Self and S4U2Proxy (constrained delegation), user-to-user.
 - DNS SRV discovery of KDCs (`dns_lookup_kdc`), kpasswd (RFC 3244),
   KKDCP, MEMORY/KEYRING/KCM caches.
 - Windows is built for (the C has its Windows branches) but untested.
 - An acceptor taking any name (`any_name`) tries the first keytab key of
   the ticket's realm, type and version, where MIT tries each in turn.
-- No live Active Directory yet (`scripts/windows` makes a test DC: the
-  firewall, the promotion, users, SPNs, a ktpass keytab, claims): the
-  PAC and claims are checked against Windows AD PACs recorded by go-krb5
-  and against MIT's live PACs, but a KDC exchange with AD, its referrals,
-  a ktpass keytab, a live logon-info PAC, the LDAP GSSAPI bind with
-  signing and SID lookups are untested against AD.
+- Against AD (one DC, one domain): no cross-domain trust or referrals
+  between domains, no read-only DC, no AD-side checks of our initiator by
+  Windows' own clients (only by our acceptor).
 
 FAST follows MIT's client with one difference: given armor, every AS
 request is armored from the first, where MIT's kinit -T tries without

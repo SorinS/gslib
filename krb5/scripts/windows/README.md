@@ -27,11 +27,17 @@ listening but blocked inbound. Then:
    (AES and RC4) in the group GooseTesters; the service account svc-web
    with SPNs `HTTP/web.goose.test` and `host/web.goose.test`, AES only, and
    its keytab `C:\Goose\dc\web.keytab` from ktpass; the KDC's claims
-   support on, a `department` claim type, alice's department set. Run it
-   again at any time.
+   support on, a `department` claim type, alice's department set; svc-web
+   taking claims and compound identity; the computer account goosepc$,
+   the device for compound identity. Run it again at any time (ktpass
+   makes a new key each time: copy the keytab again).
 
 `krb5.conf` is the client side for the tunnels: the KDC as
-`tcp/127.0.0.1:8888` (ssh forwards TCP only), `web.goose.test` resolved
-locally (an `/etc/hosts` entry to 127.0.0.1 with a tunnel to the service,
-or the name only, for tickets).
+`tcp/127.0.0.1:8888` (ssh forwards TCP only; MIT's tools want
+`127.0.0.1:8888`, and `udp_preference_limit = 1` keeps them on TCP),
+`web.goose.test` resolved locally (an `/etc/hosts` entry to 127.0.0.1
+with a tunnel to the service, or the name only, for tickets).
+
+5. The tests: `../ad.py`, through the tunnel, with the users' password
+   and the keytab (its header has the commands).
 

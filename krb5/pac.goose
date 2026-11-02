@@ -599,3 +599,22 @@ fn logon_sids(li: const LogonInfo&) -> u8[][>..] {
     }
     return out;
 }
+
+// The SIDs of a compound identity's device (PAC_DEVICE_INFO, MS-PAC
+// §2.12), as logon_sids for a user: the computer's, its primary group's
+// and each group's in its domain, each extra SID, and each other
+// domain's groups.
+fn device_sids(d: const DeviceInfo&) -> u8[][>..] {
+    var out: u8[][>..] = [];
+    if d.account_domain_id.len == 0 { return out; }
+    out.push(sid_plus_rid(d.account_domain_id, d.user_id));
+    out.push(sid_plus_rid(d.account_domain_id, d.primary_group_id));
+    for g in d.account_groups {
+        if g.rid != d.primary_group_id { out.push(sid_plus_rid(d.account_domain_id, g.rid)); }
+    }
+    for e in d.extra_sids { out.push(copy(e.sid)); }
+    for dg in d.domain_groups {
+        for g in dg.groups { out.push(sid_plus_rid(dg.domain_id, g.rid)); }
+    }
+    return out;
+}

@@ -293,6 +293,28 @@ fn one_type(e: i32) {
     tv::check(str(w, "TGS armored request: no armor, checksum over the AP-REQ"), tarerr == krb5::OK && !tar.has_armor
               && krb5::verify_checksum(want_tk, tar.req_checksum.ctype, krb5::USAGE_FAST_REQ_CHKSUM, ap, tar.req_checksum.sum)
                  == krb5::OK);
+
+    // TGS with explicit armor (a device's TGT, for AD's compound identity):
+    // the KDC reads the armor as in an AS exchange, then
+    // KRB-FX-CF2(that key, "explicitarmor", subkey, "tgsarmor").
+    let device = make_tgt(tgs_key, e);
+    let ts3, tserr3 = krb5::fast_armor_tgs_explicit(device, subkey, NOW, 7);
+    tv::check(str(w, "TGS explicit armor"), tserr3 == krb5::OK && ts3.has_armor
+              && ts3.armor.armor_type == krb5::FX_FAST_ARMOR_AP_REQUEST);
+    let dk, dkok = kdc_armor_key(tgs_key, ts3.armor);
+    let want_ek, wekerr = krb5::fx_cf2(dk, "explicitarmor", subkey, "tgsarmor");
+    tv::check(str(w, "KDC's explicit TGS armor key is ours"), dkok && wekerr == krb5::OK
+              && ts3.armor_key.value[..] == want_ek.value[..] && ts3.armor_key.value[..] != want_tk.value[..]);
+    var treq3: u8[>..] = [];
+    tv::check_int(str(w, "TGS explicit wrap"), krb5::fast_wrap(ts3, krb5::MSG_TGS_REQ, no_inner, outer_pa, body, ap, treq3), krb5::OK);
+    let tr3, tr3err = krb5::decode_kdc_req(treq3);
+    var tfx3: u8[>..] = [];
+    for p in tr3.padata { if p.pa_type == krb5::PA_FX_FAST { tfx3.append(p.value); } }
+    let tar3, tar3err = krb5::decode_pa_fx_fast_request(tfx3);
+    tv::check(str(w, "TGS explicitly armored request: the armor, checksum over the AP-REQ"), tr3err == krb5::OK
+              && tar3err == krb5::OK && tar3.has_armor && tar3.armor.value[..] == ts3.armor.value[..]
+              && krb5::verify_checksum(want_ek, tar3.req_checksum.ctype, krb5::USAGE_FAST_REQ_CHKSUM, ap, tar3.req_checksum.sum)
+                 == krb5::OK);
 }
 
 fn main() {

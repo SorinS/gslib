@@ -7,6 +7,7 @@
 //   krb5 kinit -k KEYTAB PRINCIPAL
 //   krb5 kinit -T ARMOR_CACHE [-k KEYTAB] PRINCIPAL   armored with FAST by the cache's TGT
 //   krb5 kvno [-gss] SERVICE        service/host[@REALM], or service@host with -gss
+//   krb5 kvno [-gss] -T ARMOR_CACHE SERVICE   from the KDC, armored by the cache's TGT (compound identity)
 //   krb5 klist                      the cache
 //   krb5 klist -k KEYTAB            the keytab
 //   krb5 renew                      renews the cache's TGT
@@ -70,6 +71,13 @@ fn kinit_done(c: const krb5::Credential&, err: i64) {
     print(krb5::principal_string(c.client, c.client_realm));
 }
 
+fn kvno_done(c: const krb5::Credential&, err: i64) {
+    if err != krb5::OK { fail("kvno", err); }
+    let t, terr = krb5::decode_ticket(c.ticket);
+    print(krb5::principal_string(c.server, c.server_realm), ": kvno = ", t.enc_part.kvno, ", ",
+          krb5::etype_name(t.enc_part.etype));
+}
+
 fn main() {
     let a = args();
     if a.len < 2 { write_stderr("usage: krb5 kinit|kvno|klist|renew ...\n"); exit(2); }
@@ -111,13 +119,22 @@ fn main() {
         return;
     }
     if cmd == "kvno" {
-        let gss = a.len == 4 && a[2] == "-gss";
-        if a.len != 3 && !gss { write_stderr("usage: krb5 kvno [-gss] SERVICE\n"); exit(2); }
-        let c, err = krb5::get_service_ticket_cached(cfg, ccname, a[a.len - 1], gss);
-        if err != krb5::OK { fail("kvno", err); }
-        let t, terr = krb5::decode_ticket(c.ticket);
-        print(krb5::principal_string(c.server, c.server_realm), ": kvno = ", t.enc_part.kvno, ", ",
-              krb5::etype_name(t.enc_part.etype));
+        var gss = false;
+        var armor: u8[>..] = [];
+        var i = 2;
+        while i < a.len - 1 && (a[i] == "-gss" || a[i] == "-T") {
+            if a[i] == "-gss" { gss = true; i += 1; }
+            else if i + 2 < a.len { armor.append(a[i + 1]); i += 2; }
+            else { break; }
+        }
+        if i != a.len - 1 { write_stderr("usage: krb5 kvno [-gss] [-T ARMOR_CACHE] SERVICE\n"); exit(2); }
+        if armor.len > 0 {
+            let c, err = krb5::get_service_ticket_cached_armored(cfg, ccname, a[i], gss, armor);
+            kvno_done(c, err);
+        } else {
+            let c, err = krb5::get_service_ticket_cached(cfg, ccname, a[i], gss);
+            kvno_done(c, err);
+        }
         return;
     }
     if cmd == "klist" {

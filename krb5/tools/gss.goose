@@ -264,18 +264,27 @@ fn print_pac(ap: const krb5::ApContext&) {
     var types: u8[>..] = [];
     for b in p.buffers { types.append(str(" ", b.ul_type)); }
     print("pac: verified client=", p.client_info.name, " upn=", p.upn_dns_info.upn, " buffers", types);
+    if p.upn_dns_info.has_sam { print("pac upn: sam=", p.upn_dns_info.sam_name, " sid=", p.upn_dns_info.sid); }
     if p.has_logon_info {
         for s in krb5::logon_sids(p.logon_info) { print("pac sid: ", s); }
     }
+    if p.has_device_info {
+        for s in krb5::device_sids(p.device_info) { print("pac device sid: ", s); }
+    }
     let raw, ok = krb5::pac_from_authz(ap.authz);
-    let claims, cerr = krb5::pac_claims(raw, p, krb5::PAC_CLIENT_CLAIMS_INFO);
-    if cerr != krb5::OK { print("pac claims: ", krb5::error_text(cerr)); }
+    print_claims(raw, p, krb5::PAC_CLIENT_CLAIMS_INFO, "pac claim");
+    print_claims(raw, p, krb5::PAC_DEVICE_CLAIMS_INFO, "pac device claim");
+}
+
+fn print_claims(raw: const u8[:], p: const krb5::Pac&, buffer_type: u32, what: const u8[:]) {
+    let claims, cerr = krb5::pac_claims(raw, p, buffer_type);
+    if cerr != krb5::OK { print(what, "s: ", krb5::error_text(cerr)); }
     for a in claims {
         for c in a.claims {
             var v: u8[>..] = [];
             for s in c.strings { v.append(str(" ", s)); }
             for x in c.ints { v.append(str(" ", x)); }
-            print("pac claim: ", c.id, v);
+            print(what, ": ", c.id, v);
         }
     }
 }

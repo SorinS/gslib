@@ -9,7 +9,8 @@
 // KRB-FX-CF2(subkey, "subkeyarmor", session key, "ticketarmor"). In a TGS
 // exchange the TGT the request is made with is the armor (implicit
 // armor): the same function of the authenticator's subkey and the TGT's
-// session key.
+// session key; or another TGT armors it (explicit armor), as Windows does
+// with the computer's TGT for compound identity.
 //
 // A reply is checked as RFC 6113 §5.4.3 asks: the FAST response decrypts
 // under the armor key, carries the request's nonce, and for a ticket
@@ -66,6 +67,19 @@ fn fast_armor_tgs(subkey: Key, session_key: Key) -> FastState, i64 {
     let key, err = fx_cf2(subkey, "subkeyarmor", session_key, "ticketarmor");
     if err != OK { return no_fast_state(), err; }
     return FastState { armor_key: key, has_armor: false, armor: KrbFastArmor { armor_type: 0, value: "" } }, OK;
+}
+
+// Explicit armor for a TGS exchange (RFC 6113 §5.4.1.1): the armor of
+// fast_armor_as from `device`, a TGT for the KDC's realm other than the
+// one the request is made with (a computer's, for AD's compound
+// identity), and the key KRB-FX-CF2(that armor's key, "explicitarmor",
+// subkey, "tgsarmor"). MIT's KDC refuses it; AD's takes it.
+fn fast_armor_tgs_explicit(device: const Credential&, subkey: Key, now: i64, usec: i64) -> FastState, i64 {
+    let a, err = fast_armor_as(device, now, usec);
+    if err != OK { return no_fast_state(), err; }
+    let key, kerr = fx_cf2(a.armor_key, "explicitarmor", subkey, "tgsarmor");
+    if kerr != OK { return no_fast_state(), kerr; }
+    return FastState { armor_key: key, has_armor: true, armor: copy(a.armor) }, OK;
 }
 
 // The armored request: `inner` (the request's real padata) and `body`
