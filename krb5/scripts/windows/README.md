@@ -38,6 +38,12 @@ listening but blocked inbound. Then:
 `web.goose.test` resolved locally (an `/etc/hosts` entry to 127.0.0.1
 with a tunnel to the service, or the name only, for tickets).
 
-5. The tests: `../ad.py`, through the tunnel, with the users' password
-   and the keytab (its header has the commands).
+5. `trust.ps1 [-Realm A.TEST]`, after copying a trust password to
+   `C:\Goose\dc\trust.txt` (deleted once read): a two-way realm trust
+   with MIT's A.TEST (AES), and the account mit-alice that alice@A.TEST
+   maps to. The MIT side's keys are made by `../ad.py` from the same
+   password.
+
+6. The tests: `../ad.py`, through the tunnel, with the users' password,
+   the keytab and the trust password (its header has the commands).
 

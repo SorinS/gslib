@@ -10,11 +10,15 @@ loopback, since its ports are closed from outside:
     scp Administrator@<dc>:C:/Goose/dc/web.keytab web.keytab
 
     python3 scripts/ad.py --password-file FILE --keytab web.keytab --dc-host NAME
+        [--trust-password-file FILE] [--mit PREFIX]
         [--kdc 127.0.0.1:8888] [--ldap 127.0.0.1:3890] [--domain goose.test] [--goose PATH] [-k NAME] [-v]
 
 The password file holds the test accounts' password (the one setup.ps1
 was given); NAME is the DC's host name in the domain (its LDAP service is
-ldap/NAME). Our servers listen on 127.0.0.1 only. Each check prints ok or
+ldap/NAME). With --trust-password-file (the password windows/trust.ps1
+was given), the realm trust between the domain and MIT's A.TEST too: the
+MIT KDCs of scripts/kdc.py are started on 127.0.0.1 with the trust's
+keys. Our servers listen on 127.0.0.1 only. Each check prints ok or
 FAIL; the exit status is 1 if any failed.
 """
 
@@ -28,6 +32,7 @@ import tempfile
 sys.path.insert(0, os.path.dirname(__file__))
 import interop  # noqa: E402
 from interop import ROOT, check, find_goose, out, start_server, stop_server  # noqa: E402
+from kdc import REALM_A, Kdc  # noqa: E402
 
 
 class Env:
@@ -51,7 +56,7 @@ def run(e, args, stdin=None, env=None):
     return interop.run(e, args, stdin, env)
 
 
-def write_conf(path, realm, domain, kdc, extra=""):
+def write_conf(path, realm, domain, kdc, extra="", realms="", domain_realm=""):
     with open(path, "w") as f:
         f.write(f"""[libdefaults]
     default_realm = {realm}
@@ -65,11 +70,11 @@ def write_conf(path, realm, domain, kdc, extra=""):
     {realm} = {{
         kdc = tcp/{kdc}
     }}
-
+{realms}
 [domain_realm]
     .{domain} = {realm}
     {domain} = {realm}
-""")
+{domain_realm}""")
 
 
 def pac_lines(log, prefix):
@@ -227,6 +232,68 @@ def ldap_tests(e, gss, ldap, dc_host, user_sid, pac_sids, domain_sid, device_sid
           f"tokenGroups {sorted(groups)}\nPAC {want}\n" + out(p))
 
 
+def trust_tests(e, tool, gss, realm, trust_pw, mit, alice_sids, domain_sid):
+    """The realm trust with MIT's A.TEST (windows/trust.ps1), both ways."""
+    with Kdc(mit=mit) as k:
+        to_ad, to_mit = f"krbtgt/{realm}@{REALM_A}", f"krbtgt/{REALM_A}@{realm}"
+        for p in (to_ad, to_mit):
+            try:
+                k.kadmin(REALM_A, f'addprinc -e "aes256-cts:normal aes128-cts:normal" -pw {trust_pw} {p}')
+            except RuntimeError:
+                raise RuntimeError(f"kadmin addprinc {p} failed") from None  # its message has the password
+        # Both realms; without the [domain_realm] entry for A.TEST's hosts too.
+        a = f"    {REALM_A} = {{\n        kdc = tcp/127.0.0.1:{k.port_a}\n    }}\n"
+        conf = os.path.join(e.tmp, "trust.conf")
+        noref = os.path.join(e.tmp, "trust-noref.conf")
+        write_conf(conf, realm, e.domain, e.kdc, realms=a, domain_realm=f"    .a.test = {REALM_A}\n")
+        write_conf(noref, realm, e.domain, e.kdc, realms=a)
+
+        # AD's user to MIT's service: AD's referral TGT, MIT's ticket.
+        p = run(e, [tool, "kinit", f"alice@{realm}"], e.pw + "\n", e.with_cache("t_alice", conf))
+        p = run(e, [tool, "kvno", "host/svc.a.test"], env=e.with_cache("t_alice", conf))
+        p2 = run(e, [tool, "klist"], env=e.with_cache("t_alice", conf))
+        check(f"trust: alice@{realm} -> host/svc.a.test@{REALM_A} (AD's cross-realm TGT, MIT's ticket)",
+              p.returncode == 0 and to_mit in p2.stdout, out(p) + out(p2))
+        srv, port = start_server([gss, "server", "0", "-once", "-keytab", k.path("svc.keytab")], e.env)
+        try:
+            p = run(e, [gss, "client", "127.0.0.1", str(port), "host@svc.a.test", "hello"], env=e.with_cache("t_alice", conf))
+        finally:
+            log = stop_server(srv)
+        bufs = pac_buffers(log) or []
+        check("trust: our acceptor in A.TEST takes AD's alice; MIT's own PAC, AD's logon info dropped",
+              p.returncode == 0 and f"accepted: alice@{realm}" in log and 10 in bufs and 1 not in bufs, log + out(p))
+        run(e, [tool, "kinit", f"alice@{realm}"], e.pw + "\n", e.with_cache("t_alice2", noref))
+        p = run(e, [tool, "kvno", "host/svc.a.test"], env=e.with_cache("t_alice2", noref))
+        check("trust: no [domain_realm] for the MIT realm, no referral from AD", p.returncode == 1
+              and "S_PRINCIPAL_UNKNOWN" in out(p), out(p))
+
+        # MIT's users to AD's service. MIT (1.20 on) puts a PAC in every
+        # ticket, and AD refuses a cross-realm TGT from an MIT realm with
+        # one; the trust's principal says to leave it out.
+        p = run(e, [tool, "kinit", f"alice@{REALM_A}"], "alice-pw\n", e.with_cache("t_m0", conf))
+        p = run(e, [tool, "kvno", f"HTTP/web.{e.domain}"], env=e.with_cache("t_m0", conf))
+        check("trust: AD refuses MIT's cross-realm TGT that carries MIT's PAC", p.returncode == 1
+              and "KRB_ERR_GENERIC" in out(p), out(p))
+        k.kadmin(REALM_A, f"modprinc +no_auth_data_required {to_ad}")
+        p = run(e, [tool, "kinit", f"alice@{REALM_A}"], "alice-pw\n", e.with_cache("t_m1", conf))
+        p = run(e, [tool, "kvno", f"HTTP/web.{e.domain}"], env=e.with_cache("t_m1", conf))
+        p2 = run(e, [tool, "klist"], env=e.with_cache("t_m1", conf))
+        check(f"trust: alice@{REALM_A} -> HTTP/web.{e.domain} (no PAC in MIT's cross-realm TGT)",
+              p.returncode == 0 and to_ad in p2.stdout, out(p) + out(p2))
+        p, log = serve_once(e, gss, e.keytab, [f"HTTP@web.{e.domain}", "hello"], e.with_cache("t_m1", conf))
+        upn = re.search(r"^pac upn: sam=(\S+) sid=(\S+)$", log, re.M)
+        groups = [s for s in alice_sids if s.startswith(domain_sid + "-") and s != (alice_sids[:1] or [""])[0]]
+        sids = pac_lines(log, "pac sid")
+        check("trust: AD's PAC for the mapped alice@A.TEST is mit-alice's (altSecurityIdentities), her groups",
+              p.returncode == 0 and f"accepted: alice@{REALM_A}" in log and upn is not None and upn.group(1) == "mit-alice"
+              and all(g in sids for g in groups), log + out(p))
+        p = run(e, [tool, "kinit", f"bob@{REALM_A}"], "bob-pw\n", e.with_cache("t_m2", conf))
+        p = run(e, [tool, "kvno", f"HTTP/web.{e.domain}"], env=e.with_cache("t_m2", conf))
+        p, log = serve_once(e, gss, e.keytab, [f"HTTP@web.{e.domain}", "hello"], e.with_cache("t_m2", conf))
+        check(f"trust: an unmapped bob@{REALM_A} gets a ticket with no PAC", p.returncode == 0
+              and f"accepted: bob@{REALM_A}" in log and "pac: none" in log, log + out(p))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--password-file", required=True)
@@ -235,6 +302,8 @@ def main():
     ap.add_argument("--kdc", default="127.0.0.1:8888")
     ap.add_argument("--ldap", default="127.0.0.1:3890")
     ap.add_argument("--domain", default="goose.test")
+    ap.add_argument("--trust-password-file")
+    ap.add_argument("--mit")
     ap.add_argument("--goose")
     ap.add_argument("-k", help="only checks whose name contains this")
     ap.add_argument("-v", action="store_true")
@@ -262,6 +331,8 @@ def main():
         e = Env(tmp, conf)
         e.domain = args.domain
         e.pw = pw
+        e.kdc = args.kdc
+        e.keytab = keytab
         kinit_tests(e, tool, pw, keytab, realm, rc4_conf)
         kvno_tests(e, tool, keytab, realm)
         pac_sids, domain_sid = pac_tests(e, gss, keytab, realm)
@@ -269,6 +340,10 @@ def main():
         http_tests(e, gss, keytab)
         user_sid = pac_sids[0] if pac_sids else ""
         ldap_tests(e, gss, args.ldap, args.dc_host, user_sid, pac_sids, domain_sid, device_sid)
+        if args.trust_password_file:
+            with open(args.trust_password_file) as f:
+                trust_pw = f.readline().strip()
+            trust_tests(e, tool, gss, realm, trust_pw, args.mit, pac_sids, domain_sid)
     print(f"\n{interop.passed} passed, {len(interop.failed)} failed")
     sys.exit(1 if interop.failed else 0)
 

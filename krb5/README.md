@@ -146,7 +146,7 @@ armor stripped from an error (no retry in the clear).
 
 `scripts/ad.py`: against Active Directory, the DC `scripts/windows`
 makes (goose.test on Windows Server 2022, reached by an ssh tunnel to its
-loopback; the script's header has the commands), 36 checks: kinit with a
+loopback; the script's header has the commands), 43 checks: kinit with a
 password (AES; RC4 for bob), a computer account (goosepc$, its salt from
 ETYPE-INFO2) and ktpass's keytab, wrong passwords and unknown users,
 FAST (kinit -T, an error read inside AD's armor), renewal; kvno for both
@@ -160,7 +160,20 @@ TGT: device info and device claims in the PAC, the device in Domain
 Computers, Compounded Authentication in the user's SIDs, none of it
 without the armor); LDAP with SASL GSSAPI at each protection layer (Who
 am I?), the PAC's user and device SIDs found by SID, and tokenGroups
-equal to the PAC's domain groups.
+equal to the PAC's domain groups. With `--trust-password-file`, the
+two-way realm trust between goose.test and MIT's A.TEST
+(`windows/trust.ps1`; scripts/kdc.py's KDCs with the trust's keys): AD's
+alice to an MIT service (AD's cross-realm TGT, MIT's ticket, whose PAC
+is MIT's own: AD's logon info does not cross) and MIT's alice and bob to
+svc-web (AD's PAC for alice is the account mapped to her,
+`altSecurityIdentities`; unmapped bob's ticket has none).
+
+Across the trust: AD refuses (KRB_ERR_GENERIC, nothing in e-text or
+e-data) a cross-realm TGT from MIT that carries a PAC, which MIT puts in
+every ticket since 1.20; `+no_auth_data_required` on
+`krbtgt/GOOSE.TEST@A.TEST` leaves it out. AD refers nothing to an MIT
+realm (`ksetup /addhosttorealmmap` is the DC's own client's map): the
+client needs `[domain_realm]` for the realm's hosts.
 
 AD leaves the claims out of the PAC unless the request carries
 PA-PAC-OPTIONS with the claims bit (MS-KILE §2.2.10), as Windows' does;
@@ -190,8 +203,8 @@ Go, and `tools/krb5oracle/go.mod` points (`replace`) at that checkout.
 - Windows is built for (the C has its Windows branches) but untested.
 - An acceptor taking any name (`any_name`) tries the first keytab key of
   the ticket's realm, type and version, where MIT tries each in turn.
-- Against AD (one DC, one domain): no cross-domain trust or referrals
-  between domains, no read-only DC, no AD-side checks of our initiator by
+- Against AD (one DC, one domain): no trust between AD domains or
+  forests (an MIT realm trust only), no read-only DC, no AD-side checks of our initiator by
   Windows' own clients (only by our acceptor).
 
 FAST follows MIT's client with one difference: given armor, every AS
