@@ -125,6 +125,11 @@ def group_rows(name, d, g):
         return lambda t: [kind, t["key"], t["iv"], t["aad"], t["msg"], t["ct"], t["tag"]]
     if typ == "IndCpaTest" and alg == "AES-CBC-PKCS5":
         return lambda t: ["cbc", t["key"], t["iv"], t["msg"], t["ct"]]
+    if typ == "IndCpaTest" and alg == "CAMELLIA-CBC-PKCS5":
+        return lambda t: ["camellia_cbc", t["key"], t["iv"], t["msg"], t["ct"]]
+    if typ == "MacTest" and alg in ("AES-CMAC", "CAMELLIA-CMAC"):
+        cipher = alg.split("-")[0].lower()
+        return lambda t: ["cmac", cipher, t["key"], t["msg"], t["tag"]]
     if typ == "IndCpaTest" and alg == "AES-XTS":
         def xts(t):
             if len(t["msg"]) % 32 != 0 or len(t["msg"]) == 0:
@@ -237,6 +242,7 @@ def group_rows(name, d, g):
 
 # The files this package has an API for, by pattern; others are not tried.
 WANTED = ("aes_gcm_test", "chacha20_poly1305_test", "xchacha20_poly1305_test", "aes_cbc_pkcs5_test",
+          "camellia_cbc_pkcs5_test", "aes_cmac_test", "camellia_cmac_test",
           "aes_xts_test", "hmac_", "hkdf_", "pbkdf2_", "ecdh_secp224r1_ecpoint", "ecdh_secp256r1_ecpoint",
           "ecdh_secp384r1_ecpoint", "ecdh_secp521r1_ecpoint", "ecdsa_secp224r1_", "ecdsa_secp256r1_",
           "ecdsa_secp384r1_", "ecdsa_secp521r1_", "ed25519_test", "x25519_test", "rsa_signature_", "rsa_pss_",

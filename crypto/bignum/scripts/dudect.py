@@ -39,6 +39,9 @@ TARGETS = [
     ("dut_x25519_base", 32, False),
     ("dut_ecdsa_p256_sign", 32, False),
     ("dut_ed25519_sign", 32, False),
+    ("dut_camellia128_encrypt", 16, False),
+    ("dut_camellia256_key", 32, False),
+    ("dut_cmac_camellia", 16, False),
 ]
 
 

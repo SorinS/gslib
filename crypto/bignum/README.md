@@ -37,6 +37,11 @@ language, written in Goose: a foundation for cryptography.
   raised in constant time. A secret exponent is at least 224 bits (NIST SP
   800-56A, RFC 7919 §5.2).
 - **`bignum.aes`**: AES-128/192/256 and CTR mode, bitsliced, constant time.
+- **`bignum.camellia`**: Camellia-128/192/256 (RFC 3713), constant time:
+  its S-box runs as the AES one's bitsliced circuit between two affine maps.
+- **`bignum.cmac`**: CMAC (SP 800-38B, RFC 4493) over any 8- or 16-byte
+  block cipher here: AES-CMAC, Camellia-CMAC; constant time when the
+  cipher is.
 - **`bignum.gcm`**: AES-GCM authenticated encryption, constant time.
 - **`bignum.modes`**: CBC, CFB, OFB and CTR over any of the block ciphers,
   XTS over 16-byte ones, and PKCS #7 padding.
@@ -268,8 +273,8 @@ SP 800-38D): encrypting more aborts, as Go panics, and opening more fails;
 `gcm_fits(n)` is the check all four use.
 
 `bignum.modes` has the other modes of Go's crypto/cipher, written once
-over any block cipher with a `cipher_encrypt` overload (AES, DES and
-triple DES here). Each works in place from a one-block IV:
+over any block cipher with a `cipher_encrypt` overload (AES, Camellia, DES
+and triple DES here). Each works in place from a one-block IV:
 - `cbc_encrypt` and `cbc_decrypt` take whole blocks;
 - `cfb_encrypt` and `cfb_decrypt` (full-block segments, CFB-128 for AES),
   `ofb_xor` and `ctr_xor` take any length.
@@ -278,6 +283,21 @@ triple DES here). Each works in place from a one-block IV:
 and remove CBC padding; unpadding checks in constant time. Without a MAC
 checked first, a CBC decryption that reports bad padding is still a
 padding oracle, so prefer an AEAD.
+
+`camellia_init(key)` expands a 16-, 24- or 32-byte Camellia key (RFC
+3713), with `camellia_encrypt_block` and `camellia_decrypt_block`, and
+works with every mode. No table is indexed by data: Camellia's s1 is
+A2(S(A1(x))) for the AES S-box S and two affine maps (A1 holds the
+spec's 0xc5), so F's eight S-boxes are bignum.aes's bitsliced circuit on
+eight bit planes, one byte a lane, with A1 and A2 as XORs of planes and
+s2, s3, s4's bit rotations as masked moves between planes. The maps were
+found by a linear-equivalence search, which `scripts/camellia_vectors.py`
+repeats, and are checked on all 256 bytes against RFC 3713's SBOX1.
+
+`cmac(k, msg)` is CMAC over any of these ciphers with 8- or 16-byte
+blocks (a block of tag), and `cmac_verify(k, msg, tag)` compares a tag of
+1 to a block's bytes (truncated CMACs are the leading bytes) in constant
+time.
 
 `des_init(key8)` and `des3_init(key24)` expand DES and triple-DES (EDE)
 keys, with `des_encrypt_block` / `des3_encrypt_block` and their decrypt
@@ -580,13 +600,15 @@ tools/govectors.sh > test/vectors/xcrypto.txt   # regenerate it
   t-test compares their times, whole and cut at percentiles; |t| above 10
   is a leak. It covers `mont_modexp` (exponent 0 against random),
   `ct_mod_inv`, `ct_mod_small`, the RSA private operation, RSA key loading,
-  X25519, ECDSA on P-256 and Ed25519 signing. BigInt's `modpow` runs as a
+  X25519, ECDSA on P-256, Ed25519 signing, Camellia (one block or random
+  under a key; one key or random through the key schedule) and CMAC over
+  Camellia (one key or random). BigInt's `modpow` runs as a
   control and must be caught (it is, at |t| near 500; the others stay
   below 2).
 - `wycheproof/wycheproof` (`scripts/wycheproof.py`, not in run_tests.py):
   Wycheproof's vectors, converted from its JSON, for every family this
   package has an API for: AES-GCM, ChaCha20- and XChaCha20-Poly1305,
-  AES-CBC with PKCS #7, AES-XTS, HMAC, HKDF and PBKDF2 over SHA-1, SHA-2
+  AES- and Camellia-CBC with PKCS #7, AES- and Camellia-CMAC, AES-XTS, HMAC, HKDF and PBKDF2 over SHA-1, SHA-2
   and SHA-3, ECDH and ECDSA (DER and P1363) on P-224 to P-521, Ed25519,
   X25519, RSA PKCS #1 v1.5 (signing, verifying, decryption), PSS and OAEP,
   DSA, ML-KEM, ML-DSA and primality. A valid test must give Wycheproof's
@@ -599,7 +621,7 @@ tools/govectors.sh > test/vectors/xcrypto.txt   # regenerate it
   constant-time code exported to C, in its own harness
   (`tools/dudect/harness.c`): mont_modexp, ct_mod_inv, ct_mod_small, the
   RSA private and constant-time public operations, X25519, ECDSA P-256 and
-  Ed25519 signing. Two controls must leak (an early-exit comparison, BigInt's
+  Ed25519 signing, Camellia (a block, a key schedule) and Camellia-CMAC. Two controls must leak (an early-exit comparison, BigInt's
   modpow) and a third, constant time by construction, sets the machine's
   floor: a leak is t above 500, or above 10 with ten times that floor's
   effect size.
@@ -615,6 +637,16 @@ tools/govectors.sh > test/vectors/xcrypto.txt   # regenerate it
   and in pieces, against hashlib; MGF1.
 - `aes_vectors`: the S-box and its inverse on all 256 bytes, blocks at each
   key size, and CTR with counters that carry and wrap.
+- `camellia_vectors` (`scripts/camellia_vectors.py`): s1 computed as
+  camellia.goose computes it (A1, the AES circuit, A2, on planes) against
+  RFC 3713's SBOX1 on all 256 bytes; F on random and edge inputs; RFC
+  3713's Appendix A and random blocks at each key size (all-zero and
+  all-one keys among them), both ways; CBC, CFB, OFB and CTR (counters
+  that wrap) through `bignum.modes`; CMAC over AES, Camellia and 3DES at
+  every length around the block edges, RFC 4493's examples, and keys
+  chosen so that both arms of the subkey doubling run, with altered,
+  truncated, too-long and empty tags. Every vector is checked against
+  openssl when made.
 - `gcm_vectors`: the GCM specification's test cases 1 to 5 and random ones,
   with nonces of 12 bytes and other lengths. Every vector is also opened
   with each part tampered with in turn.
@@ -705,7 +737,9 @@ AES, GCM, ChaCha20-Poly1305, RSA, EC and Ed25519 vectors (hashes, HMAC and HKDF 
 hashlib). Each transcription is first checked against its standard's
 published vectors. Then, while generating, every AES, CTR, ChaCha20,
 Poly1305, RSA, ECDH, ECDSA and Ed25519 vector is also checked with the `openssl` command when
-it is installed. `scripts/extra_vectors.py` does the same for everything
+it is installed. `scripts/camellia_vectors.py` (which needs openssl)
+holds the Camellia and CMAC transcriptions. `scripts/extra_vectors.py`
+does the same for everything
 added later (with `des_ref.py`, a DES transcription). It checks cSHAKE's
 transcription through openssl's KMAC, which is built on it. Its Argon2
 cases and openssl's own PKCS #1 v1.5 ciphertexts come from openssl

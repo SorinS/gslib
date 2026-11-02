@@ -29,6 +29,8 @@ import gslib.crypto.bignum.mlkem;
 import gslib.crypto.bignum.mldsa;
 import gslib.crypto.bignum.kdf;
 import gslib.crypto.bignum.aes;
+import gslib.crypto.bignum.camellia;
+import gslib.crypto.bignum.cmac;
 
 var valid_ok = 0;
 var valid_bad = 0;
@@ -111,18 +113,37 @@ fn run(w: const u8[:][:]) -> bool {
         }
         return ok && data == msg;
     }
-    if k == "cbc" {
+    if k == "cbc" || k == "camellia_cbc" {
         let key = unhex(w[3]);
         let iv = unhex(w[4]);
         let msg = unhex(w[5]);
         let ct = unhex(w[6]);
         if ct.len == 0 || ct.len % 16 != 0 || iv.len != 16 { return false; }
-        let a = bignum::aes_init(key);
         var data: u8[>..] = [];
         data.append(ct);
-        bignum::cbc_decrypt(a, iv, data);
+        if k == "cbc" {
+            let a = bignum::aes_init(key);
+            bignum::cbc_decrypt(a, iv, data);
+        } else {
+            let c = bignum::camellia_init(key);
+            bignum::cbc_decrypt(c, iv, data);
+        }
         let pt, ok = bignum::pkcs7_unpad(data);
         return ok && pt == msg;
+    }
+    if k == "cmac" {
+        // The ciphers' inits assert on a key of another size; the
+        // caller refuses one first.
+        let key = unhex(w[4]);
+        let msg = unhex(w[5]);
+        let tag = unhex(w[6]);
+        if key.len != 16 && key.len != 24 && key.len != 32 { return false; }
+        if w[3] == "aes" {
+            let a = bignum::aes_init(key);
+            return bignum::cmac_verify(a, msg, tag);
+        }
+        let c = bignum::camellia_init(key);
+        return bignum::cmac_verify(c, msg, tag);
     }
     if k == "xts" {
         let key = unhex(w[3]);

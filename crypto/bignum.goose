@@ -23,8 +23,9 @@
 // - `bignum.rsa`: key generation, key loading, the private-key operation
 //   (CRT, blinded) and encryption; `bignum.dsa` signing and `bignum.ffdh`,
 //   all built on `ct` and `mont`;
-// - `bignum.aes`, `bignum.gcm`, `bignum.des`, `bignum.mlkem` and
-//   `bignum.mldsa` need no bignum, and are constant time themselves.
+// - `bignum.aes`, `bignum.gcm`, `bignum.camellia`, `bignum.cmac`,
+//   `bignum.des`, `bignum.mlkem` and `bignum.mldsa` need no bignum, and
+//   are constant time themselves.
 // What still uses this layer outside it works on public values only:
 // RSA signature verification, DSA's domain parameters and verification,
 // and the like; scripts/ct_audit.py lists each use and why.

@@ -25,6 +25,8 @@ import gslib.crypto.bignum.rsa;
 import gslib.crypto.bignum.x25519;
 import gslib.crypto.bignum.ec;
 import gslib.crypto.bignum.ed25519;
+import gslib.crypto.bignum.camellia;
+import gslib.crypto.bignum.cmac;
 
 let LIMIT = 10.0;
 
@@ -314,6 +316,71 @@ fn main() {
             sample(s, c, clock_ns() - t0);
         }
         report("ed25519_sign, one seed or random", s, false);
+    }
+
+    // Camellia-128, twenty blocks a run under one key: one plaintext
+    // against random ones.
+    block {
+        var key: u8[16] = [0; 16];
+        random_bytes_into(r, key);
+        let k = bignum::camellia_init(key);
+        var fixed: u8[16] = [0; 16];
+        random_bytes_into(r, fixed);
+        var blk: u8[16] = [0; 16];
+        var acc: u8 = 0;
+        var s: i64[>..] = [];
+        for i in 3000 * scale {
+            let c = (r.rand_u64() & 1) as! u8;
+            if c == 0 { blk = fixed; } else { random_bytes_into(r, blk); }
+            let t0 = clock_ns();
+            for j in 20 { blk = bignum::camellia_encrypt_block(k, blk); }
+            sample(s, c, clock_ns() - t0);
+            acc ^= blk[0];
+        }
+        report("camellia-128 encrypt, one block or random", s, false);
+        if acc == 1 && failures == 12345 { print(""); }
+    }
+
+    // Camellia-256's key schedule and a block: one key against random ones.
+    block {
+        var fixed: u8[32] = [0; 32];
+        random_bytes_into(r, fixed);
+        var key: u8[32] = [0; 32];
+        let zero: u8[16] = [0; 16];
+        var acc: u8 = 0;
+        var s: i64[>..] = [];
+        for i in 3000 * scale {
+            let c = (r.rand_u64() & 1) as! u8;
+            if c == 0 { key = fixed; } else { random_bytes_into(r, key); }
+            let t0 = clock_ns();
+            let k = bignum::camellia_init(key);
+            let out = bignum::camellia_decrypt_block(k, zero);
+            sample(s, c, clock_ns() - t0);
+            acc ^= out[0];
+        }
+        report("camellia-256 key schedule and decrypt, one key or random", s, false);
+        if acc == 1 && failures == 12345 { print(""); }
+    }
+
+    // CMAC over Camellia-128 of one 40-byte message: one key against
+    // random ones.
+    block {
+        var fixed: u8[16] = [0; 16];
+        random_bytes_into(r, fixed);
+        var key: u8[16] = [0; 16];
+        var acc: u8 = 0;
+        var s: i64[>..] = [];
+        for i in 2000 * scale {
+            let c = (r.rand_u64() & 1) as! u8;
+            if c == 0 { key = fixed; } else { random_bytes_into(r, key); }
+            let t0 = clock_ns();
+            let k = bignum::camellia_init(key);
+            let t = bignum::cmac(k, "a message of forty bytes, give or take..");
+            sample(s, c, clock_ns() - t0);
+            acc ^= t[0];
+        }
+        report("cmac camellia-128, one key or random", s, false);
+        if acc == 1 && failures == 12345 { print(""); }
     }
 
     print(if failures == 0 { "ct timing: no leak found" } else { "ct timing: FAILED" });

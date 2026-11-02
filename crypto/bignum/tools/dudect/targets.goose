@@ -15,6 +15,8 @@ import gslib.crypto.bignum.rsa;
 import gslib.crypto.bignum.x25519;
 import gslib.crypto.bignum.ec;
 import gslib.crypto.bignum.ed25519;
+import gslib.crypto.bignum.camellia;
+import gslib.crypto.bignum.cmac;
 
 var rsa_key = bignum::RsaPrivateKey { n: [], e: [], d: [], p: [], q: [], dp: [], dq: [], qinv: [] };
 var m512: u32[..16] = [];           // an odd 512-bit modulus, with its R^2 and -1/m
@@ -148,4 +150,29 @@ export fn dut_ecdsa_p256_sign(data: const u8[:]) -> u8 {
 export fn dut_ed25519_sign(data: const u8[:]) -> u8 {
     let sig = bignum::ed25519_sign(data[..32], "a message");
     return sig[0];
+}
+
+// Camellia-128 encryption of one block under a fixed key, the input the
+// block (16 bytes).
+export fn dut_camellia128_encrypt(data: const u8[:]) -> u8 {
+    let key: u8[16] = [0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c];
+    let k = bignum::camellia_init(key);
+    let out = bignum::camellia_encrypt_block(k, data[..16]);
+    return out[0];
+}
+
+// Camellia-256's key schedule and one block's decryption, the input the
+// key (32 bytes).
+export fn dut_camellia256_key(data: const u8[:]) -> u8 {
+    let zero: u8[16] = [0; 16];
+    let k = bignum::camellia_init(data[..32]);
+    let out = bignum::camellia_decrypt_block(k, zero);
+    return out[0];
+}
+
+// CMAC over Camellia-128 of one message, the input the key (16 bytes).
+export fn dut_cmac_camellia(data: const u8[:]) -> u8 {
+    let k = bignum::camellia_init(data[..16]);
+    let t = bignum::cmac(k, "a message of forty bytes, give or take..");
+    return t[0];
 }
