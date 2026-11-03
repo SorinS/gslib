@@ -83,6 +83,9 @@ fn ed_add(p: const EdPoint&, q: const EdPoint&) -> EdPoint {
     return EdPoint { x: fe_mul(e, f), y: fe_mul(g, h), z: fe_mul(f, g), t: fe_mul(e, h) };
 }
 
+// -p: (-X : Y : Z : -T).
+fn ed_neg(p: const EdPoint&) -> EdPoint { EdPoint { x: fe_neg(p.x), y: p.y, z: p.z, t: fe_neg(p.t) } }
+
 fn ed_select(dst: EdPoint&, src: const EdPoint&, mask: i64) {
     dst.x = fe_select(src.x, dst.x, mask);
     dst.y = fe_select(src.y, dst.y, mask);

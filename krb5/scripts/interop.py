@@ -21,7 +21,7 @@ import time
 
 ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.dirname(__file__))
-from kdc import Kdc  # noqa: E402
+from kdc import Kdc, SAM_ETYPES  # noqa: E402
 
 failed = []
 passed = 0
@@ -265,10 +265,11 @@ def der_field(b, start, end, tag):
 
 
 class TamperRelay:
-    """A KDC on 127.0.0.1 (TCP) that forwards to the F.TEST KDC and alters
-    its replies as `mode` says: as-ticket, as-cname, as-strip (an AS-REP's
-    ticket, client name, or PA-FX-FAST), tgs-ticket, tgs-strip, err-strip
-    (an armored KRB-ERROR's PA-FX-FAST), or none."""
+    """A KDC on 127.0.0.1 (TCP) that forwards to a KDC (F.TEST's, S.TEST's)
+    and alters its replies as `mode` says: as-ticket, as-cname, as-strip (an
+    AS-REP's ticket, client name, or PA-FX-FAST), tgs-ticket, tgs-strip,
+    err-strip (an armored KRB-ERROR's PA-FX-FAST), err-spake-neg (an
+    edwards25519 SPAKE challenge's key T made -T: still a point), or none."""
 
     def __init__(self, port):
         self.kdc_port = port
@@ -347,6 +348,12 @@ class TamperRelay:
         elif mode.endswith("-strip") and kind != "err":
             _, ps, pe = der_field(b, ss, se, 0xa2)
             self.unfast(b, ps, pe)
+        elif mode == "err-spake-neg":
+            # group 1, then [1] OCTET STRING of 32 bytes: T's last byte
+            # holds the sign of x.
+            i = bytes(b).find(b"\x02\x01\x01\xa1\x22\x04\x20")
+            if i >= 0:
+                b[i + 7 + 31] ^= 0x80
         elif mode == "err-strip":
             f = der_field(b, ss, se, 0xac)
             if f:
@@ -463,6 +470,131 @@ def fast_tests(k, tool):
         q = run(k, [tool, "kvno", "HTTP/svc.f.test@F.TEST"], env=env)
         check("FAST relay: TGS-REP without PA-FX-FAST fails (its key was strengthened)",
               q.returncode == 1 and relay.altered > a, out(q))
+    finally:
+        relay.close()
+
+
+def spake_tests(k, tool):
+    """SPAKE pre-authentication against MIT's KDC. S.TEST offers it in
+    all four groups and refuses the encrypted timestamp, so an unarmored
+    password works there only through SPAKE; O.TEST sends an optimistic
+    edwards25519 challenge and takes edwards25519 and P-256 only, and the
+    timestamp. Each exchange is read back from the KDC's log."""
+    base = open(k.path("krb5.conf")).read()
+    slog, olog = k.path("kdc-s.log"), k.path("kdc-o.log")
+
+    def cc(name):
+        return dict(k.env, KRB5CCNAME="FILE:" + k.path(name))
+
+    def conf(name, groups=None, realm_port=None, extra=""):
+        text = base
+        if groups:
+            text = text.replace("[libdefaults]", f"[libdefaults]\n    spake_preauth_groups = {groups}", 1)
+        if realm_port and extra:
+            text = text.replace(f"kdc = 127.0.0.1:{realm_port}", f"kdc = 127.0.0.1:{realm_port}\n        {extra}")
+        path = k.path(name)
+        with open(path, "w") as f:
+            f.write(text)
+        return path
+
+    def mark(log):
+        return len(open(log).read())
+
+    def since(log, at):
+        # The AS-REQ lines and the SPAKE module's, logged after `at`.
+        return [l for l in open(log).read()[at:].splitlines() if "AS_REQ" in l or "preauth (spake)" in l]
+
+    more = "preauth (spake) verify failure: More preauthentication data is required"
+    # The reply key's type, as the KDC logs it (rep=...).
+    for user, etype in [("sam", "aes256-cts-hmac-sha1-96")] + [(f"sam-{x}", e) for x, e in SAM_ETYPES]:
+        at = mark(slog)
+        p = run(k, [tool, "kinit", f"{user}@S.TEST"], f"{user}-pw\n", env=cc(f"{user}.cc"))
+        lines = since(slog, at)
+        issued = [l for l in lines if "ISSUE" in l and f"{user}@S.TEST for krbtgt" in l]
+        rep = issued[0].split("rep=")[1].split(",")[0] if len(issued) == 1 else ""
+        check(f"SPAKE: kinit {user} (support, challenge, response; reply key {etype})",
+              p.returncode == 0 and any(more in l for l in lines) and etype in rep, out(p) + "\n".join(lines))
+    for g in ("P-256", "P-384", "P-521"):
+        env = dict(cc("sam-g.cc"), KRB5_CONFIG=conf(f"krb5-spake-{g}.conf", groups=g))
+        at = mark(slog)
+        p = run(k, [tool, "kinit", "sam@S.TEST"], "sam-pw\n", env=env)
+        lines = since(slog, at)
+        check(f"SPAKE: kinit in {g} (the only group we offer)", p.returncode == 0 and any(more in l for l in lines),
+              out(p) + "\n".join(lines))
+    env = dict(cc("sam-nots.cc"), KRB5_CONFIG=conf("krb5-spake-nots.conf", realm_port=k.port_s,
+                                                    extra="disable_encrypted_timestamp = true"))
+    p = run(k, [tool, "kinit", "sam@S.TEST"], "sam-pw\n", env=env)
+    check("SPAKE: client disable_encrypted_timestamp, SPAKE still taken", p.returncode == 0, out(p))
+    p = run(k, [tool, "kvno", "host/fast.s.test@S.TEST"], env=cc("sam.cc"))
+    check("SPAKE: kvno with the TGT SPAKE got", p.returncode == 0, out(p))
+
+    # O.TEST's optimistic challenge, taken, refused, and no group in common.
+    # Taken: the client sends no timestamp, so SPAKE alone can succeed.
+    at = mark(olog)
+    env = dict(cc("olga.cc"), KRB5_CONFIG=conf("krb5-spake-onots.conf", realm_port=k.port_o,
+                                                extra="disable_encrypted_timestamp = true"))
+    p = run(k, [tool, "kinit", "olga@O.TEST"], "olga-pw\n", env=env)
+    lines = since(olog, at)
+    check("SPAKE: optimistic challenge answered at once (2 requests)",
+          p.returncode == 0 and len(lines) == 2 and "NEEDED_PREAUTH" in lines[0] and "ISSUE" in lines[1],
+          out(p) + "\n".join(lines))
+    at = mark(olog)
+    env = dict(cc("olga-p256.cc"), KRB5_CONFIG=conf("krb5-spake-o256.conf", groups="P-256"))
+    p = run(k, [tool, "kinit", "olga@O.TEST"], "olga-pw\n", env=env)
+    lines = since(olog, at)
+    check("SPAKE: optimistic edwards25519 refused, P-256 asked for and used",
+          p.returncode == 0 and any(more in l for l in lines) and "ISSUE" in lines[-1], out(p) + "\n".join(lines))
+    at = mark(olog)
+    env = dict(cc("olga-p384.cc"), KRB5_CONFIG=conf("krb5-spake-o384.conf", groups="P-384"))
+    p = run(k, [tool, "kinit", "olga@O.TEST"], "olga-pw\n", env=env)
+    lines = since(olog, at)
+    check("SPAKE: no group in common, the support refused, encrypted timestamp instead",
+          p.returncode == 0 and any("PREAUTH_FAILED" in l for l in lines) and "ISSUE" in lines[-1],
+          out(p) + "\n".join(lines))
+    at = mark(olog)
+    env = dict(cc("olga-p384n.cc"), KRB5_CONFIG=conf("krb5-spake-o384nots.conf", groups="P-384", realm_port=k.port_o,
+                                                     extra="disable_encrypted_timestamp = true"))
+    p = run(k, [tool, "kinit", "olga@O.TEST"], "olga-pw\n", env=env)
+    lines = since(olog, at)
+    check("SPAKE: no group in common and disable_encrypted_timestamp: refused, no timestamp sent",
+          p.returncode == 1 and not any("ISSUE" in l for l in lines) and len([l for l in lines if "AS_REQ" in l]) == 2,
+          out(p) + "\n".join(lines))
+    at = mark(olog)
+    p = run(k, [tool, "kinit", "olga@O.TEST"], "wrong\n", env=cc("olga-wrong.cc"))
+    all_lines = since(olog, at)
+    lines = [l for l in all_lines if "AS_REQ" in l]
+    check("SPAKE: wrong password, PREAUTH_FAILED and no fallback to the timestamp",
+          p.returncode == 1 and "PREAUTH_FAILED" in out(p) and len(lines) == 2 and "PREAUTH_FAILED" in lines[1]
+          and any("preauth (spake) verify failure: Preauthentication failed" in l for l in all_lines),
+          out(p) + "\n".join(all_lines))
+
+    # Inside FAST: SPAKE taken over the encrypted challenge.
+    armor = "FILE:" + k.path("s-armor.cc")
+    p = run(k, [tool, "kinit", "-k", k.path("s-fast.keytab"), "host/fast.s.test@S.TEST"], env=cc("s-armor.cc"))
+    at = mark(slog)
+    q = run(k, [tool, "kinit", "-T", armor, "sam@S.TEST"], "sam-pw\n", env=cc("sam-fast.cc"))
+    lines = since(slog, at)
+    check("SPAKE: inside FAST (kinit -T)", p.returncode == 0 and q.returncode == 0 and any(more in l for l in lines),
+          out(p) + out(q) + "\n".join(lines))
+    at = mark(slog)
+    q = run(k, [tool, "kinit", "-T", armor, "sam@S.TEST"], "wrong\n", env=cc("sam-fast-wrong.cc"))
+    lines = since(slog, at)
+    check("SPAKE: inside FAST, wrong password", q.returncode == 1 and "PREAUTH_FAILED" in out(q)
+          and any("preauth (spake) verify failure: Preauthentication failed" in l for l in lines), out(q) + "\n".join(lines))
+
+    # A KDC in the middle that answers for the KDC's T with -T.
+    relay = TamperRelay(k.port_s)
+    env = dict(cc("sam-relay.cc"), KRB5_CONFIG=k.path("krb5-spake-relay.conf"))
+    with open(k.path("krb5-spake-relay.conf"), "w") as f:
+        f.write(base.replace(f"kdc = 127.0.0.1:{k.port_s}", f"kdc = tcp/127.0.0.1:{relay.port}"))
+    try:
+        p = run(k, [tool, "kinit", "sam@S.TEST"], "sam-pw\n", env=env)
+        check("SPAKE relay: unaltered", p.returncode == 0, out(p))
+        relay.mode = "err-spake-neg"
+        a = relay.altered
+        p = run(k, [tool, "kinit", "sam@S.TEST"], "sam-pw\n", env=env)
+        check("SPAKE relay: T replaced by -T, the KDC refuses the response",
+              p.returncode == 1 and "PREAUTH_FAILED" in out(p) and relay.altered > a, out(p))
     finally:
         relay.close()
 
@@ -631,6 +763,7 @@ def main():
             tgs_tests(k, tool)
             transport_tests(k, tool)
             fast_tests(k, tool)
+            spake_tests(k, tool)
             gss_tests(k, tool, gss)
             http_tests(k, tool, gss)
         skew_tests(args.mit, tool, goose)

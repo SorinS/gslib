@@ -332,6 +332,62 @@ fn ec_decode(c: const Curve&, s: const u8[:]) -> EcPoint, bool {
     return p, true;
 }
 
+// -p: (X : -Y : Z).
+fn ec_neg(c: const Curve&, p: const EcPoint&) -> EcPoint {
+    return EcPoint { x: p.x, y: fsub(c, ec_zero(c)[..], p.y[..]), z: p.z };
+}
+
+// The compressed encoding 02 or 03 (y's parity) || x (SEC 1 §2.3.3).
+fn ec_encode_compressed(c: const Curve&, p: const EcPoint&) -> u8[>..] {
+    let x, y, ok = ec_affine(c, p);
+    assert(ok);
+    var out: u8[>..] = [];
+    out.resize(1 + c.len, 0);
+    out[0] = 2 | ((y[0] & 1) as! u8);
+    be_from_limbs(out[1..], x[..]);
+    return out;
+}
+
+// A point from its compressed encoding (SEC 1 §2.3.4): y the square root
+// of x^3 - 3x + b of the parity asked, a^((p+1)/4) as p = 3 (mod 4) on
+// P-256, P-384 and P-521 (false on P-224, whose p is not). False for an
+// x not below p or with no point. Public data.
+fn ec_decode_compressed(c: const Curve&, s: const u8[:]) -> EcPoint, bool {
+    var p = ec_infinity(c);
+    if s.len != 1 + c.len || (s[0] != 2 && s[0] != 3) || c.p[0] & 3 != 3 { return p, false; }
+    var x = ec_zero(c);
+    limbs_from_be(x[..], s[1..]);
+    if ct_lt(x[..], c.p[..]) == 0 { return p, false; }
+    let xm = to_mont(c, x[..]);
+    let x2 = fmul(c, xm[..], xm[..]);
+    let x3 = fmul(c, x2[..], xm[..]);
+    let tx = fadd(c, fadd(c, xm[..], xm[..])[..], xm[..]);
+    let rhs = fsub(c, fadd(c, x3[..], c.b[..])[..], tx[..]);
+    // (p + 1) / 4 = (p >> 2) + 1, as p = 3 (mod 4).
+    var e = ec_zero(c);
+    for i in c.nl {
+        e[i] = c.p[i] >> 2;
+        if i + 1 < c.nl { e[i] = e[i] | c.p[i + 1] << 30; }
+    }
+    var carry: u64 = 1;
+    for i in c.nl {
+        let t = e[i] + carry;
+        e[i] = t as! u32;
+        carry = t >> 32;
+    }
+    var y = ec_zero(c);
+    mont_modexp(y[..], from_mont(c, rhs[..])[..], e[..], c.p[..], c.p0i, c.r2p[..]);
+    var ym = to_mont(c, y[..]);
+    if ct_eq(fmul(c, ym[..], ym[..])[..], rhs[..]) == 0 { return p, false; }
+    if (y[0] & 1) != (s[0] & 1) { ym = fsub(c, ec_zero(c)[..], ym[..]); }
+    p.x = xm;
+    p.y = ym;
+    var one = ec_zero(c);
+    one[0] = 1;
+    p.z = to_mont(c, one[..]);
+    return p, true;
+}
+
 // A private scalar from its big-endian bytes; false unless 1 <= k < n.
 fn ec_scalar(c: const Curve&, sk: const u8[:]) -> u32[..17], bool {
     var k = ec_zero(c);

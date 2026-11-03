@@ -12,8 +12,11 @@
 // its own TGT, as MIT's are, a KDC that does not do FAST answered in the
 // clear.
 //
-// Not done: PKINIT, SPAKE, FAST's hide-client-names option, explicit
-// armor in a TGS exchange (Windows' compound identity),
+// SPAKE (krb5.spake) when the KDC offers it: our support message, the
+// KDC's challenge (or its optimistic one at once), our response; the
+// reply key K'[0].
+//
+// Not done: PKINIT, FAST's hide-client-names option,
 // S4U2Self/S4U2Proxy and user-to-user.
 
 namespace krb5;
@@ -30,6 +33,7 @@ import krb5.net;
 import krb5.keytab;
 import krb5.ccache;
 import krb5.fast;
+import krb5.spake;
 
 // The settings of a request, from krb5.conf's [libdefaults] (MIT's
 // defaults), and the clock offset learned from the KDC.
@@ -174,12 +178,16 @@ fn pick_etype_info(pa: const PaData[:], etypes: const i32[:], name: const u8[:],
     return 0, salt, params, false;
 }
 
-// The padata of an AS-REQ: the pre-authentication (encrypted challenge
-// inside FAST when the KDC offers it, else the encrypted timestamp), the
-// FAST cookie, the PAC request, and the ask for the request's checksum.
+// The padata of an AS-REQ: the pre-authentication (a SPAKE message when
+// one is under way, else encrypted challenge inside FAST when the KDC
+// offers it, else the encrypted timestamp), the FAST cookie, the PAC
+// request, and the ask for the request's checksum.
 fn as_padata(s: const Settings&, st: const FastState&, armored: bool, challenge: bool, pk: const PreauthKey&,
-             cookie: const u8[:], has_cookie: bool, now: i64, usec: i64, out: PaData[>..]&) -> i64 {
-    if pk.have {
+             spake: const u8[:], has_spake: bool, cookie: const u8[:], has_cookie: bool, now: i64, usec: i64,
+             out: PaData[>..]&) -> i64 {
+    if has_spake {
+        out.push(PaData { pa_type: PA_SPAKE, value: spake });
+    } else if pk.have {
         if armored && challenge {
             var v: u8[>..] = [];
             let err = enc_challenge(st, pk.key, now, usec, v);
@@ -281,6 +289,15 @@ fn as_exchange(cfg: const Config&, s: Settings&, cname: const PrincipalName&, re
     var challenge = false;
     var cookie: u8[>..] = [];
     var has_cookie = false;
+    // SPAKE: the groups we take (MIT's spake_preauth_groups, edwards25519
+    // by default); what the next request sends (SPAKE_NONE, our support
+    // message, or the response to a challenge); and its reply key K'[0].
+    let gnames, gset = conf_get(cfg, "libdefaults/spake_preauth_groups");
+    let spake_groups = spake_groups_named(if gset { gnames[..] } else { "edwards25519" });
+    var sp = spake_state();
+    var spake_next = SPAKE_NONE;
+    var spake_support: u8[>..] = [];
+    var spake_key0 = no_key();
     let enterprise = cname.name_type == NT_ENTERPRISE;
     if enterprise { s.canonicalize = true; }
     for attempt in 8 {
@@ -300,14 +317,23 @@ fn as_exchange(cfg: const Config&, s: Settings&, cname: const PrincipalName&, re
         }
         let st, aerr = fast_armor_as_if(armored, armor, now, usec);
         if aerr != OK { return empty_credential(), false, aerr; }
-        var pa: PaData[>..] = [];
-        let perr0 = as_padata(s, st, armored, challenge, pk, cookie, has_cookie, now, usec, pa);
-        if perr0 != OK { return empty_credential(), false, perr0; }
+        // The body first: SPAKE's keys are bound to it.
         let body = as_req_body(s, cname, realm, sname, nonce, etypes, now);
+        var body_der: u8[>..] = [];
+        encode_req_body(body_der, body);
+        var spv: u8[>..] = [];
+        if spake_next == SPAKE_SEND_SUPPORT { spv.append(spake_support); }
+        if spake_next == SPAKE_SEND_RESPONSE {
+            let v, k0, serr = spake_response(sp, body_der);
+            if serr != OK { return empty_credential(), false, serr; }
+            spv.append(v);
+            spake_key0 = k0;
+        }
+        var pa: PaData[>..] = [];
+        let perr0 = as_padata(s, st, armored, challenge, pk, spv, spake_next != SPAKE_NONE, cookie, has_cookie, now, usec, pa);
+        if perr0 != OK { return empty_credential(), false, perr0; }
         var req: u8[>..] = [];
         if armored {
-            var body_der: u8[>..] = [];
-            encode_req_body(body_der, body);
             var none: PaData[>..] = [];
             let werr = fast_wrap(st, MSG_AS_REQ, pa, none, body, body_der, req);
             if werr != OK { return empty_credential(), false, werr; }
@@ -339,8 +365,10 @@ fn as_exchange(cfg: const Config&, s: Settings&, cname: const PrincipalName&, re
             let code = if kerr.error_code == 0 { KRB_ERR_GENERIC } else { kerr.error_code };
             let ehints, eherr = decode_padata(kerr0.edata);
             let hints = if armored { copy(fhints) } else { copy(ehints) };
+            // The KDC's cookie goes back in the next request, armored or
+            // not (RFC 6113 §5.2): SPAKE's KDC keeps its state in it.
             let ck, cfound = find_padata(hints, PA_FX_COOKIE);
-            if armored && cfound {
+            if cfound {
                 cookie.clear();
                 cookie.append(ck);
                 has_cookie = true;
@@ -359,8 +387,50 @@ fn as_exchange(cfg: const Config&, s: Settings&, cname: const PrincipalName&, re
                 params.append(pr);
                 let cv, offered = find_padata(hints, PA_ENCRYPTED_CHALLENGE);
                 challenge = armored && offered;
+                // SPAKE when the KDC offers it: our support message for an
+                // empty offer, or our response to an optimistic challenge
+                // in a group we take (the transcript then starts with the
+                // challenge); our groups for a challenge in another group.
+                let sv, soffered = find_padata(hints, PA_SPAKE);
+                if soffered && spake_groups.len > 0 {
+                    let m, merr = decode_pa_spake(sv);
+                    if sv.len > 0 && merr == OK && m.choice == SPAKE_CHALLENGE && spake_permitted(spake_groups, m.group) {
+                        let g, gok = spake_group(m.group);
+                        let serr = spake_on_challenge(sp, m, sv, pk.key, spake_private(g));
+                        if serr == OK { spake_next = SPAKE_SEND_RESPONSE; continue; }
+                    } else if sv.len == 0 || (merr == OK && m.choice == SPAKE_CHALLENGE) {
+                        spake_support = spake_send_support(sp, spake_groups);
+                        spake_next = SPAKE_SEND_SUPPORT;
+                        continue;
+                    }
+                    // A challenge we cannot read or answer: as if no SPAKE.
+                }
                 // MIT's disable_encrypted_timestamp: never the timestamp,
                 // which anyone who sees it can guess the password from.
+                if !challenge && conf_bool(cfg, str("realms/", realm, "/disable_encrypted_timestamp"), false) {
+                    return empty_credential(), false, ERR_PREAUTH;
+                }
+                continue;
+            }
+            // SPAKE's challenge, after our support message.
+            if code == KDC_ERR_MORE_PREAUTH_DATA_REQUIRED && spake_next == SPAKE_SEND_SUPPORT {
+                let sv, sfound = find_padata(hints, PA_SPAKE);
+                if !sfound { return empty_credential(), false, code; }
+                let m, merr = decode_pa_spake(sv);
+                if merr != OK || m.choice != SPAKE_CHALLENGE { return empty_credential(), false, ERR_PREAUTH; }
+                // A group we did not offer: no second support message (MIT).
+                if !spake_permitted(spake_groups, m.group) { return empty_credential(), false, KDC_ERR_PREAUTH_FAILED; }
+                let g, gok = spake_group(m.group);
+                let serr = spake_on_challenge(sp, m, sv, pk.key, spake_private(g));
+                if serr != OK { return empty_credential(), false, serr; }
+                spake_next = SPAKE_SEND_RESPONSE;
+                continue;
+            }
+            // Our support message refused (no group in common): the other
+            // pre-authentication the KDC offered. After our response there
+            // is no going back to them (the draft's §10.5).
+            if code == KDC_ERR_PREAUTH_FAILED && spake_next == SPAKE_SEND_SUPPORT {
+                spake_next = SPAKE_NONE;
                 if !challenge && conf_bool(cfg, str("realms/", realm, "/disable_encrypted_timestamp"), false) {
                     return empty_credential(), false, ERR_PREAUTH;
                 }
@@ -376,6 +446,8 @@ fn as_exchange(cfg: const Config&, s: Settings&, cname: const PrincipalName&, re
                 realm.append(kerr.crealm);
                 pk = PreauthKey { have: false, key: no_key(), has_kvno: false, kvno: 0 };
                 has_cookie = false;
+                spake_next = SPAKE_NONE;
+                sp = spake_state();
                 referrals++;
                 continue;
             }
@@ -399,15 +471,20 @@ fn as_exchange(cfg: const Config&, s: Settings&, cname: const PrincipalName&, re
         if !asked { return empty_credential(), false, KDC_ERR_ETYPE_NOSUPP; }
         // The KDC's answer to our encrypted challenge proves it knows our
         // key (RFC 6113 §5.4.6).
-        if armored && challenge && pk.have {
+        let spake_done = spake_next == SPAKE_SEND_RESPONSE;
+        if armored && challenge && pk.have && !spake_done {
             let cerr = check_kdc_challenge(st, pk.key, rep.padata);
             if cerr != OK { return empty_credential(), false, cerr; }
         }
         // The reply key: the one we pre-authenticated with if the reply
         // uses its type, else one made from the reply's salt; then
         // strengthened by FAST's strengthen key.
+        // After SPAKE, K'[0], which is of the initial key's type.
         var key = pk.key;
-        if !pk.have || pk.key.etype != rep.enc_part.etype {
+        if spake_done {
+            if rep.enc_part.etype != pk.key.etype { return empty_credential(), false, KDC_ERR_ETYPE_NOSUPP; }
+            key = spake_key0;
+        } else if !pk.have || pk.key.etype != rep.enc_part.etype {
             let one: i32[1] = [rep.enc_part.etype];
             let e, sl, pr, ok = pick_etype_info(rep.padata, one, cname.name, realm);
             let use_salt = if ok { copy(sl) } else { default_salt_of(cname.name, realm) };

@@ -1,1 +1,1 @@
-ec vectors: 627 checks, 0 failed
+ec vectors: 843 checks, 0 failed

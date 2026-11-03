@@ -68,6 +68,75 @@ fn bad_points(c: const bignum::Curve&, good: const u8[:], sk: const u8[:]) {
     check("sk n", !shared_ok(c, bignum::to_bytes_be(bignum::big_of(c.n), c.len), good));
 }
 
+// The compressed form of an uncompressed point: 02 or 03 by y's parity,
+// then x; decoded back to the same point; the point negated has the
+// other prefix and decodes to it. P-224's p is 1 mod 4: refused.
+fn compressed(c: const bignum::Curve&, u: const u8[:]) {
+    let p, ok = bignum::ec_decode(c, u);
+    if !ok { check("compressed: decode", false); return; }
+    var want: u8[>..] = [];
+    want.push(2 | (u[u.len - 1] & 1));
+    want.append(u[1..1 + c.len]);
+    if c.bits == 224 {
+        let q, qok = bignum::ec_decode_compressed(c, want);
+        check("compressed p224 refused", !qok);
+        return;
+    }
+    let enc = bignum::ec_encode_compressed(c, p);
+    check("compressed encode", enc == want);
+    let q, qok = bignum::ec_decode_compressed(c, enc);
+    check("compressed decode", qok && bignum::ec_encode(c, q) == u);
+    let np = bignum::ec_neg(c, p);
+    let n = bignum::ec_encode_compressed(c, np);
+    check("compressed neg", n[0] == (enc[0] ^ 1) && n[1..] == enc[1..]);
+    let r, rok = bignum::ec_decode_compressed(c, n);
+    let sum = bignum::ec_add(c, r, q);
+    let ax, ay, finite = bignum::ec_affine(c, sum);
+    check("compressed neg decode", rok && !finite);
+}
+
+// Compressed encodings that are not points: a prefix not 02 or 03, the
+// wrong length, x = p, and x values with no y (about half of them).
+fn compressed_bad(c: const bignum::Curve&) {
+    let gen = bignum::ec_generator(c);
+    let g = bignum::ec_encode_compressed(c, gen);
+    for pre in [0, 1, 4, 5, 6, 7] {
+        var b: u8[>..] = [];
+        b.append(g);
+        b[0] = pre as! u8;
+        let p, ok = bignum::ec_decode_compressed(c, b);
+        check("compressed bad prefix", !ok);
+    }
+    let p1, ok1 = bignum::ec_decode_compressed(c, g[..g.len - 1]);
+    check("compressed short", !ok1);
+    var long: u8[>..] = [];
+    long.append(g);
+    long.push(0);
+    let p2, ok2 = bignum::ec_decode_compressed(c, long);
+    check("compressed long", !ok2);
+    var xp: u8[>..] = [2];
+    var pb: u8[>..] = [];
+    pb.resize(c.len, 0);
+    bignum::be_from_limbs(pb[..], c.p[..]);
+    xp.append(pb);
+    let p3, ok3 = bignum::ec_decode_compressed(c, xp);
+    check("compressed x = p", !ok3);
+    var none = 0;
+    for x in 1..41 {
+        var b: u8[>..] = [];
+        b.resize(1 + c.len, 0);
+        b[0] = 2;
+        b[c.len] = x as! u8;
+        let q, ok = bignum::ec_decode_compressed(c, b);
+        if !ok { none++; continue; }
+        // A point found is on the curve: its uncompressed form decodes.
+        let u = bignum::ec_encode(c, q);
+        let q2, ok4 = bignum::ec_decode(c, u);
+        check("compressed small x on curve", ok4);
+    }
+    check("compressed some x have no point", none > 5 && none < 35);
+}
+
 fn main() {
     let c256 = bignum::p256();
     let c384 = bignum::p384();
@@ -85,6 +154,7 @@ fn main() {
         if w[0] == "mul" {
             let k, ok = bignum::parse(w[2], 16);
             check(line, bignum::ec_public_key(c, bignum::to_bytes_be(k, c.len)) == unhex(w[3]));
+            compressed(c, unhex(w[3]));
         } else if w[0] == "ecdh" {
             let sk = unhex(w[2]);
             let peer = unhex(w[3]);
@@ -141,6 +211,7 @@ fn main() {
             }
         }
     }
+    for c in [c224, c256, c384, c521] { if c.bits != 224 { compressed_bad(c); } }
     // Round trips with fresh keys.
     for c in [c224, c256, c384, c521] {
         let a, apk = bignum::ec_keypair(c);

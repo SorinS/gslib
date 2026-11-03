@@ -342,6 +342,7 @@ the whole scalar width and reads its table by scanning every entry.
 | ECDH | `ecdh_shared(c, sk, peer) -> x, bool`: false unless the peer's point is on the curve and correctly encoded |
 | ECDSA | `ecdsa_sign(c, sk, msg)`, `ecdsa_verify(c, pk, msg, sig)` with SHA-224 on P-224, SHA-256 on P-256, SHA-384 on P-384 and SHA-512 on P-521; `ecdsa_sign_digest` and `ecdsa_verify_digest` for any hash |
 | DER | `ecdsa_sig_to_der(raw)`, `ecdsa_sig_from_der(c, der) -> raw, bool` (strict: minimal integers, no trailing bytes) |
+| Points | `ec_encode`/`ec_decode` (uncompressed, checked on the curve), `ec_encode_compressed`/`ec_decode_compressed` (SEC 1's 02/03 ‖ x; P-256, P-384 and P-521, whose p is 3 mod 4: not P-224), `ec_add`, `ec_neg`, `ec_mul` (krb5's SPAKE uses them) |
 
 ECDSA nonces come from RFC 6979's HMAC-DRBG, so signing needs no
 randomness and the same input always gives the same signature.
@@ -563,8 +564,9 @@ generation takes about 0.27 s on average (ten runs, in constant time).
 - The P-256/P-384 code is generic over the prime. On the same machine,
   OpenSSL's ECDH (specialized, with assembly) is 27 times faster on P-256
   and 15 times faster on P-384.
-- Point compression is not supported. TLS 1.3 sends only uncompressed
-  points.
+- Compressed points are read on P-256, P-384 and P-521 only (P-224's
+  square root would need Tonelli-Shanks). TLS 1.3 sends only uncompressed
+  points; krb5's SPAKE sends compressed ones.
 - Secrets are not wiped from memory.
 - `entropy` needs `getentropy` (macOS, Linux, BSDs), so it does not work on
   Windows. It opens the C library at startup (`extern "c"`, mapped to

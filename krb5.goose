@@ -16,6 +16,8 @@
 //   krb5.pac        the PAC: logon info, UPN/DNS info, signatures
 //   krb5.claims     the PAC's claims, and MS-XCA decompression
 //   krb5.net        talking to KDCs over UDP and TCP
+//   krb5.fast       FAST armor (RFC 6113)
+//   krb5.spake      SPAKE pre-authentication
 //   krb5.ldap       SASL GSSAPI binds (RFC 4752) and SID lookups in AD
 //   krb5.sys        the C it calls (src/krb5sys.c, http's TCP sockets)
 //
@@ -83,6 +85,8 @@ let USAGE_FAST_FINISHED: i64 = 53;
 let USAGE_ENC_CHALLENGE_CLIENT: i64 = 54;
 let USAGE_ENC_CHALLENGE_KDC: i64 = 55;
 let USAGE_AS_REQ: i64 = 56;
+// SPAKE pre-authentication (draft-ietf-kitten-krb-spake-preauth §11).
+let USAGE_SPAKE: i64 = 65;
 
 // --- Message types and their APPLICATION tags (RFC 4120 §5.10) --------------
 
@@ -153,6 +157,7 @@ let PA_FX_FAST: i32 = 136;
 let PA_FX_ERROR: i32 = 137;
 let PA_ENCRYPTED_CHALLENGE: i32 = 138;
 let PA_REQ_ENC_PA_REP: i32 = 149;
+let PA_SPAKE: i32 = 151;
 let PA_SUPPORTED_ENCTYPES: i32 = 165;
 let PA_PAC_OPTIONS: i32 = 167;
 
@@ -166,6 +171,13 @@ let PAC_OPT_RBCD: i64 = 3;
 let FX_FAST_ARMOR_AP_REQUEST: i32 = 1;
 let FAST_OPT_HIDE_CLIENT_NAMES: i64 = 1;
 let FAST_OPT_KDC_FOLLOW_REFERRALS: i64 = 16;
+
+// SPAKE groups and second factor types (draft-ietf-kitten-krb-spake-preauth §12).
+let SPAKE_EDWARDS25519: i64 = 1;
+let SPAKE_P256: i64 = 2;
+let SPAKE_P384: i64 = 3;
+let SPAKE_P521: i64 = 4;
+let SPAKE_SF_NONE: i64 = 1;
 
 // --- Authorization data types -----------------------------------------------
 

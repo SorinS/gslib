@@ -18,8 +18,9 @@ reading theirs. Only `krb5.net`, the file functions and the tools do I/O.
 | `krb5.ccache` | MIT FILE credential caches (versions 1 to 4, configuration entries): `ccache_load`, `ccache_save` (0600), `ccache_find`, `ccache_add`, `ccache_config`, `ccache_with_config`, `default_ccache_name` |
 | `krb5.config` | krb5.conf in MIT's profile syntax (sections, subsections, `include`, `includedir`, final markers): `default_config`, the realms' KDCs, `domain_realm`, `capaths`, enctype lists, durations |
 | `krb5.net` | Sending to a realm's KDCs: UDP first below `udp_preference_limit`, TCP above it or on KRB_ERR_RESPONSE_TOO_BIG, each KDC in turn, as MIT does |
-| `krb5.client` | AS exchanges (`get_tgt_password`, `get_tgt_keytab`, encrypted-timestamp pre-authentication from ETYPE-INFO2, enterprise names and client referrals; armored with FAST: `get_tgt_password_fast`, `get_tgt_keytab_fast`, with encrypted challenge; `disable_encrypted_timestamp` as MIT has it), TGS exchanges (`get_service_ticket`: cross-realm along `capaths` or the hierarchy, server referrals; armored by the TGT, as MIT's are), `renew`, `forward_tgt`, clock skew learned from the KDC; `kinit_password`, `kinit_keytab`, `kinit_password_fast`, `kinit_keytab_fast` (MIT's `kinit -T`), `get_service_ticket_cached` keep a cache (with MIT's `fast_avail` entry when the KDC does FAST) |
+| `krb5.client` | AS exchanges (`get_tgt_password`, `get_tgt_keytab`, encrypted-timestamp pre-authentication from ETYPE-INFO2, enterprise names and client referrals; armored with FAST: `get_tgt_password_fast`, `get_tgt_keytab_fast`, with encrypted challenge; SPAKE when the KDC offers it, armored or not, its optimistic challenge taken; `disable_encrypted_timestamp` as MIT has it), TGS exchanges (`get_service_ticket`: cross-realm along `capaths` or the hierarchy, server referrals; armored by the TGT, as MIT's are), `renew`, `forward_tgt`, clock skew learned from the KDC; `kinit_password`, `kinit_keytab`, `kinit_password_fast`, `kinit_keytab_fast` (MIT's `kinit -T`), `get_service_ticket_cached` keep a cache (with MIT's `fast_avail` entry when the KDC does FAST) |
 | `krb5.fast` | FAST (RFC 6113), the client's side: armor from a TGT (`fast_armor_as`) or a TGS request's own (`fast_armor_tgs`), `fast_wrap`, the reply's checks (`fast_reply`: nonce, finished part, the ticket's checksum), `fast_reply_key` (the strengthen key), `fast_error` (the error inside the armor, the cookie), encrypted challenge both ways |
+| `krb5.spake` | SPAKE pre-authentication (draft-ietf-kitten-krb-spake-preauth, MIT 1.17+), the client's side with SF-NONE: the four groups (edwards25519, P-256, P-384, P-521; `spake_preauth_groups` as MIT names them, edwards25519 by default), PA-SPAKE's messages, w, the transcript hash and K'[n]; `spake_on_challenge`, `spake_response` |
 | `krb5.service` | The acceptor: `verify_ap_req` (keytab, ticket times, skew, authenticator, replay cache), `make_ap_rep`, `verify_ap_rep`, `make_ap_req` |
 | `krb5.gssapi` | RFC 4121: `gss_init`, `gss_init_continue`, `gss_accept` (mutual authentication, channel bindings, delegation through KRB-CRED, acceptor subkeys), `gss_get_mic`, `gss_verify_mic`, `gss_wrap`, `gss_unwrap` (sealed or not, any RRC), sequence checks; RFC 4757's tokens for RC4 session keys |
 | `krb5.spnego` | RFC 4178: `spnego_init`, `spnego_init_continue`, `spnego_accept` (Kerberos under RFC 4121's OID or Microsoft's, a second round when another mechanism was preferred, mechListMIC both ways, NegTokenInit2, bare Kerberos tokens); `negotiate_header`, `negotiate_token` |
@@ -95,6 +96,17 @@ server; servers listen on 127.0.0.1 only.
   challenge missing, crossed in direction or under another key; a TGS
   request's implicit armor and its explicit armor by another TGT, each
   key the one the KDC makes.
+- `test/spake.goose`: every vector of the SPAKE draft's Appendix C
+  (`test/vectors/spake.txt`, from `scripts/spake_vectors.py`): DES3, RC4,
+  AES128 and AES256 on edwards25519, AES256 on P-256, P-384 and P-521, an
+  optimistic challenge taken and one refused: w, w reduced, x*G and y*G,
+  T, S, K from both sides, the support and challenge messages byte for
+  byte, both transcript hashes and K'[0..3]; then the client's own path
+  through them (its response's factor decrypted with the KDC's K'[1], its
+  reply key K'[0], bound to the request body); keys that are not points,
+  the identity (w*M sent as T), a small-order point added to it; a
+  challenge without SF-NONE or in a group we lack; malformed messages;
+  fresh exchanges in each group for each type.
 - `test/messages.goose`: MIT's reference encodings
   (`src/tests/asn.1/reference_encode.out`, through go-krb5's
   `test_vectors.go`) decode, carry MIT's test values, and re-encode to the
@@ -117,8 +129,10 @@ server; servers listen on 127.0.0.1 only.
 
 `make interop-krb5` (`scripts/interop.py`, macOS with Homebrew's
 `krb5`): two MIT 1.22 realms (`scripts/kdc.py`, on 127.0.0.1, trusting
-each other) and a third, F.TEST, whose KDC refuses the encrypted
-timestamp, and 120 checks: kinit with each user (pre-auth required,
+each other); a third, F.TEST, whose KDC refuses the encrypted
+timestamp; S.TEST, which offers SPAKE in all four groups and refuses the
+timestamp too; O.TEST, which sends an optimistic edwards25519 challenge;
+and 143 checks: kinit with each user (pre-auth required,
 RC4-only, DES3-only, Camellia-only with pre-auth, keytab), every
 encryption type for TGT and service ticket (Camellia's keys from MIT's
 keytab too), cross-realm both ways, our cache in MIT's klist and kvno and
@@ -142,7 +156,17 @@ KDC refuses the armor's authenticator in the clear),
 AS-REP's or TGS-REP's ticket (the finished checksum fails), PA-FX-FAST
 stripped from an AS-REP (refused) or a TGS-REP (its strengthened key
 fails), the AS-REP's client name (the finished part's name used), the
-armor stripped from an error (no retry in the clear).
+armor stripped from an error (no retry in the clear). SPAKE in S.TEST
+and O.TEST, each exchange read back from the KDC's log: kinit for a user
+of every type (the reply key of that type), in each NIST group alone,
+with the client's `disable_encrypted_timestamp`, inside FAST (and a
+wrong password there), kvno with the TGT; the optimistic challenge
+answered at once, refused for P-256 (support, then P-256), no group in
+common (the timestamp instead, or nothing with
+`disable_encrypted_timestamp`), a wrong password (PREAUTH_FAILED, no
+timestamp after it); a relay that sends -T for the KDC's T (still a
+point; the KDC refuses the response). With the client's SPAKE turned
+off, every check that relies on it fails.
 
 `scripts/ad.py`: against Active Directory, the DC `scripts/windows`
 makes (goose.test on Windows Server 2022, reached by an ssh tunnel to its
@@ -193,7 +217,8 @@ Go, and `tools/krb5oracle/go.mod` points (`replace`) at that checkout.
 ## Not done yet
 
 - PKINIT (RFC 4556, and with it anonymous PKINIT as armor: MIT's
-  `kinit -n`), SPAKE, OTP. Of FAST: the hide-client-names and
+  `kinit -n`), OTP; SPAKE's second factors (only SF-NONE, as MIT) and
+  its KDC side. Of FAST: the hide-client-names and
   kdc-follow-referrals options, armor across a realm referral (the
   armor TGT is for the realm asked; compound identity likewise only in
   the device's realm), and the KDC's side.
@@ -216,6 +241,20 @@ without FAST taken as a KDC that does not do it. We also require the
 KDC's answer to our encrypted challenge, which MIT's client checks only
 when it is there. The FAST response and challenge are plain SEQUENCEs, so DES3's
 block padding is cut off them before they decode.
+
+SPAKE: the draft's registry gives P-521 a 48-byte multiplier; MIT
+(`iana.c`) and the draft's own P-521 vectors use 66, and so do we. Its
+SHA-1 vector (a group -1 whose keys take two hash blocks) we cannot
+reproduce: our derivation is the draft's text and MIT's `derive_key`,
+and gives every other vector's keys, and MIT's `t_vectors.c` leaves this
+one out; no registered group needs a second block. The KDC keeps its
+SPAKE state in PA-FX-COOKIE, so the cookie goes back unarmored too
+(before, only inside FAST). A K that is the identity is refused (MIT's
+NIST groups fail there; its edwards25519 does not check). Given a SPAKE
+offer we take it over the encrypted challenge and the timestamp; after
+our response there is no fallback (the draft's §10.5, MIT's
+`disable_fallback`), but when the KDC has no group of ours the other
+mechanisms it offered are tried.
 
 DES3 and RC4 are legacy and kept for old KDCs and keytabs only; RFC
 1964's per-message tokens for DES3 session keys are not planned (such
