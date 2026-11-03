@@ -35,6 +35,16 @@ In O.TEST, served by a fourth that sends an optimistic edwards25519
 challenge, takes edwards25519 and P-256 only, and still takes encrypted
 timestamp:
     olga       password "olga-pw", pre-authentication required
+In P.TEST, Q.TEST, R.TEST and N.TEST, served by a fifth krb5kdc with
+PKINIT, whose certificates scripts/pki.py makes in DIR/pki (its CA is
+pki/ca.pem; MIT's kinit takes -X X509_user_identity=FILE:pki/pat.pem,pki/pat.key):
+    P.TEST   pat (pre-authentication required, password "pat-pw"), the
+             anonymous principal WELLKNOWN/ANONYMOUS, HTTP/svc.p.test; UPN SANs taken;
+             KDC certificate pki/kdc.pem
+    Q.TEST   quinn; freshness tokens required, Diffie-Hellman groups of
+             4096 bits, P-384 or P-521 only; pki/kdc.pem
+    R.TEST   rita; KDC certificate pki/kdc-dns.pem (dNSName kdc.r.test)
+    N.TEST   nate; KDC certificate pki/kdc-noeku.pem (EKU serverAuth)
 
 Used by scripts/interop.py (`with Kdc() as k: ... k.env`), or run alone
 to keep the KDCs up until Ctrl-C:
@@ -55,11 +65,15 @@ import sys
 import tempfile
 import time
 
+from pki import Pki
+
 REALM_A = "A.TEST"
 REALM_B = "B.TEST"
 REALM_F = "F.TEST"
 REALM_S = "S.TEST"
 REALM_O = "O.TEST"
+REALM_P, REALM_Q, REALM_R, REALM_N = "P.TEST", "Q.TEST", "R.TEST", "N.TEST"
+PKINIT_REALMS = (REALM_P, REALM_Q, REALM_R, REALM_N)
 # S.TEST's one-type users: their names' suffixes and MIT's enctype names.
 SAM_ETYPES = [("des3", "des3-cbc-sha1"), ("aes128", "aes128-cts-hmac-sha1-96"), ("aes256", "aes256-cts-hmac-sha1-96"),
               ("sha2-128", "aes128-cts-hmac-sha256-128"), ("sha2-256", "aes256-cts-hmac-sha384-192"),
@@ -115,6 +129,7 @@ class Kdc:
         self.port_f = free_port()
         self.port_s = free_port()
         self.port_o = free_port()
+        self.ports_p = {r: free_port() for r in PKINIT_REALMS}
         self.procs = []
         self.env = None
         self.time_offset = time_offset
@@ -140,6 +155,11 @@ class Kdc:
 
     def write_conf(self):
         d = self.dir
+        pki = self.path("pki")
+        pkinit_client = "\n".join(f"""    {r} = {{
+        kdc = 127.0.0.1:{self.ports_p[r]}
+        pkinit_anchors = FILE:{pki}/ca.pem
+    }}""" for r in PKINIT_REALMS)
         with open(self.path("krb5.conf"), "w") as f:
             f.write(f"""[libdefaults]
     default_realm = {REALM_A}
@@ -167,6 +187,7 @@ class Kdc:
     {REALM_O} = {{
         kdc = 127.0.0.1:{self.port_o}
     }}
+{pkinit_client}
 
 [domain_realm]
     .a.test = {REALM_A}
@@ -231,10 +252,13 @@ class Kdc:
 [libdefaults]
     spake_preauth_groups = edwards25519 P-256
 """)
+        self.pkinit_conf()
         self.env = dict(os.environ, KRB5_CONFIG=self.path("krb5.conf"), KRB5_KDC_PROFILE=self.path("kdc.conf"),
                         KRB5CCNAME="FILE:" + self.path("ccache"), KRB5_TRACE=self.path("trace.log"))
         self.envs = {r: dict(os.environ, KRB5_CONFIG=self.path("krb5.conf"), KRB5_KDC_PROFILE=self.path(f"kdc-{n}.conf"))
                      for n, r in (("f", REALM_F), ("s", REALM_S), ("o", REALM_O))}
+        for r in PKINIT_REALMS:
+            self.envs[r] = dict(os.environ, KRB5_CONFIG=self.path("krb5.conf"), KRB5_KDC_PROFILE=self.path("kdc-p.conf"))
         self.env_f = self.envs[REALM_F]
 
     # kdc-NAME.conf: one realm on its own port, `extra` after its
@@ -264,6 +288,47 @@ class Kdc:
 {extra}{more}
 [logging]
     kdc = FILE:{d}/kdc-{name}.log
+""")
+
+    # kdc-p.conf: the PKINIT realms, in one krb5kdc, each on its own port.
+    def pkinit_conf(self):
+        d, pki = self.dir, self.path("pki")
+        Pki(pki).make()
+        idents = {REALM_P: "kdc", REALM_Q: "kdc", REALM_R: "kdc-dns", REALM_N: "kdc-noeku"}
+        extra = {REALM_P: "pkinit_allow_upn = true",
+                 REALM_Q: "pkinit_require_freshness = true\n        pkinit_dh_min_bits = 4096"}
+        realms = ""
+        for r in PKINIT_REALMS:
+            n = r[0].lower()
+            port = self.ports_p[r]
+            os.makedirs(self.path("p" + n), exist_ok=True)
+            open(self.path(f"p{n}/kadm5.acl"), "w").close()
+            realms += f"""    {r} = {{
+        database_name = {d}/p{n}/principal
+        key_stash_file = {d}/p{n}/stash
+        acl_file = {d}/p{n}/kadm5.acl
+        kdc_listen = 127.0.0.1:{port}
+        kdc_tcp_listen = 127.0.0.1:{port}
+        kadmind_listen = 127.0.0.1:{free_port()}
+        kpasswd_listen = 127.0.0.1:{free_port()}
+        master_key_type = aes256-cts
+        supported_enctypes = {ENCTYPES}
+        max_life = 10h
+        pkinit_identity = FILE:{pki}/{idents[r]}.pem,{pki}/{idents[r]}.key
+        pkinit_anchors = FILE:{pki}/ca.pem
+        {extra.get(r, "")}
+    }}
+"""
+        ports = ",".join(f"127.0.0.1:{self.ports_p[r]}" for r in PKINIT_REALMS)
+        with open(self.path("kdc-p.conf"), "w") as f:
+            f.write(f"""[kdcdefaults]
+    kdc_listen = {ports}
+    kdc_tcp_listen = {ports}
+
+[realms]
+{realms}
+[logging]
+    kdc = FILE:{d}/kdc-p.log
 """)
 
     def create(self):
@@ -309,6 +374,14 @@ class Kdc:
         self.kadmin(s_, "addprinc -randkey -e aes256-cts-hmac-sha1-96:normal,aes128-cts-hmac-sha1-96:normal host/fast.s.test")
         self.kadmin(s_, f"ktadd -k {self.path('s-fast.keytab')} host/fast.s.test")
         self.kadmin(REALM_O, "addprinc -pw olga-pw +requires_preauth olga")
+        for r in PKINIT_REALMS:
+            self.run([self.bin("kdb5_util"), "-r", r, "create", "-s", "-P", "master-p" + r[0].lower()], env=self.envs[r])
+        self.kadmin(REALM_P, "addprinc -pw pat-pw +requires_preauth pat")
+        self.kadmin(REALM_P, "addprinc -randkey WELLKNOWN/ANONYMOUS")
+        self.kadmin(REALM_P, "addprinc -randkey HTTP/svc.p.test")
+        self.kadmin(REALM_Q, "addprinc -randkey +requires_preauth quinn")
+        self.kadmin(REALM_R, "addprinc -randkey +requires_preauth rita")
+        self.kadmin(REALM_N, "addprinc -randkey +requires_preauth nate")
         # The trust: the same keys in both databases.
         for p in (f"krbtgt/{b}@{a}", f"krbtgt/{a}@{b}"):
             self.kadmin(a, f"addprinc -pw trust-{p.replace('/', '-')} -e \"{ENCTYPES}\" {p}")
@@ -317,6 +390,7 @@ class Kdc:
     def start(self):
         args = [self.bin("krb5kdc"), "-n", "-r", REALM_A, "-r", REALM_B]
         runs = [(args, self.env)] + [([self.bin("krb5kdc"), "-n", "-r", r], self.envs[r]) for r in (REALM_F, REALM_S, REALM_O)]
+        runs.append(([self.bin("krb5kdc"), "-n"] + [x for r in PKINIT_REALMS for x in ("-r", r)], self.envs[REALM_P]))
         out = subprocess.DEVNULL if self.quiet else None
         for a, env in runs:
             if self.time_offset:
@@ -329,7 +403,7 @@ class Kdc:
             if any(p.poll() is not None for p in self.procs):
                 raise RuntimeError("krb5kdc exited: see the kdc*.log files in " + self.dir)
             try:
-                for port in (self.port_a, self.port_b, self.port_f, self.port_s, self.port_o):
+                for port in (self.port_a, self.port_b, self.port_f, self.port_s, self.port_o, *self.ports_p.values()):
                     socket.create_connection(("127.0.0.1", port), timeout=0.2).close()
                 return
             except OSError:
@@ -368,7 +442,8 @@ def main():
     with Kdc(args.dir, args.mit, quiet=False) as k:
         print(f"KRB5_CONFIG={k.path('krb5.conf')}")
         print(f"A.TEST on 127.0.0.1:{k.port_a}, B.TEST on 127.0.0.1:{k.port_b}, F.TEST on 127.0.0.1:{k.port_f}, "
-              f"S.TEST on 127.0.0.1:{k.port_s}, O.TEST on 127.0.0.1:{k.port_o}; Ctrl-C to stop")
+              f"S.TEST on 127.0.0.1:{k.port_s}, O.TEST on 127.0.0.1:{k.port_o}, " +
+              ", ".join(f"{r} on 127.0.0.1:{p}" for r, p in k.ports_p.items()) + "; Ctrl-C to stop")
         sys.stdout.flush()
         try:
             signal.pause()

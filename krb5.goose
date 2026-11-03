@@ -18,6 +18,7 @@
 //   krb5.net        talking to KDCs over UDP and TCP
 //   krb5.fast       FAST armor (RFC 6113)
 //   krb5.spake      SPAKE pre-authentication
+//   krb5.pkinit     PKINIT: certificates and anonymous (RFC 4556, 8062, 8636)
 //   krb5.ldap       SASL GSSAPI binds (RFC 4752) and SID lookups in AD
 //   krb5.sys        the C it calls (src/krb5sys.c, http's TCP sockets)
 //
@@ -87,6 +88,7 @@ let USAGE_ENC_CHALLENGE_KDC: i64 = 55;
 let USAGE_AS_REQ: i64 = 56;
 // SPAKE pre-authentication (draft-ietf-kitten-krb-spake-preauth §11).
 let USAGE_SPAKE: i64 = 65;
+let USAGE_PA_PKINIT_KX: i64 = 44;      // RFC 8062 §7
 
 // --- Message types and their APPLICATION tags (RFC 4120 §5.10) --------------
 
@@ -156,7 +158,9 @@ let PA_FX_COOKIE: i32 = 133;
 let PA_FX_FAST: i32 = 136;
 let PA_FX_ERROR: i32 = 137;
 let PA_ENCRYPTED_CHALLENGE: i32 = 138;
+let PA_PKINIT_KX: i32 = 147;
 let PA_REQ_ENC_PA_REP: i32 = 149;
+let PA_AS_FRESHNESS: i32 = 150;
 let PA_SPAKE: i32 = 151;
 let PA_SUPPORTED_ENCTYPES: i32 = 165;
 let PA_PAC_OPTIONS: i32 = 167;
@@ -301,6 +305,7 @@ let KDC_ERR_CLIENT_NOT_TRUSTED: i64 = 62;
 let KDC_ERR_KDC_NOT_TRUSTED: i64 = 63;
 let KDC_ERR_INVALID_SIG: i64 = 64;
 let KDC_ERR_KEY_TOO_WEAK: i64 = 65;
+let KDC_ERR_DH_KEY_PARAMETERS_NOT_ACCEPTED: i64 = 65;   // RFC 4556's name for it
 let KDC_ERR_CERTIFICATE_MISMATCH: i64 = 66;
 let KRB_AP_ERR_NO_TGT: i64 = 67;
 let KDC_ERR_WRONG_REALM: i64 = 68;
@@ -312,9 +317,20 @@ let KDC_ERR_REVOCATION_STATUS_UNKNOWN: i64 = 73;
 let KDC_ERR_REVOCATION_STATUS_UNAVAILABLE: i64 = 74;
 let KDC_ERR_CLIENT_NAME_MISMATCH: i64 = 75;
 let KDC_ERR_KDC_NAME_MISMATCH: i64 = 76;
+let KDC_ERR_INCONSISTENT_KEY_PURPOSE: i64 = 77;
+let KDC_ERR_DIGEST_IN_CERT_NOT_ACCEPTED: i64 = 78;
+let KDC_ERR_PA_CHECKSUM_MUST_BE_INCLUDED: i64 = 79;
+let KDC_ERR_DIGEST_IN_SIGNED_DATA_NOT_ACCEPTED: i64 = 80;
+let KDC_ERR_PUBLIC_KEY_ENCRYPTION_NOT_SUPPORTED: i64 = 81;
 let KDC_ERR_PREAUTH_EXPIRED: i64 = 90;
 let KDC_ERR_MORE_PREAUTH_DATA_REQUIRED: i64 = 91;
 let KDC_ERR_UNKNOWN_CRITICAL_FAST_OPTIONS: i64 = 93;
+let KDC_ERR_NO_ACCEPTABLE_KDF: i64 = 100;
+
+// TYPED-DATA types (RFC 4556 §3.2.2).
+let TD_TRUSTED_CERTIFIERS: i64 = 104;
+let TD_INVALID_CERTIFICATES: i64 = 105;
+let TD_DH_PARAMETERS: i64 = 109;
 
 // The library's own.
 let ERR_MALFORMED: i64 = 1000;         // a message that does not parse
@@ -346,6 +362,7 @@ let ERR_PREAUTH: i64 = 1025;           // pre-authentication we cannot do
 let ERR_TIME: i64 = 1026;              // a time out of range
 let ERR_CONTEXT: i64 = 1027;           // a GSS-API context used in the wrong state
 let ERR_FAST: i64 = 1028;              // a KDC reply not armored as FAST requires, or altered
+let ERR_IDENTITY: i64 = 1029;          // a certificate or key that cannot be read or used
 
 fn error_text(code: i64) -> const u8[:] {
     match code {
@@ -402,24 +419,30 @@ fn error_text(code: i64) -> const u8[:] {
         52 => "KRB_ERR_RESPONSE_TOO_BIG Response too big for UDP; retry with TCP",
         60 => "KRB_ERR_GENERIC Generic error (description in e-text)",
         61 => "KRB_ERR_FIELD_TOOLONG Field is too long for this implementation",
-        62 => "KDC_ERROR_CLIENT_NOT_TRUSTED Reserved for PKINIT",
-        63 => "KDC_ERROR_KDC_NOT_TRUSTED Reserved for PKINIT",
-        64 => "KDC_ERROR_INVALID_SIG Reserved for PKINIT",
-        65 => "KDC_ERR_KEY_TOO_WEAK Reserved for PKINIT",
+        62 => "KDC_ERR_CLIENT_NOT_TRUSTED Client certificate not trusted",
+        63 => "KDC_ERR_KDC_NOT_TRUSTED KDC certificate not trusted",
+        64 => "KDC_ERR_INVALID_SIG Invalid signature",
+        65 => "KDC_ERR_DH_KEY_PARAMETERS_NOT_ACCEPTED Diffie-Hellman parameters not accepted",
         66 => "KDC_ERR_CERTIFICATE_MISMATCH Reserved for PKINIT",
         67 => "KRB_AP_ERR_NO_TGT No TGT available to validate USER-TO-USER",
         68 => "KDC_ERR_WRONG_REALM Reserved for future use",
         69 => "KRB_AP_ERR_USER_TO_USER_REQUIRED Ticket must be for USER-TO-USER",
-        70 => "KDC_ERR_CANT_VERIFY_CERTIFICATE Reserved for PKINIT",
-        71 => "KDC_ERR_INVALID_CERTIFICATE Reserved for PKINIT",
-        72 => "KDC_ERR_REVOKED_CERTIFICATE Reserved for PKINIT",
-        73 => "KDC_ERR_REVOCATION_STATUS_UNKNOWN Reserved for PKINIT",
-        74 => "KDC_ERR_REVOCATION_STATUS_UNAVAILABLE Reserved for PKINIT",
-        75 => "KDC_ERR_CLIENT_NAME_MISMATCH Reserved for PKINIT",
-        76 => "KDC_ERR_KDC_NAME_MISMATCH Reserved for PKINIT",
+        70 => "KDC_ERR_CANT_VERIFY_CERTIFICATE Can't verify certificate",
+        71 => "KDC_ERR_INVALID_CERTIFICATE Invalid certificate",
+        72 => "KDC_ERR_REVOKED_CERTIFICATE Revoked certificate",
+        73 => "KDC_ERR_REVOCATION_STATUS_UNKNOWN Revocation status unknown",
+        74 => "KDC_ERR_REVOCATION_STATUS_UNAVAILABLE Revocation status unavailable",
+        75 => "KDC_ERR_CLIENT_NAME_MISMATCH Client name mismatch",
+        76 => "KDC_ERR_KDC_NAME_MISMATCH KDC name mismatch",
+        77 => "KDC_ERR_INCONSISTENT_KEY_PURPOSE Inconsistent key purpose",
+        78 => "KDC_ERR_DIGEST_IN_CERT_NOT_ACCEPTED Digest in certificate not accepted",
+        79 => "KDC_ERR_PA_CHECKSUM_MUST_BE_INCLUDED paChecksum must be included",
+        80 => "KDC_ERR_DIGEST_IN_SIGNED_DATA_NOT_ACCEPTED Digest in signed data not accepted",
+        81 => "KDC_ERR_PUBLIC_KEY_ENCRYPTION_NOT_SUPPORTED Public key encryption not supported",
         90 => "KDC_ERR_PREAUTH_EXPIRED Pre-authentication has expired",
         91 => "KDC_ERR_MORE_PREAUTH_DATA_REQUIRED Additional pre-authentication data required",
         93 => "KDC_ERR_UNKNOWN_CRITICAL_FAST_OPTIONS Unknown critical FAST options",
+        100 => "KDC_ERR_NO_ACCEPTABLE_KDF No acceptable KDF",
         1000 => "krb5: malformed message",
         1001 => "krb5: unexpected message type",
         1002 => "krb5: unsupported encryption type",
@@ -449,6 +472,7 @@ fn error_text(code: i64) -> const u8[:] {
         1026 => "krb5: time out of range",
         1027 => "krb5: GSS-API context in the wrong state",
         1028 => "krb5: KDC reply without the FAST armor it needs, or altered",
+        1029 => "krb5: certificate or key unusable",
         _ => "krb5: unknown error",
     }
 }

@@ -16,7 +16,11 @@
 // KDC's challenge (or its optimistic one at once), our response; the
 // reply key K'[0].
 //
-// Not done: PKINIT, FAST's hide-client-names option,
+// PKINIT (krb5.pkinit) with a certificate and its key, or anonymously:
+// the KDC's freshness token in our signed request, the reply key from
+// Diffie-Hellman; another group when the KDC refuses ours.
+//
+// Not done: FAST's hide-client-names option,
 // S4U2Self/S4U2Proxy and user-to-user.
 
 namespace krb5;
@@ -34,6 +38,7 @@ import krb5.keytab;
 import krb5.ccache;
 import krb5.fast;
 import krb5.spake;
+import krb5.pkinit;
 
 // The settings of a request, from krb5.conf's [libdefaults] (MIT's
 // defaults), and the clock offset learned from the KDC.
@@ -51,6 +56,8 @@ struct Settings {
     // armor: AD's compound identity); else each TGT armors its own.
     has_device: bool,
     device: Credential,
+    // Anonymous PKINIT (RFC 8062): the request-anonymous option.
+    anonymous: bool,
 }
 
 fn settings(cfg: const Config&) -> Settings {
@@ -71,6 +78,7 @@ fn settings_device(cfg: const Config&, has_device: bool, device: const Credentia
         kdc_timesync: conf_bool(cfg, "libdefaults/kdc_timesync", true),
         has_device: has_device,
         device: copy(device),
+        anonymous: false,
     };
 }
 
@@ -93,15 +101,27 @@ fn new_nonce() -> u32 {
     return (b0 << 24 | b1 << 16 | b2 << 8 | b3) & 0x7fffffff;
 }
 
-// The secret an AS exchange proves: a password, or a keytab's keys.
-struct Secret { has_password: bool, password: u8[], keytab: KeytabEntry[] }
+// The secret an AS exchange proves: a password, a keytab's keys, a
+// certificate and its key (PKINIT), or nothing (anonymous PKINIT).
+struct Secret { has_password: bool, password: u8[], keytab: KeytabEntry[], has_identity: bool, anonymous: bool,
+                identity: PkIdentity }
 
-fn secret_password(pw: const u8[:]) -> Secret { Secret { has_password: true, password: pw, keytab: [] } }
+fn secret_password(pw: const u8[:]) -> Secret {
+    Secret { has_password: true, password: pw, keytab: [], has_identity: false, anonymous: false, identity: no_pk_identity() }
+}
 
 fn secret_keytab(entries: const KeytabEntry[:]) -> Secret {
     var es: KeytabEntry[>..] = [];
     for e in entries { es.push(copy(e)); }
-    return Secret { has_password: false, password: "", keytab: es };
+    return Secret { has_password: false, password: "", keytab: es, has_identity: false, anonymous: false, identity: no_pk_identity() };
+}
+
+fn secret_identity(id: const PkIdentity&) -> Secret {
+    Secret { has_password: false, password: "", keytab: [], has_identity: true, anonymous: false, identity: copy(id) }
+}
+
+fn secret_anonymous() -> Secret {
+    Secret { has_password: false, password: "", keytab: [], has_identity: false, anonymous: true, identity: no_pk_identity() }
 }
 
 // The client's long-term key for an encryption type and salt.
@@ -121,7 +141,7 @@ fn default_salt_of(name: const u8[:], realm: const u8[:]) -> u8[>..] {
 // The encryption types to ask for: the configured ones, and for a keytab
 // only those it has keys of (MIT's kinit -k does the same).
 fn as_etypes(cfg: const Config&, sec: const Secret&, name: const u8[:], realm: const u8[:]) -> i32[>..] {
-    if sec.has_password { return conf_etypes(cfg, "default_tkt_enctypes"); }
+    if sec.has_password || sec.has_identity || sec.anonymous { return conf_etypes(cfg, "default_tkt_enctypes"); }
     let want = conf_etypes(cfg, "default_tkt_enctypes");
     return keytab_etypes(sec.keytab, name, realm, want);
 }
@@ -134,6 +154,7 @@ fn kdc_options(s: const Settings&) -> u32 {
     if s.proxiable { o = o | flag(KDC_OPT_PROXIABLE); }
     if s.renew_lifetime > 0 { o = o | flag(KDC_OPT_RENEWABLE); }
     if s.canonicalize { o = o | flag(KDC_OPT_CANONICALIZE); }
+    if s.anonymous { o = o | flag(KDC_OPT_REQUEST_ANONYMOUS); }
     return o;
 }
 
@@ -178,15 +199,15 @@ fn pick_etype_info(pa: const PaData[:], etypes: const i32[:], name: const u8[:],
     return 0, salt, params, false;
 }
 
-// The padata of an AS-REQ: the pre-authentication (a SPAKE message when
-// one is under way, else encrypted challenge inside FAST when the KDC
-// offers it, else the encrypted timestamp), the FAST cookie, the PAC
-// request, and the ask for the request's checksum.
+// The padata of an AS-REQ: the pre-authentication (a SPAKE or PKINIT
+// message, pre_type's, when one is under way, else encrypted challenge
+// inside FAST when the KDC offers it, else the encrypted timestamp), the
+// FAST cookie, the PAC request, and the ask for the request's checksum.
 fn as_padata(s: const Settings&, st: const FastState&, armored: bool, challenge: bool, pk: const PreauthKey&,
-             spake: const u8[:], has_spake: bool, cookie: const u8[:], has_cookie: bool, now: i64, usec: i64,
+             pre_type: i32, pre: const u8[:], has_pre: bool, cookie: const u8[:], has_cookie: bool, now: i64, usec: i64,
              out: PaData[>..]&) -> i64 {
-    if has_spake {
-        out.push(PaData { pa_type: PA_SPAKE, value: spake });
+    if has_pre {
+        out.push(PaData { pa_type: pre_type, value: pre });
     } else if pk.have {
         if armored && challenge {
             var v: u8[>..] = [];
@@ -298,6 +319,20 @@ fn as_exchange(cfg: const Config&, s: Settings&, cname: const PrincipalName&, re
     var spake_next = SPAKE_NONE;
     var spake_support: u8[>..] = [];
     var spake_key0 = no_key();
+    // PKINIT: whether this exchange proves a certificate (or is
+    // anonymous); whether the next request carries PA-PK-AS-REQ (else an
+    // empty PA-AS-FRESHNESS, asking for a token); the group, from
+    // pkinit_dh_min_bits; the KDC's freshness token; one retry each for
+    // another group and for a new token.
+    let pkinit = sec.has_identity || sec.anonymous;
+    var pk_next = false;
+    let pk_min = pkinit_conf_group(cfg, realm0);
+    var pk_group = pk_min;
+    var pk_fresh: u8[>..] = [];
+    var pk_has_fresh = false;
+    var pk_group_retry = false;
+    var pk_fresh_retry = false;
+    let pk_kdfs = pkinit_conf_kdfs(cfg, realm0);
     let enterprise = cname.name_type == NT_ENTERPRISE;
     if enterprise { s.canonicalize = true; }
     for attempt in 8 {
@@ -329,8 +364,21 @@ fn as_exchange(cfg: const Config&, s: Settings&, cname: const PrincipalName&, re
             spv.append(v);
             spake_key0 = k0;
         }
+        // PKINIT's request: a new key pair each time, signed with the body.
+        let pk_dh = if pkinit && pk_next { pkinit_dh_new(pk_group) } else { pkinit_dh_none() };
+        var pre_type = PA_SPAKE;
+        if pkinit {
+            pre_type = if pk_next { PA_PK_AS_REQ } else { PA_AS_FRESHNESS };
+            if pk_next {
+                let v, kerr = pkinit_request(sec.identity, sec.anonymous, now, usec, nonce, body_der, pk_fresh, pk_has_fresh,
+                                             pk_dh, pk_kdfs);
+                if kerr != OK { return empty_credential(), false, kerr; }
+                spv.append(v);
+            }
+        }
         var pa: PaData[>..] = [];
-        let perr0 = as_padata(s, st, armored, challenge, pk, spv, spake_next != SPAKE_NONE, cookie, has_cookie, now, usec, pa);
+        let perr0 = as_padata(s, st, armored, challenge, pk, pre_type, spv, spake_next != SPAKE_NONE || pkinit, cookie, has_cookie,
+                              now, usec, pa);
         if perr0 != OK { return empty_credential(), false, perr0; }
         var req: u8[>..] = [];
         if armored {
@@ -373,7 +421,41 @@ fn as_exchange(cfg: const Config&, s: Settings&, cname: const PrincipalName&, re
                 cookie.append(ck);
                 has_cookie = true;
             }
-            if code == KDC_ERR_PREAUTH_REQUIRED && !pk.have {
+            if pkinit {
+                // The KDC's offer, and its freshness token (RFC 8070).
+                if code == KDC_ERR_PREAUTH_REQUIRED && !pk_next {
+                    let pv, offered = find_padata(hints, PA_PK_AS_REQ);
+                    if !offered { return empty_credential(), false, ERR_PREAUTH; }
+                    let fv, ff = find_padata(hints, PA_AS_FRESHNESS);
+                    pk_fresh.clear();
+                    pk_fresh.append(fv);
+                    pk_has_fresh = ff && fv.len > 0;
+                    pk_next = true;
+                    continue;
+                }
+                // Our group refused: the first the KDC lists (TD-DH-PARAMETERS
+                // in the error's TYPED-DATA) that is no weaker.
+                if code == KDC_ERR_DH_KEY_PARAMETERS_NOT_ACCEPTED && pk_next && !pk_group_retry {
+                    let td, tf = find_typed_data(kerr.edata, TD_DH_PARAMETERS);
+                    let g = if tf { pkinit_pick_group(td, pk_min) } else { 0 };
+                    if g == 0 { return empty_credential(), false, code; }
+                    pk_group = g;
+                    pk_group_retry = true;
+                    continue;
+                }
+                // Our token stale or missing, and a new one (RFC 8070 §2.4, §2.5).
+                if (code == KDC_ERR_PREAUTH_EXPIRED || code == KDC_ERR_PREAUTH_FAILED) && pk_next && !pk_fresh_retry {
+                    let fv, ff = find_padata(hints, PA_AS_FRESHNESS);
+                    if ff && fv.len > 0 && !(pk_has_fresh && fv == pk_fresh) {
+                        pk_fresh.clear();
+                        pk_fresh.append(fv);
+                        pk_has_fresh = true;
+                        pk_fresh_retry = true;
+                        continue;
+                    }
+                }
+            }
+            if code == KDC_ERR_PREAUTH_REQUIRED && !pk.have && !pkinit {
                 if !armored && eherr != OK { return empty_credential(), false, ERR_PREAUTH; }
                 let e, sl, pr, ok = pick_etype_info(hints, etypes, cname.name, realm);
                 if !ok || e == 0 { return empty_credential(), false, ERR_PREAUTH; }
@@ -447,6 +529,8 @@ fn as_exchange(cfg: const Config&, s: Settings&, cname: const PrincipalName&, re
                 pk = PreauthKey { have: false, key: no_key(), has_kvno: false, kvno: 0 };
                 has_cookie = false;
                 spake_next = SPAKE_NONE;
+                pk_next = false;
+                pk_has_fresh = false;
                 sp = spake_state();
                 referrals++;
                 continue;
@@ -472,6 +556,8 @@ fn as_exchange(cfg: const Config&, s: Settings&, cname: const PrincipalName&, re
         // The KDC's answer to our encrypted challenge proves it knows our
         // key (RFC 6113 §5.4.6).
         let spake_done = spake_next == SPAKE_SEND_RESPONSE;
+        // A reply to a request without PKINIT: no key of ours opens it.
+        if pkinit && !pk_next { return empty_credential(), false, ERR_PREAUTH; }
         if armored && challenge && pk.have && !spake_done {
             let cerr = check_kdc_challenge(st, pk.key, rep.padata);
             if cerr != OK { return empty_credential(), false, cerr; }
@@ -481,7 +567,19 @@ fn as_exchange(cfg: const Config&, s: Settings&, cname: const PrincipalName&, re
         // strengthened by FAST's strengthen key.
         // After SPAKE, K'[0], which is of the initial key's type.
         var key = pk.key;
-        if spake_done {
+        if pkinit {
+            let rv, rf = find_padata(rep.padata, PA_PK_AS_REP);
+            if !rf { return empty_credential(), false, ERR_PREAUTH; }
+            let trust, terr = pkinit_trust(cfg, realm);
+            if terr != OK { return empty_credential(), false, terr; }
+            // Anonymous, the client's name in the KDF is the anonymous
+            // principal's (MIT's KDC renames the request's client so).
+            let kdf_crealm = if sec.anonymous { "WELLKNOWN:ANONYMOUS" } else { realm[..] };
+            let k, kerr = pkinit_reply_key(rv, trust, pk_dh, nonce, pk_kdfs, rep.enc_part.etype, cname, kdf_crealm, sname, realm,
+                                           req, now);
+            if kerr != OK { return empty_credential(), false, kerr; }
+            key = k;
+        } else if spake_done {
             if rep.enc_part.etype != pk.key.etype { return empty_credential(), false, KDC_ERR_ETYPE_NOSUPP; }
             key = spake_key0;
         } else if !pk.have || pk.key.etype != rep.enc_part.etype {
@@ -500,13 +598,28 @@ fn as_exchange(cfg: const Config&, s: Settings&, cname: const PrincipalName&, re
         let part, perr = decode_enc_kdc_rep_part(plain);
         if perr != OK { return empty_credential(), false, perr; }
         if part.nonce != nonce { return empty_credential(), false, ERR_NONCE; }
+        // PKINIT's KDC contribution to the session key (RFC 8062 §7):
+        // required when anonymous, checked whenever sent.
+        if pkinit {
+            let kx, kxf = find_padata(rep.padata, PA_PKINIT_KX);
+            if sec.anonymous && !kxf { return empty_credential(), false, ERR_PREAUTH; }
+            if kxf {
+                let kxerr = pkinit_check_kx(kx, key, part.key);
+                if kxerr != OK { return empty_credential(), false, ERR_INTEGRITY; }
+            }
+        }
         var key_asked = false;
         for e in etypes { if e == part.key.etype { key_asked = true; } }
         if !key_asked { return empty_credential(), false, KDC_ERR_ETYPE_NOSUPP; }
         // Names: as asked, unless the KDC canonicalized them and proved it
         // saw our request (RFC 6806 §11).
         let same = rep.cname.name == cname.name && rep.crealm == realm && part.sname.name == sname.name && part.srealm == realm;
-        if !same {
+        // Anonymous: the anonymous principal in the anonymous realm (RFC
+        // 8062 §4.1), the ticket flagged so, for the service asked.
+        let anon = sec.anonymous && rep.cname.name == name_join("WELLKNOWN", "ANONYMOUS") && rep.crealm == "WELLKNOWN:ANONYMOUS"
+                   && part.sname.name == sname.name && part.srealm == realm && part.flags & flag(TKT_ANONYMOUS) != 0;
+        if sec.anonymous && !anon { return empty_credential(), false, ERR_NAME_MISMATCH; }
+        if !same && !anon {
             if !s.canonicalize { return empty_credential(), false, ERR_NAME_MISMATCH; }
             let ck = check_req_checksum(part, reply_key, req);
             if ck != OK { return empty_credential(), false, ck; }
@@ -580,6 +693,34 @@ fn get_tgt(cfg: const Config&, principal: const u8[:], sec: const Secret&, armor
     if err != OK { return empty_credential(), false, err; }
     var s = settings(cfg);
     let sn = krbtgt(realm, realm);
+    return as_exchange(cfg, s, cn, realm, sn, sec, armor, armored);
+}
+
+// A TGT for `principal` with PKINIT: a certificate and its key
+// (pkinit_load_identity), the KDC's certificate checked against the
+// realm's pkinit_anchors.
+fn get_tgt_identity(cfg: const Config&, principal: const u8[:], id: const PkIdentity&) -> Credential, i64 {
+    let sec = secret_identity(id);
+    let none = empty_credential();
+    let c, fast, err = get_tgt(cfg, principal, sec, none, false);
+    return c, err;
+}
+
+// An anonymous TGT for `realm` (RFC 8062): WELLKNOWN/ANONYMOUS@WELLKNOWN:
+// ANONYMOUS, by anonymous PKINIT; MIT's kinit -n. What it is good for is
+// armor (FAST) and the KDC's certificate being checked.
+fn get_tgt_anonymous(cfg: const Config&, realm: const u8[:]) -> Credential, i64 {
+    let none = empty_credential();
+    let c, fast, err = get_tgt_anon(cfg, realm, none, false);
+    return c, err;
+}
+
+fn get_tgt_anon(cfg: const Config&, realm: const u8[:], armor: const Credential&, armored: bool) -> Credential, bool, i64 {
+    var s = settings(cfg);
+    s.anonymous = true;
+    let cn = principal_name(NT_WELLKNOWN, name_join("WELLKNOWN", "ANONYMOUS"));
+    let sn = krbtgt(realm, realm);
+    let sec = secret_anonymous();
     return as_exchange(cfg, s, cn, realm, sn, sec, armor, armored);
 }
 
@@ -879,6 +1020,29 @@ fn kinit_keytab_fast(cfg: const Config&, cache_name: const u8[:], principal: con
     if aerr != OK { return empty_credential(), aerr; }
     let sec = secret_keytab(kt);
     let c, fast, err = get_tgt(cfg, principal, sec, armor, true);
+    return kinit_save(cache_name, c, fast, err);
+}
+
+// kinit -X X509_user_identity=...: a TGT by PKINIT, stored as a new
+// cache; with `armor_cache` non-empty, armored by its TGT.
+fn kinit_identity(cfg: const Config&, cache_name: const u8[:], principal: const u8[:], id: const PkIdentity&,
+                  armor_cache: const u8[:]) -> Credential, i64 {
+    let sec = secret_identity(id);
+    if armor_cache.len == 0 {
+        let none = empty_credential();
+        let c, fast, err = get_tgt(cfg, principal, sec, none, false);
+        return kinit_save(cache_name, c, fast, err);
+    }
+    let armor, aerr = armor_for(cfg, principal, armor_cache);
+    if aerr != OK { return empty_credential(), aerr; }
+    let c, fast, err = get_tgt(cfg, principal, sec, armor, true);
+    return kinit_save(cache_name, c, fast, err);
+}
+
+// kinit -n: an anonymous TGT for `realm`, stored as a new cache.
+fn kinit_anonymous(cfg: const Config&, cache_name: const u8[:], realm: const u8[:]) -> Credential, i64 {
+    let none = empty_credential();
+    let c, fast, err = get_tgt_anon(cfg, realm, none, false);
     return kinit_save(cache_name, c, fast, err);
 }
 

@@ -17,6 +17,7 @@ CertificateVerify signatures.
 | `x509.keys` | `PrivateKey`, key generation, PKCS #8 / SEC 1 / PKCS #1 / SPKI parsing and marshalling (ML-DSA and DSA included), signing |
 | `x509.ocsp` | OCSP (RFC 6960): `ocsp_create_request`, `ocsp_parse_request`, `ocsp_parse_response`, `ocsp_check_response`, `ocsp_create_response`, `ocsp_error_response` |
 | `x509.pkcs12` | `pkcs12_decode`: PKCS #12 files to their key and certificates |
+| `x509.cms` | CMS SignedData (RFC 5652) with one signer: `cms_sign`, `cms_unsigned`, `cms_parse_signed`, `cms_verify`, `cms_content`, `cms_certs` (PKINIT's carrier) |
 | `x509.create` | `Template`, `create_certificate`, `name_der`, SAN and name-constraint builders, `create_csr`, `parse_csr`, `check_csr`, `create_crl` | It builds on
 [asn1](../../encoding/asn1) for DER and [bignum](../bignum) for the
 cryptography.
@@ -308,6 +309,24 @@ SHA-1, SHA-224 or SHA-2). It reads what Go's x/crypto/pkcs12 reads
 refuses: openssl 3's default PBES2 (PBKDF2 and AES-CBC), 2-key 3DES,
 128-bit RC2, unencrypted bags. A wrong password is ERR_BAD_SIGNATURE.
 
+## CMS SignedData
+
+`cms_sign(content_type, content, key, signer, others, alg, h)` makes a
+ContentInfo holding a SignedData (version 3) with the content
+encapsulated, the signer's certificate and `others` in `certificates`,
+and one SignerInfo (issuer and serial number) with the signed attributes
+contentType and messageDigest, by PKCS #1 v1.5, PSS or ECDSA over
+SHA-256, -384 or -512. `cms_unsigned` makes one with no certificates and
+no signer (anonymous PKINIT). `cms_parse_signed(der) -> SignedData, err`
+reads strict DER with at most one signer; `cms_verify(sd, allow_sha1)`
+finds the signer's certificate among those sent (by issuer and serial or
+by key identifier), requires both signed attributes once with one value
+each (contentType the eContentType's, messageDigest the content's),
+takes rsaEncryption with the digest algorithm or a signature algorithm
+whose hash is the digest algorithm, and checks the signature over the
+attributes' DER (SET OF tag). SHA-1 only with `allow_sha1`. The signer's
+certificate path and usages are the caller's to check.
+
 ## Tests
 
 ```bash
@@ -317,6 +336,8 @@ python3 scripts/check_roots.py          # system roots against Go's rules
 python3 scripts/gen_vectors.py          # regenerate the vectors with openssl
 python3 scripts/pq_vectors.py           # remake vectors/pq.txt (openssl, Go)
 python3 scripts/pkcs12_vectors.py       # remake the PKCS #12 vectors (openssl)
+python3 scripts/cms_vectors.py          # remake vectors/cms.txt (openssl cms -sign)
+python3 scripts/check_cms.py            # x509.cms's SignedData through openssl cms -verify
 python3 scripts/make_rootdir.py         # remake vectors/rootdir
 tools/govectors.sh > test/vectors/ocsp.txt   # remake the OCSP vectors (Go)
 ```
@@ -389,6 +410,14 @@ its arguments.
   passwords, each decoding to openssl's key and certificates; wrong
   passwords and changed bytes refused. Go's x/crypto/pkcs12 reads the 12
   legacy ones to the same keys (and refuses the rest).
+- `cms_vectors`: SignedData from `openssl cms -sign` (24, from
+  `scripts/cms_vectors.py`): RSA (PKCS #1 v1.5 and PSS), P-256, P-384 and
+  P-521 over SHA-256, -384 and -512, signers by issuer and serial and by
+  key identifier, verify with their content and type; SHA-1 refused (and
+  taken when allowed), no signed attributes, no signer certificate, two
+  signers, a changed signature or content refused. SignedData made here
+  by each key and algorithm verify here and refuse a changed byte;
+  `scripts/check_cms.py` has `openssl cms -verify` check them (30 checks).
 - `scripts/check_created.py` hands such a PKI to openssl (30 checks):
   - each leaf verifies strictly for the host and under an explicit
     policy, and is refused under another policy or host;

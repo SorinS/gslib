@@ -265,11 +265,14 @@ def der_field(b, start, end, tag):
 
 
 class TamperRelay:
-    """A KDC on 127.0.0.1 (TCP) that forwards to a KDC (F.TEST's, S.TEST's)
-    and alters its replies as `mode` says: as-ticket, as-cname, as-strip (an
-    AS-REP's ticket, client name, or PA-FX-FAST), tgs-ticket, tgs-strip,
-    err-strip (an armored KRB-ERROR's PA-FX-FAST), err-spake-neg (an
-    edwards25519 SPAKE challenge's key T made -T: still a point), or none."""
+    """A KDC on 127.0.0.1 (TCP) that forwards to a KDC (F.TEST's, S.TEST's,
+    P.TEST's) and alters its replies as `mode` says: as-ticket, as-cname,
+    as-strip (an AS-REP's ticket, client name, or PA-FX-FAST), tgs-ticket,
+    tgs-strip, err-strip (an armored KRB-ERROR's PA-FX-FAST), err-spake-neg
+    (an edwards25519 SPAKE challenge's key T made -T: still a point),
+    as-pk-key (a bit of the KDC's DH value inside its signed
+    KDCDHKeyInfo), as-pk-kdf (the KDF the KDC names, SHA-256 made SHA-512,
+    outside the signature), as-pk-kx (PA-PKINIT-KX's ciphertext), or none."""
 
     def __init__(self, port):
         self.kdc_port = port
@@ -354,6 +357,36 @@ class TamperRelay:
             i = bytes(b).find(b"\x02\x01\x01\xa1\x22\x04\x20")
             if i >= 0:
                 b[i + 7 + 31] ^= 0x80
+        elif mode.startswith("as-pk-"):
+            _, ps, pe = der_field(b, ss, se, 0xa2)
+            want = {"as-pk-kx": 147}.get(mode, 17)
+            _, qs, qe = der(b, ps)
+            i = qs
+            while i < qe:
+                _, es, ee = der(b, i)
+                t = der_field(b, es, ee, 0xa1)
+                v = der_field(b, es, ee, 0xa2)
+                _, ts, te = der(b, t[1])
+                if int.from_bytes(b[ts:te], "big") == want:
+                    _, vs, ve = der(b, v[1])
+                    if mode == "as-pk-kx":
+                        b[ve - 1] ^= 1
+                    elif mode == "as-pk-kdf":
+                        # id-pkinit-kdf-ah-sha256 (1.3.6.1.5.2.3.6.2) -> sha512 (.3).
+                        j = bytes(b).find(b"\x06\x08\x2b\x06\x01\x05\x02\x03\x06\x02", vs, ve)
+                        if j >= 0:
+                            b[j + 9] = 3
+                    else:
+                        # id-pkinit-DHKeyData, then [0] { OCTET STRING { KDCDHKeyInfo } }:
+                        # a byte of the public value's last part.
+                        j = bytes(b).find(b"\x06\x07\x2b\x06\x01\x05\x02\x03\x02", vs, ve)
+                        if j >= 0:
+                            _, cs2, ce2 = der(b, j + 9)       # [0]
+                            _, os2, oe2 = der(b, cs2)         # OCTET STRING
+                            _, ks, ke = der(b, os2)           # KDCDHKeyInfo
+                            _, fs, fe = der(b, ks)            # [0] subjectPublicKey
+                            b[fe - 3] ^= 1
+                i = ee
         elif mode == "err-strip":
             f = der_field(b, ss, se, 0xac)
             if f:
@@ -741,6 +774,158 @@ def http_tests(k, tool, gss):
             print(log)
 
 
+def pkinit_tests(k, tool):
+    """PKINIT (RFC 4556, 8636) and anonymous PKINIT (RFC 8062) against
+    MIT's KDC in P.TEST, Q.TEST, R.TEST and N.TEST (scripts/kdc.py, with
+    certificates from scripts/pki.py): RSA and ECDSA certificates, a
+    chain, PKCS #12, each Diffie-Hellman group and KDF, freshness tokens
+    and a refused group (Q.TEST), PKINIT inside FAST armored by an
+    anonymous TGT; certificates the KDC must refuse, KDC certificates the
+    client must refuse, and replies altered on the way."""
+    pki = k.path("pki")
+    base = open(k.path("krb5.conf")).read()
+    n = [0]
+
+    def env_with(extra="", realm_extra=None, relay=None, anchors=None):
+        # A krb5.conf with `extra` in [libdefaults], realm_extra lines in
+        # P.TEST's (or the realm's named) stanza, P.TEST through a relay.
+        text = base.replace("[libdefaults]", "[libdefaults]\n" + extra)
+        if anchors:
+            text = text.replace(f"pkinit_anchors = FILE:{pki}/ca.pem", f"pkinit_anchors = FILE:{anchors}")
+        if realm_extra:
+            r, lines = realm_extra
+            port = k.ports_p[r]
+            text = text.replace(f"kdc = 127.0.0.1:{port}\n", f"kdc = 127.0.0.1:{port}\n        {lines}\n")
+        if relay:
+            text = text.replace(f"kdc = 127.0.0.1:{k.ports_p['P.TEST']}", f"kdc = tcp/127.0.0.1:{relay.port}")
+        n[0] += 1
+        conf = k.path(f"krb5-pk{n[0]}.conf")
+        with open(conf, "w") as f:
+            f.write(text)
+        return dict(k.env, KRB5_CONFIG=conf, KRB5CCNAME="FILE:" + k.path(f"pk{n[0]}.cc"))
+
+    def ident(name, chain=False):
+        return f"X509_user_identity=FILE:{pki}/{name}.pem,{pki}/{name}.key"
+
+    def kinit(name, principal, env=None, extra=()):
+        env = env or env_with()
+        p = run(k, [tool, "kinit", *extra, "-X", ident(name), principal], env=env)
+        return p, env
+
+    def klist(env):
+        return run(k, [k.bin("klist")], env=env).stdout
+
+    def kdc_log():
+        return open(k.path("kdc-p.log")).read()
+
+    for name, what in (("pat", "RSA 2048"), ("pat-p256", "ECDSA P-256"), ("pat-p384", "ECDSA P-384"),
+                       ("pat-p521", "ECDSA P-521"), ("pat-rsa3072", "RSA 3072, SHA-384 certificate")):
+        p, env = kinit(name, "pat@P.TEST")
+        check(f"PKINIT: kinit -X pat ({what})", p.returncode == 0 and "Default principal: pat@P.TEST" in klist(env), out(p))
+    # Our cache's TGT with MIT's kvno.
+    q = run(k, [k.bin("kvno"), "HTTP/svc.p.test@P.TEST"], env=env)
+    check("PKINIT: MIT's kvno with our PKINIT TGT", q.returncode == 0, out(q))
+    # An intermediate CA, sent beside the certificate.
+    with open(k.path("pat-chain.pem"), "w") as f:
+        f.write(open(f"{pki}/pat-inter.pem").read() + open(f"{pki}/inter.pem").read())
+    env = env_with()
+    p = run(k, [tool, "kinit", "-X", f"X509_user_identity=FILE:{k.path('pat-chain.pem')},{pki}/pat-inter.key", "pat@P.TEST"],
+            env=env)
+    check("PKINIT: a certificate under an intermediate CA (sent with it)", p.returncode == 0, out(p))
+    p = run(k, [tool, "kinit", "-X", f"X509_user_identity=FILE:{pki}/pat-inter.pem,{pki}/pat-inter.key", "pat@P.TEST"],
+            env=env)
+    check("PKINIT: the same without the intermediate refused (CANT_VERIFY_CERTIFICATE)",
+          p.returncode == 1 and "CANT_VERIFY_CERTIFICATE" in out(p), out(p))
+    env = env_with()
+    p = run(k, [tool, "kinit", "-X", f"X509_user_identity=PKCS12:{pki}/pat.p12", "pat@P.TEST"], "pat-p12\n", env=env)
+    check("PKINIT: PKCS #12 identity", p.returncode == 0 and "pat@P.TEST" in klist(env), out(p))
+    p = run(k, [tool, "kinit", "-X", f"X509_user_identity=PKCS12:{pki}/pat.p12", "pat@P.TEST"], "wrong\n", env=env)
+    check("PKINIT: PKCS #12, wrong password", p.returncode == 1 and "certificate or key" in out(p), out(p))
+    p, env = kinit("pat-upn", "pat@P.TEST")
+    check("PKINIT: a certificate with a UPN SAN (pkinit_allow_upn)", p.returncode == 0, out(p))
+
+    # Each group, as pkinit_dh_min_bits picks it.
+    for g in ("2048", "P-256", "4096", "P-384", "P-521"):
+        p, env = kinit("pat", "pat@P.TEST", env_with(f"    pkinit_dh_min_bits = {g}"))
+        check(f"PKINIT: group {g}", p.returncode == 0, out(p))
+    # Each KDF, and none (RFC 4556's octetstring2key).
+    for kdf in ("sha1", "sha256", "sha384", "sha512", "none"):
+        p, env = kinit("pat", "pat@P.TEST", env_with(f"    pkinit_kdfs = {kdf}"))
+        check(f"PKINIT: KDF {kdf}", p.returncode == 0, out(p))
+    # Q.TEST: freshness tokens required, groups of 4096 bits and more; we
+    # start at 2048 and take the first the KDC lists.
+    refused = "verify failure: Key parameters not accepted"
+    before = kdc_log().count(refused)
+    p, env = kinit("quinn", "quinn@Q.TEST")
+    log = kdc_log()
+    check("PKINIT: Q.TEST refuses 2048, we retry with its group, freshness token sent",
+          p.returncode == 0 and log.count(refused) == before + 1
+          and "freshness token received from quinn@Q.TEST" in log, out(p))
+    p, env = kinit("quinn", "quinn@Q.TEST", env_with("    pkinit_dh_min_bits = P-521"))
+    check("PKINIT: Q.TEST with P-521 from the start", p.returncode == 0, out(p))
+
+    # Anonymous, and its TGT as FAST armor for PKINIT.
+    anon = env_with()
+    p = run(k, [tool, "kinit", "-n", "@P.TEST"], env=anon)
+    check("PKINIT: anonymous (kinit -n), WELLKNOWN/ANONYMOUS@WELLKNOWN:ANONYMOUS",
+          p.returncode == 0 and "Default principal: WELLKNOWN/ANONYMOUS@WELLKNOWN:ANONYMOUS" in klist(anon), out(p))
+    armor = anon["KRB5CCNAME"][5:]
+    p, env = kinit("pat", "pat@P.TEST", extra=("-T", armor))
+    check("PKINIT: inside FAST, armored by the anonymous TGT", p.returncode == 0 and "pat@P.TEST" in klist(env), out(p))
+    q = run(k, [k.bin("kinit"), "-T", armor, "-X", ident("pat"), "pat@P.TEST"], env=dict(env, KRB5CCNAME="FILE:" + k.path("mit-armored.cc")))
+    check("PKINIT: MIT's kinit armored by our anonymous TGT", q.returncode == 0, out(q))
+
+    # Refused by the KDC.
+    # MIT says CANT_VERIFY_CERTIFICATE for an issuer it does not know.
+    for name, principal, code, what in (("pat-other", "pat@P.TEST", "CANT_VERIFY_CERTIFICATE", "a certificate from another CA"),
+                                        ("pat-noeku", "pat@P.TEST", "INCONSISTENT_KEY_PURPOSE", "EKU serverAuth only"),
+                                        ("pat-expired", "pat@P.TEST", "", "an expired certificate"),
+                                        ("pat", "quinn@Q.TEST", "CLIENT_NAME_MISMATCH", "pat's certificate for quinn")):
+        p, env = kinit(name, principal)
+        check(f"PKINIT: KDC refuses {what}" + (f" ({code})" if code else ""),
+              p.returncode == 1 and (code in out(p)), out(p))
+
+    # KDC certificates we refuse, or take as MIT does.
+    p, env = kinit("pat", "pat@P.TEST", env_with(anchors=f"{pki}/rogue.pem"))
+    check("PKINIT: KDC certificate from a CA we do not trust (KDC_NOT_TRUSTED)",
+          p.returncode == 1 and "KDC_NOT_TRUSTED" in out(p), out(p))
+    p, env = kinit("rita", "rita@R.TEST")
+    check("PKINIT: KDC certificate naming a host, not krbtgt (KDC_NAME_MISMATCH)",
+          p.returncode == 1 and "KDC_NAME_MISMATCH" in out(p), out(p))
+    p, env = kinit("rita", "rita@R.TEST", env_with(realm_extra=("R.TEST", "pkinit_kdc_hostname = kdc.r.test")))
+    check("PKINIT: the same with pkinit_kdc_hostname (EKU id-pkinit-KPKdc)", p.returncode == 0, out(p))
+    p, env = kinit("rita", "rita@R.TEST", env_with(realm_extra=(
+        "R.TEST", "pkinit_kdc_hostname = kdc.r.test\n        pkinit_eku_checking = kpServerAuth")))
+    check("PKINIT: pkinit_eku_checking = kpServerAuth refuses it (INCONSISTENT_KEY_PURPOSE)",
+          p.returncode == 1 and "INCONSISTENT_KEY_PURPOSE" in out(p), out(p))
+    p, env = kinit("rita", "nate@N.TEST")
+    check("PKINIT: KDC certificate with id-pkinit-san and EKU serverAuth taken (as MIT)", p.returncode == 0, out(p))
+
+    # Replies altered on the way.
+    relay = TamperRelay(k.ports_p["P.TEST"])
+    try:
+        for mode, code, what in (("as-pk-key", "INVALID_SIG", "the KDC's DH value changed (signature fails)"),
+                                 ("as-pk-kdf", "PREAUTH_FAILED", "the KDF named changed (another key)")):
+            relay.mode = mode
+            altered = relay.altered
+            env = env_with(relay=relay)
+            p = run(k, [tool, "kinit", "-X", ident("pat"), "pat@P.TEST"], env=env)
+            check(f"PKINIT: {what}", p.returncode == 1 and code in out(p) and relay.altered > altered, out(p))
+        # MIT sends PA-PKINIT-KX to anonymous clients only (RFC 8062 says
+        # SHOULD for others): nothing to alter for pat.
+        relay.mode = "as-pk-kx"
+        altered = relay.altered
+        p = run(k, [tool, "kinit", "-X", ident("pat"), "pat@P.TEST"], env=env_with(relay=relay))
+        check("PKINIT: no PA-PKINIT-KX for a named client (MIT)", p.returncode == 0 and relay.altered == altered, out(p))
+        p = run(k, [tool, "kinit", "-n", "@P.TEST"], env=env_with(relay=relay))
+        check("PKINIT: anonymous, PA-PKINIT-KX changed", p.returncode == 1 and relay.altered > altered, out(p))
+        relay.mode = "none"
+        p = run(k, [tool, "kinit", "-X", ident("pat"), "pat@P.TEST"], env=env_with(relay=relay))
+        check("PKINIT: through the relay unaltered", p.returncode == 0, out(p))
+    finally:
+        relay.close()
+
+
 def main():
     global verbose, only
     ap = argparse.ArgumentParser()
@@ -764,6 +949,7 @@ def main():
             transport_tests(k, tool)
             fast_tests(k, tool)
             spake_tests(k, tool)
+            pkinit_tests(k, tool)
             gss_tests(k, tool, gss)
             http_tests(k, tool, gss)
         skew_tests(args.mit, tool, goose)

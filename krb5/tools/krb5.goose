@@ -6,6 +6,9 @@
 //   krb5 kinit PRINCIPAL            the password from stdin's first line
 //   krb5 kinit -k KEYTAB PRINCIPAL
 //   krb5 kinit -T ARMOR_CACHE [-k KEYTAB] PRINCIPAL   armored with FAST by the cache's TGT
+//   krb5 kinit [-T ARMOR_CACHE] -X X509_user_identity=FILE:cert[,key] PRINCIPAL   PKINIT
+//   krb5 kinit -X X509_user_identity=PKCS12:file PRINCIPAL   the file's password from stdin
+//   krb5 kinit -n @REALM            anonymous PKINIT
 //   krb5 kvno [-gss] SERVICE        service/host[@REALM], or service@host with -gss
 //   krb5 kvno [-gss] -T ARMOR_CACHE SERVICE   from the KDC, armored by the cache's TGT (compound identity)
 //   krb5 klist                      the cache
@@ -24,6 +27,7 @@ import gslib.krb5.config;
 import gslib.krb5.keytab;
 import gslib.krb5.ccache;
 import gslib.krb5.client;
+import gslib.krb5.pkinit;
 
 fn fail(what: const u8[:], err: i64) {
     write_stderr(str("krb5: ", what, ": ", krb5::error_text(err), "\n"));
@@ -88,13 +92,39 @@ fn main() {
     if cmd == "kinit" {
         var keytab: u8[>..] = [];
         var armor: u8[>..] = [];
+        var identity: u8[>..] = [];
+        var anonymous = false;
         var i = 2;
-        while i + 1 < a.len && (a[i] == "-k" || a[i] == "-T") {
-            if a[i] == "-k" { keytab.append(a[i + 1]); } else { armor.append(a[i + 1]); }
+        while i < a.len - 1 && (a[i] == "-k" || a[i] == "-T" || a[i] == "-X" || a[i] == "-n") {
+            if a[i] == "-n" { anonymous = true; i += 1; continue; }
+            if a[i] == "-k" { keytab.append(a[i + 1]); }
+            else if a[i] == "-T" { armor.append(a[i + 1]); }
+            else {
+                if !a[i + 1].starts_with("X509_user_identity=") { write_stderr("krb5: -X takes X509_user_identity=...\n"); exit(2); }
+                identity.append(a[i + 1][19..]);
+            }
             i += 2;
         }
-        if i != a.len - 1 { write_stderr("usage: krb5 kinit [-T ARMOR_CACHE] [-k KEYTAB] PRINCIPAL\n"); exit(2); }
+        if i != a.len - 1 {
+            write_stderr("usage: krb5 kinit [-T ARMOR_CACHE] [-k KEYTAB | -X X509_user_identity=ID | -n] PRINCIPAL\n");
+            exit(2);
+        }
         let principal = a[i];
+        if anonymous {
+            let realm = if principal.len > 0 && principal[0] == '@' { principal[1..] } else { principal };
+            let c, err = krb5::kinit_anonymous(cfg, ccname, realm);
+            kinit_done(c, err);
+            return;
+        }
+        if identity.len > 0 {
+            var p12pw: u8[>..] = [];
+            if identity.starts_with("PKCS12:") { read_line(p12pw); }
+            let id, ierr = krb5::pkinit_load_identity(identity, p12pw);
+            if ierr != krb5::OK { fail(identity, ierr); }
+            let c, err = krb5::kinit_identity(cfg, ccname, principal, id, armor);
+            kinit_done(c, err);
+            return;
+        }
         if keytab.len > 0 {
             let kt, kerr = krb5::keytab_load(keytab);
             if kerr != krb5::OK { fail(keytab, kerr); }

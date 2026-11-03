@@ -18,8 +18,9 @@ reading theirs. Only `krb5.net`, the file functions and the tools do I/O.
 | `krb5.ccache` | MIT FILE credential caches (versions 1 to 4, configuration entries): `ccache_load`, `ccache_save` (0600), `ccache_find`, `ccache_add`, `ccache_config`, `ccache_with_config`, `default_ccache_name` |
 | `krb5.config` | krb5.conf in MIT's profile syntax (sections, subsections, `include`, `includedir`, final markers): `default_config`, the realms' KDCs, `domain_realm`, `capaths`, enctype lists, durations |
 | `krb5.net` | Sending to a realm's KDCs: UDP first below `udp_preference_limit`, TCP above it or on KRB_ERR_RESPONSE_TOO_BIG, each KDC in turn, as MIT does |
-| `krb5.client` | AS exchanges (`get_tgt_password`, `get_tgt_keytab`, encrypted-timestamp pre-authentication from ETYPE-INFO2, enterprise names and client referrals; armored with FAST: `get_tgt_password_fast`, `get_tgt_keytab_fast`, with encrypted challenge; SPAKE when the KDC offers it, armored or not, its optimistic challenge taken; `disable_encrypted_timestamp` as MIT has it), TGS exchanges (`get_service_ticket`: cross-realm along `capaths` or the hierarchy, server referrals; armored by the TGT, as MIT's are), `renew`, `forward_tgt`, clock skew learned from the KDC; `kinit_password`, `kinit_keytab`, `kinit_password_fast`, `kinit_keytab_fast` (MIT's `kinit -T`), `get_service_ticket_cached` keep a cache (with MIT's `fast_avail` entry when the KDC does FAST) |
+| `krb5.client` | AS exchanges (`get_tgt_password`, `get_tgt_keytab`, encrypted-timestamp pre-authentication from ETYPE-INFO2, enterprise names and client referrals; armored with FAST: `get_tgt_password_fast`, `get_tgt_keytab_fast`, with encrypted challenge; SPAKE when the KDC offers it, armored or not, its optimistic challenge taken; `disable_encrypted_timestamp` as MIT has it; PKINIT: `get_tgt_identity`, anonymous `get_tgt_anonymous`), TGS exchanges (`get_service_ticket`: cross-realm along `capaths` or the hierarchy, server referrals; armored by the TGT, as MIT's are), `renew`, `forward_tgt`, clock skew learned from the KDC; `kinit_password`, `kinit_keytab`, `kinit_password_fast`, `kinit_keytab_fast` (MIT's `kinit -T`), `kinit_identity` (`kinit -X`, armored or not), `kinit_anonymous` (`kinit -n`), `get_service_ticket_cached` keep a cache (with MIT's `fast_avail` entry when the KDC does FAST) |
 | `krb5.fast` | FAST (RFC 6113), the client's side: armor from a TGT (`fast_armor_as`) or a TGS request's own (`fast_armor_tgs`), `fast_wrap`, the reply's checks (`fast_reply`: nonce, finished part, the ticket's checksum), `fast_reply_key` (the strengthen key), `fast_error` (the error inside the armor, the cookie), encrypted challenge both ways |
+| `krb5.pkinit` | PKINIT (RFC 4556) with RFC 8636's KDFs (SHA-1, -256, -384, -512) and octetstring2key, freshness tokens (RFC 8070) and anonymous PKINIT (RFC 8062, PA-PKINIT-KX checked): Diffie-Hellman in MODP 2048 and 4096 and P-256, P-384, P-521 (`pkinit_dh_min_bits`; another group from the KDC's TD-DH-PARAMETERS); the AuthPack signed in CMS (`x509.cms`) by an RSA or ECDSA key; the KDC's certificate checked against `pkinit_anchors` (`pkinit_pool`, `pkinit_kdc_hostname`, `pkinit_eku_checking` as MIT reads them); identities `FILE:cert[,key]` and `PKCS12:file` (`pkinit_load_identity`) |
 | `krb5.spake` | SPAKE pre-authentication (draft-ietf-kitten-krb-spake-preauth, MIT 1.17+), the client's side with SF-NONE: the four groups (edwards25519, P-256, P-384, P-521; `spake_preauth_groups` as MIT names them, edwards25519 by default), PA-SPAKE's messages, w, the transcript hash and K'[n]; `spake_on_challenge`, `spake_response` |
 | `krb5.service` | The acceptor: `verify_ap_req` (keytab, ticket times, skew, authenticator, replay cache), `make_ap_rep`, `verify_ap_rep`, `make_ap_req` |
 | `krb5.gssapi` | RFC 4121: `gss_init`, `gss_init_continue`, `gss_accept` (mutual authentication, channel bindings, delegation through KRB-CRED, acceptor subkeys), `gss_get_mic`, `gss_verify_mic`, `gss_wrap`, `gss_unwrap` (sealed or not, any RRC), sequence checks; RFC 4757's tokens for RC4 session keys |
@@ -66,7 +67,9 @@ apart: `parse_principal`, `principal_string`, `name_parts`.
 
 ## Tools
 
-`tools/krb5.goose` (goose-krb5): `kinit [-T ARMOR_CACHE] [-k KEYTAB] PRINCIPAL`, `kvno
+`tools/krb5.goose` (goose-krb5): `kinit [-T ARMOR_CACHE] [-k KEYTAB | -X
+X509_user_identity=FILE:cert[,key] | -X X509_user_identity=PKCS12:file] PRINCIPAL`,
+`kinit -n @REALM` (anonymous), `kvno
 [-gss] [-T ARMOR_CACHE] SERVICE` (with -T: from the KDC, the TGS request
 armored by the cache's TGT, a computer's for AD's compound identity),
 `klist [-k KEYTAB]`, `renew`, on `$KRB5_CONFIG` and
@@ -107,6 +110,21 @@ server; servers listen on 127.0.0.1 only.
   the identity (w*M sent as T), a small-order point added to it; a
   challenge without SF-NONE or in a group we lack; malformed messages;
   fresh exchanges in each group for each type.
+- `test/pkinit.goose`: octetstring2key against RFC 4556 Appendix B's
+  four sets; RFC 8636's KDF against its §8 vectors (SHA-1 and SHA-256
+  for AES256; SHA-512 for DES3, whose stated key length is wrong);
+  Diffie-Hellman in each group, both sides agreeing, the KDC's values
+  refused (0, 1, p-1, -2 outside the subgroup, too long, not an INTEGER,
+  off the curve); TD-DH-PARAMETERS; PA-PK-AS-REP, KDCDHKeyInfo and
+  TYPED-DATA read and refused. Then replies signed here as the KDC
+  signs them, with OpenSSL's certificates and KDC key
+  (`test/vectors/pkinit.txt`, from `scripts/pkinit_vectors.py`): the
+  reply key the KDC's by each KDF and by octetstring2key, in P-256 and
+  MODP 2048; refused: another nonce, another realm's KDC, an expired or
+  untrusted KDC certificate, a KDF we did not offer or do not know,
+  another content type, no signer, a value off the curve; a KDC named by
+  host only with `pkinit_kdc_hostname` and the EKU asked for; one named
+  by id-pkinit-san with EKU serverAuth taken (as MIT); PA-PKINIT-KX.
 - `test/messages.goose`: MIT's reference encodings
   (`src/tests/asn.1/reference_encode.out`, through go-krb5's
   `test_vectors.go`) decode, carry MIT's test values, and re-encode to the
@@ -132,7 +150,8 @@ server; servers listen on 127.0.0.1 only.
 each other); a third, F.TEST, whose KDC refuses the encrypted
 timestamp; S.TEST, which offers SPAKE in all four groups and refuses the
 timestamp too; O.TEST, which sends an optimistic edwards25519 challenge;
-and 143 checks: kinit with each user (pre-auth required,
+P.TEST, Q.TEST, R.TEST and N.TEST with PKINIT (certificates from
+`scripts/pki.py`, OpenSSL); and 183 checks: kinit with each user (pre-auth required,
 RC4-only, DES3-only, Camellia-only with pre-auth, keytab), every
 encryption type for TGT and service ticket (Camellia's keys from MIT's
 keytab too), cross-realm both ways, our cache in MIT's klist and kvno and
@@ -166,7 +185,23 @@ common (the timestamp instead, or nothing with
 `disable_encrypted_timestamp`), a wrong password (PREAUTH_FAILED, no
 timestamp after it); a relay that sends -T for the KDC's T (still a
 point; the KDC refuses the response). With the client's SPAKE turned
-off, every check that relies on it fails.
+off, every check that relies on it fails. PKINIT (40 checks): RSA 2048
+and 3072 and ECDSA P-256, P-384 and P-521 certificates, MIT's kvno with
+the TGT; a certificate under an intermediate sent with it (refused
+without it), PKCS #12 (a wrong password refused), a UPN SAN; each group
+and each KDF (and none: octetstring2key); Q.TEST's freshness tokens and
+its refusal of 2048 answered with its group, or P-521 at once;
+anonymous (`kinit -n`), its TGT as FAST armor for PKINIT, for MIT's
+kinit too; refused by the KDC: another CA, EKU serverAuth, expired,
+another principal; refused by us: a KDC certificate from a CA we do not
+trust, naming a host (taken with `pkinit_kdc_hostname`, refused again
+with `pkinit_eku_checking = kpServerAuth`), and one with the
+id-pkinit-san and EKU serverAuth taken; through the relay, the KDC's DH
+value altered (signature), the KDF it names altered (another key),
+anonymous PA-PKINIT-KX altered. With each of the client's checks taken
+out in turn (the signature, the chain, the KDC's name, the EKU,
+PA-PKINIT-KX, the KDF), a check here fails; the nonce's is
+`test/pkinit.goose`'s.
 
 `scripts/ad.py`: against Active Directory, the DC `scripts/windows`
 makes (goose.test on Windows Server 2022, reached by an ssh tunnel to its
@@ -216,8 +251,10 @@ Go, and `tools/krb5oracle/go.mod` points (`replace`) at that checkout.
 
 ## Not done yet
 
-- PKINIT (RFC 4556, and with it anonymous PKINIT as armor: MIT's
-  `kinit -n`), OTP; SPAKE's second factors (only SF-NONE, as MIT) and
+- PKINIT's RSA key transport (encKeyPack: MIT 1.22's KDC refuses it;
+  AD has it), reused DH keys, smart cards (PKCS #11), `DIR:`/`ENV:`
+  identities, CRLs for the KDC's certificate (`pkinit_revoke`), PKINIT
+  against AD (the DC has no KDC certificate yet); OTP; SPAKE's second factors (only SF-NONE, as MIT) and
   its KDC side. Of FAST: the hide-client-names and
   kdc-follow-referrals options, armor across a realm referral (the
   armor TGT is for the realm asked; compound identity likewise only in
@@ -255,6 +292,20 @@ offer we take it over the encrypted challenge and the timestamp; after
 our response there is no fallback (the draft's §10.5, MIT's
 `disable_fallback`), but when the KDC has no group of ours the other
 mechanisms it offered are tried.
+
+PKINIT follows MIT's client: it waits for the KDC's PREAUTH_REQUIRED
+(with an empty PA-AS-FRESHNESS asking for a token), so a principal that
+needs no pre-authentication gets a reply nothing of ours opens
+(ERR_PREAUTH). A KDC that names no KDF is taken (RFC 4556's
+octetstring2key), as MIT takes it; RFC 8636 leaves that to the client.
+Anonymous, the client's name in RFC 8636's KDF is the anonymous
+principal in the realm WELLKNOWN:ANONYMOUS, as MIT's KDC renames it.
+MIT sends PA-PKINIT-KX to anonymous clients only (RFC 8062 says SHOULD
+for the others); we check it whenever it comes and require it when
+anonymous. MIT's KDC says CANT_VERIFY_CERTIFICATE, not
+CLIENT_NOT_TRUSTED, for a certificate whose issuer it does not know.
+The KDC's MODP value is checked to be in the subgroup of order q (y^q =
+1), beyond [2, p-2].
 
 DES3 and RC4 are legacy and kept for old KDCs and keytabs only; RFC
 1964's per-message tokens for DES3 session keys are not planned (such

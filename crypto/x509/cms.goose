@@ -1,0 +1,374 @@
+// x509.cms: CMS SignedData (RFC 5652 §5), as PKINIT (RFC 4556) carries
+// its requests and the KDC its replies in it: made with one signer and
+// read and checked with one.
+//
+// Made: SignedData version 3 (its content type is never id-data here),
+// the content encapsulated, the signer's certificate and any others in
+// `certificates`, one SignerInfo (version 1, issuerAndSerialNumber) with
+// the signed attributes contentType and messageDigest. The digest is
+// SHA-256, -384 or -512; the signature PKCS #1 v1.5, PSS or ECDSA. An
+// unsigned SignedData (no certificates, no signers) is what anonymous
+// PKINIT sends (RFC 8062 §4.1).
+//
+// Read: strict DER, one signer or none. The signer is found among the
+// certificates sent by issuer and serial number or by subject key
+// identifier; signed attributes are required (RFC 5652 §5.3: the content
+// type is not id-data), each once with one value, the contentType equal
+// to the eContentType and the messageDigest to the content's digest. The
+// signature is over the attributes' DER with the SET OF tag, by
+// rsaEncryption with the digest algorithm, or by a signature algorithm
+// whose hash is the digest algorithm. SHA-1 is refused unless asked for.
+// Checking the signer's certificate (its path, its usages) is the
+// caller's.
+
+namespace x509;
+
+import std;
+import crypto.x509;
+import crypto.x509.keys;
+import encoding.asn1;
+import crypto.bignum;
+import crypto.bignum.hmac;
+
+let OID_CMS_DATA: const u8[:] = "1.2.840.113549.1.7.1";
+let OID_CMS_SIGNED_DATA: const u8[:] = "1.2.840.113549.1.7.2";
+let OID_CMS_CONTENT_TYPE: const u8[:] = "1.2.840.113549.1.9.3";
+let OID_CMS_MESSAGE_DIGEST: const u8[:] = "1.2.840.113549.1.9.4";
+let OID_RSA_ENCRYPTION: const u8[:] = "1.2.840.113549.1.1.1";
+
+// A SignedData as read: offsets into its own copy of the DER.
+struct SignedData {
+    content_type: asn1::Tlv,      // eContentType, an OID
+    content: asn1::Tlv,           // eContent's OCTET STRING (content_len 0 and start == end if absent)
+    has_content: bool,
+    certs: asn1::Tlv,             // the certificates' SET (start == end if absent)
+    signer: asn1::Tlv,            // the one SignerInfo (start == end if none)
+    der: u8[>..],
+}
+
+fn cms_no_tlv() -> asn1::Tlv { asn1::Tlv { tag: 0, cls: 0, constructed: false, number: 0, start: 0, off: 0, end: 0 } }
+
+// A SET OF from elements laid end to end in `elems` (each a whole TLV),
+// sorted by their encodings as DER wants.
+fn cms_set_of(out: u8[>..]&, elems: const u8[:]) {
+    var starts: i64[>..] = [];
+    var ends: i64[>..] = [];
+    var at = 0;
+    while at < elems.len {
+        let t, ok = asn1::read(elems, at, elems.len);
+        assert(ok);
+        starts.push(t.start);
+        ends.push(t.end);
+        at = t.end;
+    }
+    // Insertion sort: a handful of elements.
+    var i = 1;
+    while i < starts.len {
+        var j = i;
+        while j > 0 && cms_less(elems[starts[j]..ends[j]], elems[starts[j - 1]..ends[j - 1]]) {
+            let s = starts[j]; starts[j] = starts[j - 1]; starts[j - 1] = s;
+            let e = ends[j]; ends[j] = ends[j - 1]; ends[j - 1] = e;
+            j -= 1;
+        }
+        i += 1;
+    }
+    var body: u8[>..] = [];
+    var k = 0;
+    while k < starts.len {
+        body.append(elems[starts[k]..ends[k]]);
+        k += 1;
+    }
+    asn1::put(out, asn1::SET, body);
+}
+
+// X.690 §11.6's order: as octet strings, the shorter padded with zeros.
+fn cms_less(a: const u8[:], b: const u8[:]) -> bool {
+    var i = 0;
+    while i < a.len || i < b.len {
+        let x: u8 = if i < a.len { a[i] } else { 0 };
+        let y: u8 = if i < b.len { b[i] } else { 0 };
+        if x != y { return x < y; }
+        i += 1;
+    }
+    return false;
+}
+
+fn cms_digest_alg_id(out: u8[>..]&, h: i64) {
+    var body: u8[>..] = [];
+    asn1::put_oid(body, if h == 160 { "1.3.14.3.2.26" } else { hash_oid(h) });
+    asn1::put(out, asn1::SEQUENCE, body);
+}
+
+// The hash (160, 256, 384, 512) a digest AlgorithmIdentifier names
+// (parameters absent or NULL), or 0.
+fn cms_digest_of(der: const u8[:], t: asn1::Tlv) -> i64 {
+    let p, ok = asn1::children_of(der, t, asn1::SEQUENCE);
+    if !ok || p.len < 1 || p.len > 2 || (p.len == 2 && !asn1::read_null(der, p[1])) { return 0; }
+    if asn1::oid_is(der, p[0], "1.3.14.3.2.26") { return 160; }
+    return hash_of_oid(der, p[0]);
+}
+
+fn cms_encap(out: u8[>..]&, content_type: const u8[:], content: const u8[:]) {
+    var body: u8[>..] = [];
+    asn1::put_oid(body, content_type);
+    var oct: u8[>..] = [];
+    asn1::put_octets(oct, content);
+    asn1::put(body, asn1::ctx(0, true), oct);
+    asn1::put(out, asn1::SEQUENCE, body);
+}
+
+fn cms_content_info(sd: const u8[:]) -> u8[>..] {
+    var body: u8[>..] = [];
+    asn1::put_oid(body, OID_CMS_SIGNED_DATA);
+    asn1::put(body, asn1::ctx(0, true), sd);
+    var out: u8[>..] = [];
+    asn1::put(out, asn1::SEQUENCE, body);
+    return out;
+}
+
+// The signed attributes' content (laid end to end, sorted): contentType
+// and messageDigest.
+fn cms_signed_attrs(content_type: const u8[:], digest: const u8[:]) -> u8[>..] {
+    var ct: u8[>..] = [];
+    var ctv: u8[>..] = [];
+    asn1::put_oid(ctv, content_type);
+    asn1::put_oid(ct, OID_CMS_CONTENT_TYPE);
+    cms_set_of(ct, ctv);
+    var md: u8[>..] = [];
+    var mdv: u8[>..] = [];
+    asn1::put_octets(mdv, digest);
+    asn1::put_oid(md, OID_CMS_MESSAGE_DIGEST);
+    cms_set_of(md, mdv);
+    var both: u8[>..] = [];
+    asn1::put(both, asn1::SEQUENCE, ct);
+    asn1::put(both, asn1::SEQUENCE, md);
+    var set: u8[>..] = [];
+    cms_set_of(set, both);
+    return set;
+}
+
+// A ContentInfo holding a SignedData of `content` (of type content_type,
+// a dotted OID) signed by `key`, whose certificate is `signer`, by
+// algorithm alg with hash h (SIG_RSA_PKCS1, SIG_RSA_PSS or SIG_ECDSA;
+// 256, 384 or 512). `others` are more certificates to send (the chain
+// up from the signer's), DER laid end to end. False if signing fails.
+fn cms_sign(content_type: const u8[:], content: const u8[:], key: const PrivateKey&, signer: const Cert&,
+            others: const u8[:], alg: i64, h: i64) -> u8[>..], bool {
+    assert(alg == SIG_RSA_PKCS1 || alg == SIG_RSA_PSS || alg == SIG_ECDSA);
+    let attrs = cms_signed_attrs(content_type, bignum::hash_bits(h, content));
+    let sig, ok = sign(key, alg, h, attrs);
+    var none: u8[>..] = [];
+    if !ok { return none, false; }
+    let d = signer.der[..];
+    var sid: u8[>..] = [];
+    sid.append(d[signer.issuer.start..signer.issuer.end]);
+    sid.append(d[signer.serial.start..signer.serial.end]);
+    var si: u8[>..] = [];
+    asn1::put_i64(si, 1);
+    asn1::put(si, asn1::SEQUENCE, sid);
+    cms_digest_alg_id(si, h);
+    // [0] IMPLICIT: the attributes' SET with its tag changed.
+    let at, okat = asn1::parse(attrs);
+    asn1::put(si, asn1::ctx(0, true), attrs[at.off..]);
+    si.append(sig_alg_id(alg, h));
+    asn1::put_octets(si, sig);
+    var sis: u8[>..] = [];
+    asn1::put(sis, asn1::SEQUENCE, si);
+
+    var sd: u8[>..] = [];
+    asn1::put_i64(sd, 3);
+    var dalg: u8[>..] = [];
+    cms_digest_alg_id(dalg, h);
+    asn1::put(sd, asn1::SET, dalg);
+    cms_encap(sd, content_type, content);
+    var certs: u8[>..] = [];
+    certs.append(d);
+    certs.append(others);
+    var cset: u8[>..] = [];
+    cms_set_of(cset, certs);
+    let ct, okct = asn1::parse(cset);
+    asn1::put(sd, asn1::ctx(0, true), cset[ct.off..]);
+    asn1::put(sd, asn1::SET, sis);
+    var sdq: u8[>..] = [];
+    asn1::put(sdq, asn1::SEQUENCE, sd);
+    return cms_content_info(sdq), true;
+}
+
+// A ContentInfo holding a SignedData of `content` with no certificates
+// and no signers (RFC 8062's anonymous PKINIT).
+fn cms_unsigned(content_type: const u8[:], content: const u8[:]) -> u8[>..] {
+    var sd: u8[>..] = [];
+    asn1::put_i64(sd, 3);
+    asn1::put(sd, asn1::SET, "");
+    cms_encap(sd, content_type, content);
+    asn1::put(sd, asn1::SET, "");
+    var sdq: u8[>..] = [];
+    asn1::put(sdq, asn1::SEQUENCE, sd);
+    return cms_content_info(sdq);
+}
+
+// Reads a ContentInfo holding a SignedData: OK, or ERR_MALFORMED (more
+// than one signer, or anything but DER), or ERR_UNSUPPORTED_ALGORITHM.
+fn cms_parse_signed(der: const u8[:]) -> SignedData, i64 {
+    var sd = SignedData { content_type: cms_no_tlv(), content: cms_no_tlv(), has_content: false, certs: cms_no_tlv(),
+                          signer: cms_no_tlv(), der: der };
+    let d = sd.der[..];
+    let top, ok = asn1::parse(d);
+    if !ok { return sd, ERR_MALFORMED; }
+    let ci, okc = asn1::children_of(d, top, asn1::SEQUENCE);
+    if !okc || ci.len != 2 || !asn1::oid_is(d, ci[0], OID_CMS_SIGNED_DATA) || ci[1].tag != asn1::ctx(0, true) {
+        return sd, ERR_MALFORMED;
+    }
+    let inner, oki = asn1::explicit(d, ci[1]);
+    if !oki { return sd, ERR_MALFORMED; }
+    let f, okf = asn1::children_of(d, inner, asn1::SEQUENCE);
+    if !okf || f.len < 4 { return sd, ERR_MALFORMED; }
+    let version, okv = asn1::read_i64(d, f[0]);
+    if !okv || version < 1 || version > 5 || f[1].tag != asn1::SET { return sd, ERR_MALFORMED; }
+    let enc, oke = asn1::children_of(d, f[2], asn1::SEQUENCE);
+    if !oke || enc.len < 1 || enc.len > 2 || enc[0].tag != asn1::OID { return sd, ERR_MALFORMED; }
+    sd.content_type = enc[0];
+    if enc.len == 2 {
+        if enc[1].tag != asn1::ctx(0, true) { return sd, ERR_MALFORMED; }
+        let oct, oko = asn1::explicit(d, enc[1]);
+        if !oko || oct.tag != asn1::OCTET_STRING { return sd, ERR_MALFORMED; }
+        sd.content = oct;
+        sd.has_content = true;
+    }
+    var i = 3;
+    if i < f.len && f[i].tag == asn1::ctx(0, true) { sd.certs = f[i]; i += 1; }
+    if i < f.len && f[i].tag == asn1::ctx(1, true) { i += 1; }   // crls: not used
+    if i != f.len - 1 || f[i].tag != asn1::SET { return sd, ERR_MALFORMED; }
+    let sis, oks = asn1::children(d, f[i]);
+    if !oks || sis.len > 1 { return sd, ERR_MALFORMED; }
+    for s in sis { sd.signer = s; }
+    return sd, OK;
+}
+
+// The certificates a SignedData carries, DER laid end to end (X.509
+// certificates only; other choices are skipped).
+fn cms_certs(sd: const SignedData&) -> u8[>..] {
+    var out: u8[>..] = [];
+    if sd.certs.end == sd.certs.start { return out; }
+    let d = sd.der[..];
+    let cs, ok = asn1::children(d, sd.certs);
+    if !ok { return out; }
+    for c in cs {
+        if c.tag == asn1::SEQUENCE { out.append(d[c.start..c.end]); }
+    }
+    return out;
+}
+
+// The content (eContent's octets).
+fn cms_content(sd: const SignedData&) -> const u8[:] { sd.der[sd.content.off..sd.content.end] }
+
+// Whether a SignedData has a signer.
+fn cms_signed(sd: const SignedData&) -> bool { sd.signer.end > sd.signer.start }
+
+// Whether the signer identifier `sid` names certificate c.
+fn cms_sid_matches(d: const u8[:], sid: asn1::Tlv, c: const Cert&) -> bool {
+    let cd = c.der[..];
+    if sid.tag == asn1::SEQUENCE {
+        let p, ok = asn1::children(d, sid);
+        if !ok || p.len != 2 { return false; }
+        return d[p[0].start..p[0].end] == cd[c.issuer.start..c.issuer.end] &&
+               d[p[1].start..p[1].end] == cd[c.serial.start..c.serial.end];
+    }
+    if sid.tag == asn1::ctx(0, false) {
+        return c.ski.end > c.ski.start && d[sid.off..sid.end] == cd[c.ski.off..c.ski.end];
+    }
+    return false;
+}
+
+// Checks the signer of a SignedData: finds its certificate among those
+// sent, checks the signed attributes and the signature. Returns the
+// signer's certificate and OK, or ERR_MALFORMED, ERR_UNKNOWN_ISSUER (no
+// certificate sent matches the signer), ERR_UNSUPPORTED_ALGORITHM or
+// ERR_BAD_SIGNATURE.
+fn cms_verify(sd: const SignedData&, allow_sha1: bool = false) -> Cert, i64 {
+    let d = sd.der[..];
+    if !cms_signed(sd) || !sd.has_content { return empty_cert(), ERR_MALFORMED; }
+    let p, ok = asn1::children_of(d, sd.signer, asn1::SEQUENCE);
+    if !ok || p.len < 5 || p.len > 7 { return empty_cert(), ERR_MALFORMED; }
+    let version, okv = asn1::read_i64(d, p[0]);
+    if !okv || (version != 1 && version != 3) { return empty_cert(), ERR_MALFORMED; }
+    let sid = p[1];
+    let h = cms_digest_of(d, p[2]);
+    if h == 0 || (h == 160 && !allow_sha1) { return empty_cert(), ERR_UNSUPPORTED_ALGORITHM; }
+    if p[3].tag != asn1::ctx(0, true) { return empty_cert(), ERR_MALFORMED; }
+    let attrs = p[3];
+    let salg = p[4];
+    if p.len < 6 || p[5].tag != asn1::OCTET_STRING { return empty_cert(), ERR_MALFORMED; }
+    let sig = d[p[5].off..p[5].end];
+    if p.len == 7 && p[6].tag != asn1::ctx(1, true) { return empty_cert(), ERR_MALFORMED; }
+
+    // The signed attributes: contentType and messageDigest once each.
+    let list, okl = asn1::children(d, attrs);
+    if !okl { return empty_cert(), ERR_MALFORMED; }
+    var seen_ct = false;
+    var seen_md = false;
+    for a in list {
+        let av, oka = asn1::children_of(d, a, asn1::SEQUENCE);
+        if !oka || av.len != 2 || av[0].tag != asn1::OID || av[1].tag != asn1::SET { return empty_cert(), ERR_MALFORMED; }
+        let vals, oks = asn1::children(d, av[1]);
+        if !oks { return empty_cert(), ERR_MALFORMED; }
+        if asn1::oid_is(d, av[0], OID_CMS_CONTENT_TYPE) || asn1::oid_is(d, av[0], OID_CMS_MESSAGE_DIGEST) {
+            if vals.len != 1 { return empty_cert(), ERR_MALFORMED; }
+        }
+        for v in vals {
+            if asn1::oid_is(d, av[0], OID_CMS_CONTENT_TYPE) {
+                if seen_ct || v.tag != asn1::OID || d[v.start..v.end] != d[sd.content_type.start..sd.content_type.end] {
+                    return empty_cert(), ERR_MALFORMED;
+                }
+                seen_ct = true;
+            } else if asn1::oid_is(d, av[0], OID_CMS_MESSAGE_DIGEST) {
+                if seen_md || v.tag != asn1::OCTET_STRING { return empty_cert(), ERR_MALFORMED; }
+                if d[v.off..v.end] != bignum::hash_bits(h, cms_content(sd))[..] {
+                    return empty_cert(), ERR_BAD_SIGNATURE;
+                }
+                seen_md = true;
+            }
+        }
+    }
+    if !seen_ct || !seen_md { return empty_cert(), ERR_MALFORMED; }
+
+    // The signature algorithm: rsaEncryption (PKCS #1 v1.5 with the digest
+    // algorithm), or one whose hash is the digest algorithm.
+    var alg = SIG_UNKNOWN;
+    var salt: i64 = 0;
+    let sp, oksp = asn1::children_of(d, salg, asn1::SEQUENCE);
+    if !oksp || sp.len < 1 { return empty_cert(), ERR_MALFORMED; }
+    if asn1::oid_is(d, sp[0], OID_RSA_ENCRYPTION) && (sp.len == 1 || (sp.len == 2 && asn1::read_null(d, sp[1]))) {
+        alg = SIG_RSA_PKCS1;
+    } else if h == 160 && sp.len <= 2 && asn1::oid_is(d, sp[0], "1.2.840.113549.1.1.5")
+              && (sp.len == 1 || asn1::read_null(d, sp[1])) {
+        alg = SIG_RSA_PKCS1;
+    } else if h == 160 && sp.len == 1 && asn1::oid_is(d, sp[0], "1.2.840.10045.4.1") {
+        alg = SIG_ECDSA;
+    } else {
+        let a, sh, sl = sig_alg_of(d, salg);
+        if a == SIG_UNKNOWN || sh != h { return empty_cert(), ERR_UNSUPPORTED_ALGORITHM; }
+        if a != SIG_RSA_PKCS1 && a != SIG_RSA_PSS && a != SIG_ECDSA { return empty_cert(), ERR_UNSUPPORTED_ALGORITHM; }
+        alg = a;
+        salt = sl;
+    }
+
+    // The signer's certificate, among those sent.
+    let certs = cms_certs(sd);
+    var at = 0;
+    while at < certs.len {
+        let t, okt = asn1::read(certs, at, certs.len);
+        if !okt { return empty_cert(), ERR_MALFORMED; }
+        at = t.end;
+        let c, e = parse(certs[t.start..t.end]);
+        if e != OK || !cms_sid_matches(d, sid, c) { continue; }
+        // The signature covers the attributes' DER with the SET OF tag.
+        var signed: u8[>..] = [];
+        signed.append(d[attrs.start..attrs.end]);
+        signed[0] = asn1::SET as! u8;
+        let digest = bignum::hash_bits(h, signed);
+        let ev = verify_digest(c, alg, h, salt, digest, sig);
+        return c, ev;
+    }
+    return empty_cert(), ERR_UNKNOWN_ISSUER;
+}
