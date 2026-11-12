@@ -202,13 +202,18 @@ The compiler is `GOOSE`, else `goose` on the PATH, else
 ```bash
 make test                 # every library's unit tests (make test-http: one library's)
 make test-native          # also built with the C compiler
-make interop              # live: OpenSSL, Go, OpenSSH, OpenLDAP, curl, nghttp2, h2spec
-make differential         # against Go (net/http, net/url, hpack, compress, mime), zlib, openssl
+make interop              # live: OpenSSL, Go, OpenSSH, OpenLDAP, curl, nghttp2, h2spec, pkcs11-tool
+make differential         # against Go (net/http, net/url, hpack, compress, mime, jwx), zlib, openssl
 make test-all             # check, test, interop and differential
 python3 scripts/run_all.py [--native] [--only http,tls]   # what make test runs
 ```
 
 Each library's README lists its differentials (against Go, Python's zlib
-and hashlib, OpenSSL), its interop runs (curl, Go's net/http and
-crypto/tls, OpenSSL, OpenSSH, OpenLDAP, nghttp2, h2spec), and what is
-not done yet. Every server they start listens on 127.0.0.1.
+and hashlib, OpenSSL, Go's lestrrat-go/jwx), its interop runs (curl, Go's
+net/http and crypto/tls, OpenSSL, OpenSSH, OpenLDAP, nghttp2, h2spec,
+OpenSC's pkcs11-tool), and what is not done yet. Every server they start
+listens on 127.0.0.1.
+
+pkcs11's tests run against SoftHSM2 (`brew install softhsm`, `apt install
+softhsm2`), each on a fresh token of its own; without it they are skipped,
+not failed. Its interop also needs OpenSC (`pkcs11-tool`) and OpenSSL.
