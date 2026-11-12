@@ -22,4 +22,5 @@ exclude = [
     "compress/test", "compress/tools", "compress/examples",
     "mime/test", "mime/tools",
     "krb5/test", "krb5/tools",
+    "jwx/test", "jwx/tools",
 ];

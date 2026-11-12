@@ -18,7 +18,57 @@ later.
 | `compress` | Compression and archives, as Go's compress/* and archive/*, plus xz: DEFLATE, gzip, zlib, LZW, bzip2, xz and LZMA, zip, tar; reading and writing | [README](compress/README.md) |
 | `mime` | MIME, as Go's mime, mime/quotedprintable and mime/multipart, and net/textproto's header sections: media types, RFC 2047 encoded-words, file extensions' types, quoted-printable, multipart bodies and forms | [README](mime/README.md) |
 | `krb5` | Kerberos V5 (RFC 4120) as go-krb5 has it: TGTs and service tickets (password, keytab, cross-realm, referrals, FAST armoring), the acceptor, GSS-API (RFC 4121), SPNEGO and HTTP Negotiate, Microsoft's PAC, keytabs and credential caches; goose-krb5 (kinit, kvno, klist) and goose-gss | [README](krb5/README.md) |
+| `jwx` | JOSE, as Go's lestrrat-go/jwx: JSON Web Keys (and key sets, thumbprints, PEM), Signatures (compact and JSON, every RFC 7518 algorithm and EdDSA), Encryption (every key management and content algorithm, zip, several recipients) and Tokens (claims, validation, nested) | [README](jwx/README.md) |
 | `net/http` | HTTP/1.1 and HTTP/2, server and client: a client with Go's policy (redirects, cookies, credentials, proxies, gzip, TLS session resumption, streaming uploads, several responses at once), URLs, cookies, HPACK; goose-http and goose-httpd | [README](net/http/README.md) |
+
+## What's new
+
+### jwx: JOSE (JWA, JWK, JWS, JWE, JWT)
+
+A new library, `jwx`, modelled on Go's
+[lestrrat-go/jwx](https://github.com/lestrrat-go/jwx); its
+[README](jwx/README.md) has the API and the design.
+
+- **`jwx`**: error codes and strict base64url (no padding, no stray bits).
+- **`jwx.jwa`**: every algorithm, key type and curve of RFC 7518, RFC 8037
+  and RFC 9864, with what each needs.
+- **`jwx.jwk`**: keys and key sets (RSA, EC P-256/384/521, OKP Ed25519 and
+  X25519, oct), checked for consistency; RFC 7638 thumbprints; generation.
+- **`jwx.pem`**: keys from and to PEM and DER: PKCS #8, SEC 1, PKCS #1,
+  SubjectPublicKeyInfo, and certificates (with `x5t` and `x5t#S256`).
+- **`jwx.jws`**: signatures, compact and JSON (general and flattened),
+  detached and unencoded (RFC 7797) payloads; HS, RS, PS, ES and EdDSA.
+- **`jwx.jwe`**: encryption, compact and JSON, several recipients,
+  additional authenticated data, `zip`; RSA1_5, RSA-OAEP(-256/384/512),
+  A*KW, dir, ECDH-ES(+A*KW) on the NIST curves and X25519, A*GCMKW, PBES2;
+  A*CBC-HS* and A*GCM.
+- **`jwx.jwt`**: claims, signed, encrypted and nested tokens, validation
+  of exp, nbf, iat, iss, sub, aud, jti, max age and required claims.
+
+Verifying and decrypting take the algorithm the caller expects, so a token
+cannot choose its own (no alg confusion, no `none` unless asked for by
+name). Key unwrap and decryption failures are uniform, RSA1_5 continues
+with a random key on bad padding, and ECDH-ES ephemeral keys are checked
+to be on their curve. As jwx, PBES2 counts are capped (10000) and `zip`
+payloads may inflate to 10 MB, both adjustable.
+
+Departures from jwx: keys keep only the members RFC 7517 and RFC 7518
+define (no private members, no `x5c`), as Goose's fixed-size structs
+cannot hold them; and a JWE header parameter may appear in two headers
+only with the same value (Go's jwx repeats `alg`, which RFC 7516 §7.2.1
+forbids). Not supported: Ed448, X448, ES256K, multi-prime RSA keys.
+
+Tested against RFC 7520's examples (the JOSE cookbook), with 10
+ciphertexts and 8 encrypted keys remade byte for byte; RFC 7515, 7517,
+7518 Appendix C, 7519, 7638, 7797 and 8037; keys made by OpenSSL; 168
+messages made by Go's jwx v3; and a differential both ways with Go's jwx
+(`make differential-jwx`).
+
+### bignum: AES Key Wrap
+
+`crypto/bignum/keywrap.goose`: AES Key Wrap (RFC 3394, SP 800-38F KW) and
+AES Key Wrap with Padding (RFC 5649, KWP), constant time, tested against
+both RFCs' vectors. jwx's A*KW, ECDH-ES+A*KW and PBES2 use it.
 
 ## Using it
 
@@ -41,7 +91,7 @@ The libraries are grouped as Go groups its packages: `crypto/` (bignum,
 tls, x509, ssh), `encoding/` (asn1, yaml), `net/` (http, ldap), and
 `compress/` and `mime/` at the top, as Go's are (zip and tar are in
 compress too: they share its namespace, results and checksums), and
-`krb5/` at the top as well, Kerberos having no place in Go's tree. As in Go,
+`krb5/` and `jwx/` at the top as well, neither having a place in Go's tree. As in Go,
 the group is part of the import path but not of the name in code:
 `import gslib.net.http.fetch;`, then `http::get(...)`. Goose namespaces
 are one identifier, so each library keeps its own (`http::`, `tls::`,

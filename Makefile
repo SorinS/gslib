@@ -14,15 +14,15 @@ PYTHON  ?= python3
 GOOSE   ?= $(or $(shell command -v goose 2>/dev/null),$(abspath $(ROOT)/../goose.git/build/goose))
 export GOOSE
 
-LIBS    := asn1 bignum x509 tls ssh ldap yaml http compress mime krb5
+LIBS    := asn1 bignum x509 tls ssh ldap yaml http compress mime krb5 jwx
 
 # ------------------------------------------------------------------------------
 # Derived values
 # ------------------------------------------------------------------------------
 
 # A program is rebuilt when any of the package's sources changes.
-SOURCES := $(ROOT)/gslib.goose $(ROOT)/gslib.build $(ROOT)/compress.goose $(ROOT)/mime.goose $(ROOT)/krb5.goose \
-	$(shell find $(ROOT)/crypto $(ROOT)/encoding $(ROOT)/net $(ROOT)/compress $(ROOT)/mime $(ROOT)/krb5 \
+SOURCES := $(ROOT)/gslib.goose $(ROOT)/gslib.build $(ROOT)/compress.goose $(ROOT)/mime.goose $(ROOT)/krb5.goose $(ROOT)/jwx.goose \
+	$(shell find $(ROOT)/crypto $(ROOT)/encoding $(ROOT)/net $(ROOT)/compress $(ROOT)/mime $(ROOT)/krb5 $(ROOT)/jwx \
 		\( -name '*.goose' -o -name '*.c' -o -name '*.build' \) \
 		-not -path '*/test/*' -not -path '*/examples/*')
 
@@ -51,7 +51,7 @@ BINARIES    := $(foreach p,$(PROGRAMS),$(BIN)/$(call prog_name,$(p))) $(BIN)/goo
 
 # Every tool and example with a main, for check.
 CHECKED := $(shell cd $(ROOT) && grep -l '^fn main' */*/tools/*.goose */*/examples/*.goose \
-	compress/tools/*.goose compress/examples/*.goose mime/tools/*.goose krb5/tools/*.goose)
+	compress/tools/*.goose compress/examples/*.goose mime/tools/*.goose krb5/tools/*.goose jwx/tools/*.goose)
 
 # ------------------------------------------------------------------------------
 # Helpers
@@ -140,7 +140,7 @@ test-native: ## Run the unit tests, also built with the C compiler
 
 # test-asn1, test-bignum, ... (scripts/run_all.py refuses a name not in
 # LIBS). Not .PHONY: make looks for no pattern rule for a phony target.
-test-%: ## Run one library's unit tests: test-asn1 test-bignum test-x509 test-tls test-ssh test-ldap test-yaml test-http test-compress test-mime test-krb5
+test-%: ## Run one library's unit tests: test-asn1 test-bignum test-x509 test-tls test-ssh test-ldap test-yaml test-http test-compress test-mime test-krb5 test-jwx
 	$(call echo,"Running $* unit tests")
 	cd $(ROOT) && $(PYTHON) scripts/run_all.py --only $*
 
@@ -183,7 +183,7 @@ interop-krb5: ## Kerberos against MIT's KDC, kinit/kvno/klist, gss-client/gss-se
 	cd $(ROOT)/krb5 && $(PYTHON) scripts/interop.py
 
 .PHONY: differential
-differential: differential-http differential-x509 differential-compress differential-mime ## Run every differential
+differential: differential-http differential-x509 differential-compress differential-mime differential-jwx ## Run every differential
 
 .PHONY: differential-http
 differential-http: ## HTTP/1.1 parsing, URLs and HPACK against Go; gzip and deflate decoding against zlib
@@ -210,6 +210,11 @@ differential-compress: ## compress against Go's compress/* and archive/*, zlib, 
 		printf "\033[1m>> %s\033[0m\n" "compress: $$d"; \
 		$(PYTHON) scripts/$$d.py || exit 1; \
 	done
+
+.PHONY: differential-jwx
+differential-jwx: ## jwx against Go's lestrrat-go/jwx v3, both ways (needs Go)
+	$(call echo,"jwx against Go's jwx")
+	cd $(ROOT)/jwx && $(PYTHON) scripts/differential.py -n 3
 
 .PHONY: differential-mime
 differential-mime: ## mime against Go's mime, mime/quotedprintable, mime/multipart and net/textproto

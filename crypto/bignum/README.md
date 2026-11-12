@@ -43,6 +43,8 @@ language, written in Goose: a foundation for cryptography.
   block cipher here: AES-CMAC, Camellia-CMAC; constant time when the
   cipher is.
 - **`bignum.gcm`**: AES-GCM authenticated encryption, constant time.
+- **`bignum.keywrap`**: AES Key Wrap (RFC 3394, SP 800-38F KW) and with
+  padding (RFC 5649, KWP), constant time; JOSE's A*KW uses it.
 - **`bignum.modes`**: CBC, CFB, OFB and CTR over any of the block ciphers,
   XTS over 16-byte ones, and PKCS #7 padding.
 - **`bignum.des`**: DES and triple DES, for legacy data.
@@ -305,6 +307,17 @@ forms. The S-boxes are bit masks selected by shifts, so no table is read
 at a secret index. `rc4_init(key)` and `rc4_xor(r, data)` are RC4, which
 is broken and, as in Go, indexes its state by secret values.
 
+
+### AES Key Wrap
+
+`aes_key_wrap(kek, key)` wraps a key of 16 bytes or more, a multiple of 8,
+under a 16-, 24- or 32-byte AES key: 8 bytes longer. `aes_key_unwrap`
+returns the key and true, or nothing and false. `aes_key_wrap_pad` and
+`aes_key_unwrap_pad` are RFC 5649's form for keys of any length from one
+byte. Unwrapping checks the integrity value (and KWP's length and zero
+padding) under masks, so a wrong KEK and a changed byte fail alike and in
+the same time. test/keywrap_vectors.goose holds RFC 3394 §4's and RFC
+5649 §6's vectors.
 ### ChaCha20-Poly1305
 
 `chacha20_poly1305_seal(key, nonce, aad, pt)` / `_open` and the in-place
