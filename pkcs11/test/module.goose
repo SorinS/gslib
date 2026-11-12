@@ -16,9 +16,16 @@ fn main() {
     var err: u8[>..] = [];
     let bad, okb = pkcs11::new("/nonexistent/libnothing.so", err);
     tv::check("no such module", !okb && err.len > 0);
-    var err2: u8[>..] = [];
-    let notp11, okn = pkcs11::new("/usr/lib/libSystem.B.dylib", err2);
-    tv::check("a library that is no PKCS#11 module", !okn);
+    // A shared library that is no PKCS#11 module: the C library of whichever
+    // system this is.
+    for lib in ["/usr/lib/libSystem.B.dylib", "/lib/x86_64-linux-gnu/libc.so.6", "/lib/aarch64-linux-gnu/libc.so.6",
+                "/lib64/libc.so.6", "C:\\Windows\\System32\\kernel32.dll"] {
+        if file_exists(lib) {
+            var err2: u8[>..] = [];
+            let notp11, okn = pkcs11::new(lib, err2);
+            tv::check(str("a library that is no PKCS#11 module: ", lib), !okn && err2.len > 0);
+        }
+    }
     var none = pkcs11::Ctx { handle: 0 };
     hsm::check_rv("a context never loaded", pkcs11::initialize(none), pkcs11::ERR_NO_MODULE);
 
@@ -26,7 +33,8 @@ fn main() {
     tv::check_eq("error text of OK", pkcs11::error_text(0), "pkcs11: 0x0: CKR_OK");
     tv::check_eq("mechanism name", pkcs11::ckm_name(pkcs11::CKM_EDDSA), "CKM_EDDSA");
     tv::check_eq("attribute name", pkcs11::cka_name(pkcs11::CKA_LABEL), "CKA_LABEL");
-    tv::check_int("CK_ULONG size", pkcs11::ulong_size(), 8);
+    // unsigned long: 4 bytes on Windows, 8 on 64-bit Linux and macOS.
+    tv::check("CK_ULONG size", pkcs11::ulong_size() == 8 || pkcs11::ulong_size() == 4);
 
     var c = hsm::open();
     hsm::check_rv("initialized twice", pkcs11::initialize(c), pkcs11::CKR_CRYPTOKI_ALREADY_INITIALIZED);

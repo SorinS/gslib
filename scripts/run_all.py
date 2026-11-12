@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 
-ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
+ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 # Each library's directory, by its name.
 LIBS = {"asn1": "encoding/asn1", "bignum": "crypto/bignum", "x509": "crypto/x509", "tls": "crypto/tls",
         "ssh": "crypto/ssh", "ldap": "net/ldap", "yaml": "encoding/yaml", "http": "net/http",
@@ -48,9 +48,12 @@ def main():
         print(f"{status}  {lib:7} {passed:4} passed, {failed} failed  ({time.time() - t0:.0f} s)", flush=True)
         if status == "FAIL":
             bad.append(lib)
-            for line in out.splitlines():
-                if line.startswith("FAIL") or "error" in line:
-                    print("      " + line)
+            shown = [l for l in out.splitlines() if l.startswith("FAIL") or "error" in l]
+            # No test ran (no compiler, a crash in the runner): its last words.
+            if not m or not shown:
+                shown = out.strip().splitlines()[-8:] or [f"(exit status {p.returncode}, no output)"]
+            for line in shown:
+                print("      " + line)
     print(f"\n{total_pass} passed, {total_fail} failed" + (f"; failing: {', '.join(bad)}" if bad else ""))
     sys.exit(1 if bad else 0)
 
