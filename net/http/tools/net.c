@@ -1,8 +1,8 @@
 /* The operating system's part of tools/httpd.goose and tools/http.goose:
-   TCP sockets, waiting on one descriptor, processes for connections, and
-   resolving paths. POSIX: macOS and Linux. Each function returns -1 (or a
-   negative value) on failure; strings arrive as Goose slices,
-   { data, len }, not NUL-terminated. */
+   TCP sockets, waiting on one descriptor, and resolving paths. POSIX:
+   macOS and Linux. Each function returns -1 (or a negative value) on
+   failure; strings arrive as Goose slices, { data, len }, not
+   NUL-terminated. */
 
 #define _XOPEN_SOURCE 700
 #define _DEFAULT_SOURCE
@@ -21,7 +21,6 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/types.h>
-#include <sys/wait.h>
 #include <unistd.h>
 
 typedef struct { const uint8_t *data; int64_t len; } net_slice;
@@ -133,13 +132,6 @@ int32_t net_wait(int32_t fd, int32_t timeout_ms) {
     do { r = poll(&p, 1, timeout_ms); } while (r < 0 && errno == EINTR);
     return r;
 }
-
-/* fork(), the child with default SIGCHLD; -1 on failure. */
-int32_t proc_fork(void) { return fork(); }
-void proc_exit(int32_t code) { _exit(code); }
-
-/* Reaps children that have exited, without waiting. */
-void proc_reap(void) { while (waitpid(-1, NULL, WNOHANG) > 0) {} }
 
 /* The canonical absolute path of an existing path (symbolic links
    resolved), or -1. */

@@ -263,6 +263,115 @@ def raw_cases(port):
     check("raw: HTTP/1.0 gets Connection: close", out.startswith(b"HTTP/1.1 200 ") and b"Connection: close\r\n" in out)
 
 
+def concurrency_cases(httpd, www, cert, key, port_re, servers):
+    """Connections served at once, each on a thread of its own: idle ones
+    keep no one waiting, many run together, --max-conns holds the rest in
+    the listening queue, and a TLS session resumes on another connection."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def get(port, path, ctx=None, timeout=20):
+        c = (http.client.HTTPSConnection("localhost", port, context=ctx, timeout=timeout) if ctx
+             else http.client.HTTPConnection("127.0.0.1", port, timeout=timeout))
+        try:
+            c.request("GET", path)
+            r = c.getresponse()
+            return r.status, r.read()
+        finally:
+            c.close()
+
+    def idle(port, n):
+        socks = [socket.create_connection(("127.0.0.1", port), timeout=10) for _ in range(n)]
+        time.sleep(0.3)
+        return socks
+
+    plain = Server([httpd, "--root", www, "--port", "0"], port_re)
+    t13 = Server([httpd, "--root", www, "--port", "0", "--cert", cert, "--key", key], port_re)
+    servers += [plain, t13]
+    ctx = ssl.create_default_context(cafile=cert)
+    want_big = big()
+
+    # 20 connections that send nothing hold 20 threads; others go on.
+    socks = idle(plain.port, 20)
+    t0 = time.time()
+    with ThreadPoolExecutor(30) as ex:
+        res = list(ex.map(lambda i: get(plain.port, "/index.html"), range(30)))
+    took = time.time() - t0
+    check(f"concurrency: 30 GETs beside 20 idle connections ({took:.1f} s)",
+          all(r == (200, b"hello from goose\n") for r in res) and took < 10)
+    for s_ in socks:
+        s_.close()
+
+    # Many connections at once, small and 1 MiB answers, TCP and TLS 1.3.
+    for srv, c, tag in ((plain, None, "tcp"), (t13, ctx, "tls 1.3")):
+        paths = ["/index.html", "/big.bin", "/sub/a.txt"] * 40
+        t0 = time.time()
+        with ThreadPoolExecutor(40) as ex:
+            res = list(ex.map(lambda p: (p, get(srv.port, p, c)), paths))
+        took = time.time() - t0
+        want = {"/index.html": b"hello from goose\n", "/big.bin": want_big, "/sub/a.txt": b"sub\n"}
+        bad = [p for p, (st, body) in res if st != 200 or body != want[p]]
+        check(f"concurrency {tag}: 120 GETs on 40 connections at once ({took:.1f} s)", not bad, ", ".join(bad[:5]))
+
+    # A slow reader of 1 MiB does not hold up the others.
+    s_ = socket.create_connection(("127.0.0.1", plain.port), timeout=10)
+    s_.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+    s_.sendall(b"GET /big.bin HTTP/1.1\r\nHost: a\r\n\r\n")
+    time.sleep(0.3)
+    t0 = time.time()
+    st, body = get(plain.port, "/index.html", timeout=5)
+    check(f"concurrency: a GET beside a stalled 1 MiB reader ({time.time() - t0:.1f} s)", st == 200)
+    got = b""
+    s_.settimeout(10)
+    while b"\r\n\r\n" not in got or len(got) - got.index(b"\r\n\r\n") - 4 < len(want_big):
+        b = s_.recv(65536)
+        if not b:
+            break
+        got += b
+    body = got[got.find(b"\r\n\r\n") + 4:]
+    check("concurrency: the stalled reader gets all of its 1 MiB at last", body == want_big, f"{len(body)} bytes")
+    s_.close()
+
+    # --max-conns 2: a third connection waits until one of two ends.
+    capped = Server([httpd, "--root", www, "--port", "0", "--max-conns", "2"], port_re)
+    servers.append(capped)
+    socks = idle(capped.port, 2)
+    try:
+        get(capped.port, "/index.html", timeout=1.5)
+        waited = False
+    except (socket.timeout, TimeoutError, OSError):
+        waited = True
+    check("concurrency: --max-conns 2 keeps a third connection waiting", waited)
+    socks[0].close()
+    t0 = time.time()
+    st, body = get(capped.port, "/index.html", timeout=10)
+    check(f"concurrency: and serves it once one of the two ends ({time.time() - t0:.1f} s)",
+          st == 200 and body == b"hello from goose\n")
+    socks[1].close()
+
+    # Every connection's thread has the same TLS configuration: a session
+    # from one connection resumes on the next.
+    for v, srv_args in (("1.3", []), ("1.2", ["--tls-max", "1.2"])):
+        srv = Server([httpd, "--root", www, "--port", "0", "--cert", cert, "--key", key, *srv_args], port_re)
+        servers.append(srv)
+        c1 = http.client.HTTPSConnection("localhost", srv.port, context=ctx, timeout=10)
+        c1.request("GET", "/index.html")
+        c1.getresponse().read()
+        sess = c1.sock.session
+        c1.close()
+        raw = socket.create_connection(("127.0.0.1", srv.port), timeout=10)
+        ts = ctx.wrap_socket(raw, server_hostname="localhost", session=sess)
+        ts.sendall(b"GET /index.html HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n")
+        out = b""
+        while True:
+            b = ts.recv(65536)
+            if not b:
+                break
+            out += b
+        check(f"concurrency tls {v}: a session resumes on another connection",
+              ts.session_reused and out.startswith(b"HTTP/1.1 200 "), f"reused={ts.session_reused}")
+        ts.close()
+
+
 def goose_client_cases(gh, port, tls, ca, tag):
     scheme = "https" if tls else "http"
     host = "localhost" if tls else "127.0.0.1"
@@ -890,6 +999,7 @@ def main():
             if rc not in (0, 1) or not out:
                 check(f"go {tls or 'tcp'}: client ran", False, err.decode()[:300])
         raw_cases(plain.port)
+        concurrency_cases(httpd, www, cert, key, port_re, servers)
         h2_server_cases(t13.port, "1.3", cert, gi)
         h2_server_cases(t12.port, "1.2", cert, gi)
         h2_server_cases(plain.port, None, cert, gi)
