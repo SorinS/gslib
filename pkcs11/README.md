@@ -138,9 +138,14 @@ verifies. 33 checks. pkcs11-tool is given keys by ID and type, not label: a
 pair's halves share a label, SoftHSM lists objects in no fixed order, and
 pkcs11-tool given a label takes whichever half comes first.
 
-Tested on macOS (arm64) with SoftHSM 2.7.0 and OpenSC 0.27.1. The Linux
-and Windows paths (`dlopen` with `-ldl`; `LoadLibrary`, 4-byte `CK_ULONG`,
-1-byte packing) are written but not yet run.
+Tested on macOS (arm64) with SoftHSM 2.7.0 and OpenSC 0.27.1, and the
+tests on Linux (Ubuntu 20.04, x86_64) with SoftHSM 2.6 built from its
+repository. The Ed25519 checks need a SoftHSM built with EdDSA (2.6 or
+later, configured with OpenSSL 1.1.1 or later). Ubuntu 20.04's package is
+2.5.0, and a 2.6.1 configured without EdDSA leaves `CKM_EDDSA` out. On
+such a SoftHSM, point `P11_MODULE` at one that has it. The Windows path
+(`LoadLibrary`, 4-byte `CK_ULONG`, 1-byte packing) is written but not yet
+run.
 
 ## Limits
 
