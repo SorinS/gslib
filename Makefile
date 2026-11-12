@@ -14,15 +14,15 @@ PYTHON  ?= python3
 GOOSE   ?= $(or $(shell command -v goose 2>/dev/null),$(abspath $(ROOT)/../goose.git/build/goose))
 export GOOSE
 
-LIBS    := asn1 bignum x509 tls ssh ldap yaml http compress mime krb5 jwx
+LIBS    := asn1 bignum x509 tls ssh ldap yaml http compress mime krb5 jwx pkcs11
 
 # ------------------------------------------------------------------------------
 # Derived values
 # ------------------------------------------------------------------------------
 
 # A program is rebuilt when any of the package's sources changes.
-SOURCES := $(ROOT)/gslib.goose $(ROOT)/gslib.build $(ROOT)/compress.goose $(ROOT)/mime.goose $(ROOT)/krb5.goose $(ROOT)/jwx.goose \
-	$(shell find $(ROOT)/crypto $(ROOT)/encoding $(ROOT)/net $(ROOT)/compress $(ROOT)/mime $(ROOT)/krb5 $(ROOT)/jwx \
+SOURCES := $(ROOT)/gslib.goose $(ROOT)/gslib.build $(ROOT)/compress.goose $(ROOT)/mime.goose $(ROOT)/krb5.goose $(ROOT)/jwx.goose $(ROOT)/pkcs11.goose \
+	$(shell find $(ROOT)/crypto $(ROOT)/encoding $(ROOT)/net $(ROOT)/compress $(ROOT)/mime $(ROOT)/krb5 $(ROOT)/jwx $(ROOT)/pkcs11 \
 		\( -name '*.goose' -o -name '*.c' -o -name '*.build' \) \
 		-not -path '*/test/*' -not -path '*/examples/*')
 
@@ -51,7 +51,7 @@ BINARIES    := $(foreach p,$(PROGRAMS),$(BIN)/$(call prog_name,$(p))) $(BIN)/goo
 
 # Every tool and example with a main, for check.
 CHECKED := $(shell cd $(ROOT) && grep -l '^fn main' */*/tools/*.goose */*/examples/*.goose \
-	compress/tools/*.goose compress/examples/*.goose mime/tools/*.goose krb5/tools/*.goose jwx/tools/*.goose)
+	compress/tools/*.goose compress/examples/*.goose mime/tools/*.goose krb5/tools/*.goose jwx/tools/*.goose pkcs11/tools/*.goose)
 
 # ------------------------------------------------------------------------------
 # Helpers
@@ -140,7 +140,7 @@ test-native: ## Run the unit tests, also built with the C compiler
 
 # test-asn1, test-bignum, ... (scripts/run_all.py refuses a name not in
 # LIBS). Not .PHONY: make looks for no pattern rule for a phony target.
-test-%: ## Run one library's unit tests: test-asn1 test-bignum test-x509 test-tls test-ssh test-ldap test-yaml test-http test-compress test-mime test-krb5 test-jwx
+test-%: ## Run one library's unit tests: test-asn1 test-bignum test-x509 test-tls test-ssh test-ldap test-yaml test-http test-compress test-mime test-krb5 test-jwx test-pkcs11
 	$(call echo,"Running $* unit tests")
 	cd $(ROOT) && $(PYTHON) scripts/run_all.py --only $*
 
@@ -148,7 +148,7 @@ test-%: ## Run one library's unit tests: test-asn1 test-bignum test-x509 test-tl
 # needs installed is in its library's README; a missing tool is skipped.
 
 .PHONY: interop
-interop: interop-http interop-h2spec interop-tls interop-ssh interop-ldap interop-krb5 ## Run every live interop test
+interop: interop-http interop-h2spec interop-tls interop-ssh interop-ldap interop-krb5 interop-pkcs11 ## Run every live interop test
 
 .PHONY: interop-http
 interop-http: ## HTTP against curl, Go's net/http, Python, nghttp2
@@ -176,6 +176,11 @@ interop-ssh: ## SSH, SFTP and scp against OpenSSH and Go's x/crypto/ssh
 interop-ldap: ## LDAP against OpenLDAP and go-ldap
 	$(call echo,"LDAP interop")
 	cd $(ROOT)/net/ldap && $(PYTHON) scripts/interop.py
+
+.PHONY: interop-pkcs11
+interop-pkcs11: ## pkcs11 on SoftHSM2 against OpenSC's pkcs11-tool and OpenSSL
+	$(call echo,"pkcs11 against pkcs11-tool and openssl")
+	cd $(ROOT)/pkcs11 && $(PYTHON) scripts/interop.py
 
 .PHONY: interop-krb5
 interop-krb5: ## Kerberos against MIT's KDC, kinit/kvno/klist, gss-client/gss-server and curl --negotiate
