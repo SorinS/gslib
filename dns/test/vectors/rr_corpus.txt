@@ -1,0 +1,188 @@
+# Records in presentation form, one per line, for scripts/oracle: miekg's
+# NewRR reads each; its wire form and String() go to rr.txt. Lines miekg
+# refuses are kept: Goose must refuse them too.
+www.example.org. 300 IN A 192.0.2.1
+www.example.org. A 10.0.0.1
+example.org. 3600 IN NS ns1.example.org.
+example.org. IN 3600 NS ns2.example.net.
+example.org. 86400 IN SOA ns1.example.org. hostmaster.example.org. 2024010101 7200 3600 1209600 300
+example.org. SOA ns1 hostmaster 1 2 3 4 5
+example.org. SOA ( ns1.example.org. hostmaster.example.org. ; comment
+    2024010101 ; serial
+    2h 1h 2w 5m )
+alias.example.org. CNAME www.example.org.
+alias.example.org. 1h CNAME www
+mb.example. MB mail.example.
+mg.example. MG mail.example.
+mr.example. MR mail.example.
+md.example. MD mail.example.
+mf.example. MF mail.example.
+4.3.2.1.in-addr.arpa. PTR host.example.org.
+host.example. HINFO "Intel" "Linux"
+host.example. HINFO Intel Linux
+host.example. MINFO rmail.example. email.example.
+example.org. MX 10 mail.example.org.
+example.org. MX 0 .
+example.org. TXT "v=spf1 -all"
+example.org. TXT "hello world" "second string"
+example.org. TXT plain words unquoted
+example.org. TXT "quote\"inside" "back\\slash" "tab\009end"
+example.org. TXT "utf8 \195\169"
+example.org. TXT ""
+example.org. TXT "semi;colon" "paren(s)"
+long.example. TXT "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"
+host.example. RP mbox.example. txt.example.
+host.example. AFSDB 1 afs.example.
+host.example. X25 311061700956
+host.example. ISDN "150862028003217" "004"
+host.example. ISDN "150862028003217"
+host.example. RT 10 relay.example.
+host.example. NSAP-PTR foo.example.
+host.example. PX 10 map822.example. mapx400.example.
+host.example. GPOS -32.6882 116.8652 10.0
+www.example.org. AAAA 2001:db8::1
+www.example.org. AAAA 2001:db8:0:0:1:0:0:1
+www.example.org. AAAA 2001:0db8:0000:0000:0000:0000:0000:0001
+www.example.org. AAAA ::
+www.example.org. AAAA ::1
+www.example.org. AAAA fe80::1:2:3:4
+www.example.org. AAAA 2001:db8:1:2:3:4:5:6
+www.example.org. AAAA ::ffff:192.0.2.1
+www.example.org. AAAA 64:ff9b::192.0.2.33
+loc.example. LOC 52 22 23.000 N 4 53 32.000 E -2.00m 0.00m 10000m 10m
+loc.example. LOC 42 21 54 N 71 06 18 W -24m 30m
+loc.example. LOC 42 21 43.952 N 71 5 6.344 W -24m 1m 200m 10m
+loc.example. LOC 0 0 0 N 0 0 0 E 0
+loc.example. LOC 90 S 180 W 42849672.95m 90000000m 90000000m 90000000m
+loc.example. LOC 51 30 12.748 N 0 7 39.611 W 0m 0.5m 2m 1.5m
+eid.example. EID 0a1b2c
+nimloc.example. NIMLOC deadbeef
+_sip._tcp.example.org. SRV 10 60 5060 sip.example.org.
+_sip._tcp.example.org. SRV 0 0 0 .
+naptr.example. NAPTR 100 50 "s" "http+I2L+I2C+I2R" "" _http._tcp.example.com.
+naptr.example. NAPTR 100 10 "" "" "!^urn:cid:.+@([^\\.]+\\.)(.*)$!\\2!i" .
+kx.example. KX 10 kdc.example.
+cert.example. CERT PKIX 12345 RSASHA256 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzQ==
+cert.example. CERT 1 0 0 AQID
+cert.example. CERT URI 0 PRIVATEOID aHR0cDovL2V4YW1wbGUuY29tL2NlcnQ=
+dname.example. DNAME target.example.net.
+apl.example. APL 1:192.168.32.0/21 !1:192.168.38.0/28
+apl.example. APL 1:224.0.0.0/4 2:FF00:0:0:0:0:0:0:0/8
+apl.example. APL 2:2001:db8::/32 1:0.0.0.0/0
+apl.example. APL
+example.org. DS 60485 5 1 2BB183AF5F22588179A53B0A98631FAD1A292118
+example.org. DS 31589 8 2 CDE0D742D6998AA554A92D890F8184C698CFAC8A26FA59875A990C03E576343C
+example.org. DS 2371 13 4 1F987CC6583E92DF0890718C42B8EC4D5A01D5E1E5B6D12E37A4E7F8E6E1E2B5A40E1B1A1AA1B1C1D1E1F202122232425
+example.org. CDS 0 0 0 00
+host.example. SSHFP 2 1 123456789abcdef67890123456789abcdef67890
+host.example. SSHFP 4 2 f0e1d2c3b4a5968778695a4b3c2d1e0f00112233445566778899aabbccddeeff
+gw.example. IPSECKEY 10 1 2 192.0.2.38 AQNRU3mG7TVTO2BkR47usntb102uFJtugbo6BSGvgqt4AQ==
+gw.example. IPSECKEY 10 0 2 . AQNRU3mG7TVTO2BkR47usntb102uFJtugbo6BSGvgqt4AQ==
+gw.example. IPSECKEY 10 3 2 mygateway.example.com. AQNRU3mG7TVTO2BkR47usntb102uFJtugbo6BSGvgqt4AQ==
+gw.example. IPSECKEY 10 2 2 2001:0DB8:0:8002::2000:1 AQNRU3mG7TVTO2BkR47usntb102uFJtugbo6BSGvgqt4AQ==
+example.org. RRSIG A 8 3 300 20500101000000 20240101000000 12345 example.org. dGVzdHNpZ25hdHVyZQ==
+example.org. RRSIG SOA 13 2 3600 20260301120000 20260201120000 2371 example.org. AAECAwQFBgcICQ==
+example.org. RRSIG TYPE999 15 2 3600 1700000000 1690000000 1 example.org. AAAA
+example.org. NSEC www.example.org. A NS SOA MX TXT AAAA RRSIG NSEC DNSKEY
+example.org. NSEC www.example.org. TYPE65534 A TYPE1234
+example.org. NSEC \000.example.org.
+example.org. DNSKEY 257 3 8 AwEAAagAIKlVZrpC6Ia7gEzahOR+9W29euxhJhVVLOyQbSEW0O8gcCjFFVQUTf6v58fLjwBd0YI0EzrAcQqBGCzh/RStIoO8g0NfnfL2MTJRkxoXbfDaUeVPQuYEhg37NZWAJQ9VnMVDxP/VHL496M/QZxkjf5/Efucp2gaDX6RS6CXpoY68LsvPVjR0ZSwzz1apAzvN9dlzEheX7ICJBBtuA6G3LQpzW5hOA2hzCTMjJPJ8LbqF6dsV6DoBQzgul0sGIcGOYl7OyQdXfZ57relSQageu+ipAdTTJ25AsRTAoub8ONGcLmqrAmRLKBP1dfwhYB4N7knNnulqQxA+Uk1ihz0=
+example.org. DNSKEY 256 3 13 oJMRESz5E4gYzS/q6XDrvU1qMPYIjCWzJaOau8XNEZeqCYKD5ar0IRd8KqXXFJkqmVfRvMGPmM1x8fGAa2XhSA==
+example.org. DNSKEY 257 3 15 l02Woi0iS8Aa25FQkUd9RMzZHJpBoRQwAQEX1SxZJA4=
+example.org. CDNSKEY 0 3 0 AA==
+example.org. KEY 512 3 157 Lb8oNqTm+0AHAKd8ZgO2NA==
+dhcid.example. DHCID AAIBY2/AuCccgoJbsaxcQc9TUapptP69lOjxfNuVAA2kjEA=
+example.org. NSEC3 1 1 12 aabbccdd 2vptu5timamqttgl4luu9kg21e0aor3s A RRSIG
+example.org. NSEC3 1 0 0 - 2vptu5timamqttgl4luu9kg21e0aor3s
+example.org. NSEC3 1 1 100 AABBCCDD 2T7B4G4VSA5SMI47K61MV5BV1A22BOJR NS SOA MX RRSIG DNSKEY NSEC3PARAM
+example.org. NSEC3PARAM 1 0 12 aabbccdd
+example.org. NSEC3PARAM 1 0 0 -
+_443._tcp.www.example.org. TLSA 3 1 1 0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
+_443._tcp.www.example.org. TLSA 0 0 0 30820122300d06092a864886f70d01010105000382010f003082010a
+smimea.example. SMIMEA 3 1 1 0102030405060708090A0B0C0D0E0F
+hip.example. HIP 2 200100107B1A74DF365639CC39F1D578 AwEAAbdxyhNuSutc5EMzxTs9LBPCIkOFH8cIvM4p9+LrV4e19WzK00+CI6zBCQTdtWsuxKbWIy87UOoJTwkUs7lBu+Upr1gsNrut79ryra+bSRGQb1slImA8YVJyuIDsj7kwzG7jnERNqnWxZ48AWkskmdHaVDP4BcelrTI3rMXdXF5D
+hip.example. HIP 2 200100107B1A74DF365639CC39F1D578 AwEAAbdxyhNuSutc5EMzxTs9LBPCIkOFH8cIvM4p9+LrV4e19WzK00+CI6zBCQTdtWsuxKbWIy87UOoJTwkUs7lBu+Upr1gsNrut79ryra+bSRGQb1slImA8YVJyuIDsj7kwzG7jnERNqnWxZ48AWkskmdHaVDP4BcelrTI3rMXdXF5D rvs1.example.com. rvs2.example.com.
+ninfo.example. NINFO "info" "more info"
+rkey.example. RKEY 0 3 1 AwEAAQ==
+talink.example. TALINK prev.example. next.example.
+csync.example. CSYNC 66 3 A NS AAAA
+zonemd.example. ZONEMD 2018031900 1 1 c68090d90a7aed716bc459f9340e3d7c1370d4d24b7e2fc3a1ddc0b9a87153b9a9713b3c9ae5cc27777f98b8e730044c
+zonemd.example. ZONEMD 2018031900 1 241 aabbccddeeff
+svc.example. SVCB 0 www.example.org.
+svc.example. SVCB 1 . alpn=h2,h3 port=8443
+svc.example. SVCB 1 svc.example. mandatory=alpn,port alpn=h2 port=8443
+svc.example. SVCB 16 foo.example.org. ipv4hint=192.0.2.1,192.0.2.2 ipv6hint=2001:db8::1
+svc.example. HTTPS 1 . alpn="h3,h2" no-default-alpn ech=AEj+DQBEAQAgACAdd+scUi0IYFsXnUIU7ko2Nd9+F8M26pAGZVpz/KrWPgAEAAEAAWQVZWNoLXNpdGVzLmV4YW1wbGUubmV0AAA=
+svc.example. HTTPS 1 . dohpath=/dns-query{?dns} key65000=hello
+svc.example. HTTPS 1 . alpn=h2 ohttp
+svc.example. HTTPS 1 . key667=hello\210qoo
+spf.example. SPF "v=spf1 a mx -all"
+uinfo.example. UINFO "user info"
+uid.example. UID 1000
+gid.example. GID 100
+nid.example. NID 10 0014:4fff:ff20:ee64
+l32.example. L32 10 10.1.2.0
+l64.example. L64 10 2001:0DB8:1140:1000
+lp.example. LP 10 l64-subnet1.example.com.
+eui.example. EUI48 00-00-5e-00-53-2a
+eui.example. EUI64 00-00-5e-ef-10-00-00-2a
+uri.example. URI 10 1 "ftp://ftp1.example.com/public"
+uri.example. URI 10 1 "http://example.com/a\"b"
+example.org. CAA 0 issue "letsencrypt.org"
+example.org. CAA 128 tbs "Unknown"
+example.org. CAA 0 iodef "mailto:security@example.com"
+example.org. CAA 0 issue "ca.example.net; account=230123"
+avc.example. AVC "app-name:WOLFGANG|app-class:OAM|business=yes"
+amt.example. AMTRELAY 10 0 0 .
+amt.example. AMTRELAY 10 1 1 203.0.113.15
+amt.example. AMTRELAY 128 0 2 2001:db8::15
+amt.example. AMTRELAY 10 1 3 amtrelays.example.com.
+resinfo.example. RESINFO "qnamemin" "exterr=15,16,17" "infourl=https://resolver.example.com/guide"
+ta.example. TA 30795 1 1 310D27F4D82C1FC2400704EA9939FE6E1CEAA3B9
+dlv.example. DLV 30795 1 1 310D27F4D82C1FC2400704EA9939FE6E1CEAA3B9
+openpgpkey.example. OPENPGPKEY mQENBFVHm5sBCADAsr6JSqT5b3EuxYMHVdOw1t6chtXv6TOP
+unknown.example. TYPE999 \# 3 010203
+unknown.example. TYPE65000 \# 0
+unknown.example. CLASS99 TYPE999 \# 2 abcd
+generic.example. A \# 4 c0000201
+generic.example. MX \# 6 000a01780000
+chaos. CH TXT "version.bind"
+hs.example. HS A 1.2.3.4
+any.example. NONE A 1.2.3.4
+any.example. CLASS255 A 1.2.3.4
+esc\.aped.example. A 1.2.3.4
+\@\$\(\)\"\;.example. A 1.2.3.4
+sp\ ace.example. A 1.2.3.4
+\000\001\255.example. A 1.2.3.4
+UPPER.Example.ORG. A 1.2.3.4
+*.wild.example. A 1.2.3.4
+_dmarc.example.org. TXT "v=DMARC1; p=none"
+. 518400 IN NS a.root-servers.net.
+ttl.example. 1w2d3h4m5s A 1.2.3.4
+ttl.example. 4294967295 A 1.2.3.4
+ttl.example. 0 A 1.2.3.4
+ttl.example. 1H A 1.2.3.4
+relative A 1.2.3.4
+@ A 1.2.3.4
+bad.example. A 1.2.3
+bad.example. A 1.2.3.4.5
+bad.example. A 256.1.1.1
+bad.example. AAAA 1.2.3.4
+bad.example. AAAA 2001:db8::1::2
+bad.example. MX mail.example.
+bad.example. MX 70000 mail.example.
+bad.example. FOO 1
+bad.example. 4294967296 A 1.2.3.4
+bad.example. TXT "unterminated
+bad.example. SOA ns1 hostmaster 1 2 3 4
+bad.example. DS 1 2 3 XYZ
+bad.example. TYPE999 \# 3 0102
+bad.example. LOC 91 N 0 E 0m
+bad.example. NSEC3 1 1 12 aabbccdd notbase32! A
+bad.example. SVCB 1 . port=99999
+bad.example. SVCB 1 . port=1 port=2
+bad.example. HTTPS 1 . unknownkey=1
+bad.example. EUI48 00-00-5e-00-53
+bad.example. CAA 0 issue
+bad..example. A 1.2.3.4
+bad.example. A 1.2.3.4 extra

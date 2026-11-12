@@ -8,7 +8,7 @@ later.
 
 | Library | What | |
 |---|---|---|
-| `crypto/bignum` | Integers of any size, constant-time arithmetic, and cryptography: AES, Camellia, ChaCha20, the SHA-1/2/3 and BLAKE2 hashes, HMAC, CMAC, HKDF, PBKDF2, scrypt, Argon2, bcrypt, RSA, DSA, ECDH and ECDSA (P-224 to P-521), X25519, Ed25519, ML-KEM, ML-DSA, HPKE, NaCl, the legacy ciphers | [README](crypto/bignum/README.md) |
+| `crypto/bignum` | Integers of any size, constant-time arithmetic, and cryptography: AES, Camellia, ChaCha20, the SHA-1/2/3 and BLAKE2 hashes, HMAC, CMAC, AES Key Wrap (RFC 3394 and 5649, used by jwx), HKDF, PBKDF2, scrypt, Argon2, bcrypt, RSA, DSA, ECDH and ECDSA (P-224 to P-521), X25519, Ed25519, ML-KEM, ML-DSA, HPKE, NaCl, the legacy ciphers | [README](crypto/bignum/README.md) |
 | `encoding/asn1` | DER and BER reading and writing, PEM | [README](encoding/asn1/README.md) |
 | `crypto/x509` | Certificates: parsing, path building and verification, name constraints, policies, system roots, creating certificates, CSRs and CRLs, OCSP, PKCS #12 | [README](crypto/x509/README.md) |
 | `crypto/tls` | TLS 1.3 and 1.2, client and server, without I/O: resumption, client certificates, ECH, post-quantum key exchange | [README](crypto/tls/README.md) |
@@ -20,13 +20,71 @@ later.
 | `krb5` | Kerberos V5 (RFC 4120) as go-krb5 has it: TGTs and service tickets (password, keytab, cross-realm, referrals, FAST armoring), the acceptor, GSS-API (RFC 4121), SPNEGO and HTTP Negotiate, Microsoft's PAC, keytabs and credential caches; goose-krb5 (kinit, kvno, klist) and goose-gss | [README](krb5/README.md) |
 | `jwx` | JOSE, as Go's lestrrat-go/jwx: JSON Web Keys (and key sets, thumbprints, PEM), Signatures (compact and JSON, every RFC 7518 algorithm and EdDSA), Encryption (every key management and content algorithm, zip, several recipients) and Tokens (claims, validation, nested) | [README](jwx/README.md) |
 | `pkcs11` | PKCS#11 (Cryptoki), as Go's miekg/pkcs11: modules (HSMs, tokens, SoftHSM) loaded at run time, every C_* function, templates, mechanisms and their parameters, all the OASIS constants; and miekg's p11 layer (Module, Slot, Session, Object, keys) | [README](pkcs11/README.md) |
+| `dns` | The DNS, as Go's miekg/dns: messages and the 79 record types it implements, in wire form (with compression) and text, zone files (`$ORIGIN`, `$TTL`, `$INCLUDE`, `$GENERATE`), EDNS0, DNSSEC (signing, verifying, DS, NSEC3, keys), TSIG and SIG(0), dynamic updates, zone transfers, a client and a server; goose-dig and goose-dnsd | [README](dns/README.md) |
 | `net/http` | HTTP/1.1 and HTTP/2, server and client: a client with Go's policy (redirects, cookies, credentials, proxies, gzip, TLS session resumption, streaming uploads, several responses at once), URLs, cookies, HPACK; goose-http and goose-httpd | [README](net/http/README.md) |
 
-## What's new
+## dns, pkcs11 and jwx
+
+These three have the most to say beyond their table rows: what each
+module does, how it was built and how it was tested. Each README has the
+full API.
+
+### dns: the DNS
+
+`dns` is modelled on Go's
+[miekg/dns](https://github.com/miekg/dns) (v1.1.73); its
+[README](dns/README.md) has the API, the design and the departures.
+
+- **`dns`**: domain names in wire and text form (RFC 1035 escapes, as
+  miekg writes them), label functions, canonical order (RFC 4034 §6.1),
+  reverse names; the numbers and names of types, classes, rcodes, opcodes.
+- **`dns.rdata`**: the 79 record types miekg implements, each described by a
+  layout of its fields, which one codec uses to check rdata, decompress and
+  compress its names, lower-case them for DNSSEC and write its text.
+  Unknown types are kept opaque (RFC 3597).
+- **`dns.msg`**: messages, packed with name compression and unpacked;
+  miekg's `Msg.String()`; `set_question`, `set_reply`, `truncate`, `dedup`.
+- **`dns.zone`**: zone files and single records from text, with `$ORIGIN`,
+  `$TTL`, `$INCLUDE`, `$GENERATE`, parentheses, TTL units.
+- **`dns.edns`**: the OPT record and its options (client subnet,
+  cookies, keepalive, padding, extended errors, ...).
+- **`dns.dnssec`**: RRSIG signing and verification with RSA (SHA-1,
+  SHA-256, SHA-512), ECDSA (P-256, P-384) and Ed25519; key tags, DS,
+  validity periods, NSEC3 hashing; key generation and BIND's private-key
+  files.
+- **`dns.tsig`**, **`dns.sig0`**: TSIG (HMAC-MD5 to HMAC-SHA512) over
+  queries, replies and the messages of a zone transfer; SIG(0).
+- **`dns.update`**, **`dns.client`**, **`dns.server`**: dynamic updates
+  (RFC 2136); queries over UDP and TCP with TSIG, zone transfers in,
+  resolv.conf; a server over UDP and TCP whose handler is a block.
+- **goose-dig** (miekg's `q`) and **goose-dnsd**, an authoritative server
+  for zone files (referrals, wildcards, CNAMEs, AXFR/IXFR, NOTIFY,
+  updates, TSIG).
+
+A record is held as its uncompressed wire form, and a section or zone as
+records back to back, read through offsets: Goose has no interfaces or
+garbage collector for miekg's struct per type. The C (`dns/src/dnsnet.c`,
+in the package sidecar) is UDP and listening sockets; TCP is http's.
+
+Tested against miekg/dns itself, which `dns/scripts/oracle` (a Go module
+pinned to v1.1.73) uses to write the vectors: 160 records and 23 refusals,
+52 messages packed into miekg's bytes, a zone file, miekg's DNSSEC keys
+and signatures for every algorithm (RSA and Ed25519 signatures remade
+byte for byte), TSIG messages for every SHA HMAC remade byte for byte,
+SIG(0), updates, EDNS0 options and truncation; RFC 8080's Ed25519 RRSIG
+remade exactly. Over the network: dig against goose-dnsd, miekg's client
+against goose-dnsd, goose-dig against a miekg server, including TSIG-signed
+zone transfers of several messages that dig and miekg verify (`make
+interop-dns`), and fresh vectors from miekg (`make differential-dns`).
+Tested on macOS, Linux (where dig 9.18's DNS cookies found a bug in reading
+OPT records with options) and Windows; there, all but DNSSEC and SIG(0)
+(which need bignum's random bytes) work, goose-dig and goose-dnsd included.
+Departures from miekg (AMTRELAY's gateway, NSEC type order, RFC 3597
+rdata, a server that answers bad TSIG itself) are in its README.
 
 ### pkcs11: PKCS#11 modules, HSMs and tokens
 
-A new library, `pkcs11`, modelled on Go's
+`pkcs11` is modelled on Go's
 [miekg/pkcs11](https://github.com/miekg/pkcs11); its
 [README](pkcs11/README.md) has the API, the C↔Goose encodings and the
 limits.
@@ -61,7 +119,7 @@ them, so modules that write a GCM IV back later are not supported.
 
 ### jwx: JOSE (JWA, JWK, JWS, JWE, JWT)
 
-A new library, `jwx`, modelled on Go's
+`jwx` is modelled on Go's
 [lestrrat-go/jwx](https://github.com/lestrrat-go/jwx); its
 [README](jwx/README.md) has the API and the design.
 
@@ -100,12 +158,6 @@ ciphertexts and 8 encrypted keys remade byte for byte; RFC 7515, 7517,
 messages made by Go's jwx v3; and a differential both ways with Go's jwx
 (`make differential-jwx`).
 
-### bignum: AES Key Wrap
-
-`crypto/bignum/keywrap.goose`: AES Key Wrap (RFC 3394, SP 800-38F KW) and
-AES Key Wrap with Padding (RFC 5649, KWP), constant time, tested against
-both RFCs' vectors. jwx's A*KW, ECDH-ES+A*KW and PBES2 use it.
-
 ## Using it
 
 A program declares the package once, in its root file, and imports the
@@ -127,7 +179,7 @@ The libraries are grouped as Go groups its packages: `crypto/` (bignum,
 tls, x509, ssh), `encoding/` (asn1, yaml), `net/` (http, ldap), and
 `compress/` and `mime/` at the top, as Go's are (zip and tar are in
 compress too: they share its namespace, results and checksums), and
-`krb5/`, `jwx/` and `pkcs11/` at the top as well, none having a place in Go's tree. As in Go,
+`krb5/`, `jwx/`, `pkcs11/` and `dns/` at the top as well, none having a place in Go's tree. As in Go,
 the group is part of the import path but not of the name in code:
 `import gslib.net.http.fetch;`, then `http::get(...)`. Goose namespaces
 are one identifier, so each library keeps its own (`http::`, `tls::`,
@@ -145,9 +197,11 @@ tls, x509, asn1 and bignum), and since they are one package, a program
 declares only gslib.
 
 The C is http's sockets (`net/http/src/httpnet.c`), mime's platform
-constant (`mime/src/path.c`) and krb5's UDP, owner-only files and host
-names (`krb5/src/krb5sys.c`), named in `gslib.build` and compiled only
-into programs that call them. bignum reaches the OS's random bytes through
+constant (`mime/src/path.c`), krb5's UDP, owner-only files and host
+names (`krb5/src/krb5sys.c`), pkcs11's module loading
+(`pkcs11/src/p11.c`) and dns's UDP and listening sockets
+(`dns/src/dnsnet.c`), named in `gslib.build` and compiled only into
+programs that call them. bignum reaches the OS's random bytes through
 libc, by an `extern "c"` block; mime's multipart takes them from there.
 
 ## Layout
@@ -190,7 +244,8 @@ built into programs that call `http::psl_builtin`.
 make            # the targets, with what each does
 make build      # the programs into ../bin (BIN=dir for another): goose-http, goose-httpd,
                 # goose-ssh, goose-sshd, goose-scp, goose-sftp-server, goose-ssh-keygen,
-                # goose-ldapsearch, goose-ldapadd, goose-ldapmodify and the other ldap tools
+                # goose-ldapsearch, goose-ldapadd, goose-ldapmodify and the other ldap tools,
+                # goose-krb5, goose-gss, goose-dig, goose-dnsd
 make check      # type-check every tool and example
 ```
 
@@ -202,18 +257,23 @@ The compiler is `GOOSE`, else `goose` on the PATH, else
 ```bash
 make test                 # every library's unit tests (make test-http: one library's)
 make test-native          # also built with the C compiler
-make interop              # live: OpenSSL, Go, OpenSSH, OpenLDAP, curl, nghttp2, h2spec, pkcs11-tool
-make differential         # against Go (net/http, net/url, hpack, compress, mime, jwx), zlib, openssl
+make interop              # live: OpenSSL, Go, OpenSSH, OpenLDAP, curl, nghttp2, h2spec, pkcs11-tool, dig, miekg/dns
+make differential         # against Go (net/http, net/url, hpack, compress, mime, jwx, miekg/dns), zlib, openssl
 make test-all             # check, test, interop and differential
 python3 scripts/run_all.py [--native] [--only http,tls]   # what make test runs
 ```
 
 Each library's README lists its differentials (against Go, Python's zlib
-and hashlib, OpenSSL, Go's lestrrat-go/jwx), its interop runs (curl, Go's
-net/http and crypto/tls, OpenSSL, OpenSSH, OpenLDAP, nghttp2, h2spec,
-OpenSC's pkcs11-tool), and what is not done yet. Every server they start
+and hashlib, OpenSSL, Go's lestrrat-go/jwx and miekg/dns), its interop
+runs (curl, Go's net/http and crypto/tls, OpenSSL, OpenSSH, OpenLDAP,
+nghttp2, h2spec, OpenSC's pkcs11-tool, dig, miekg/dns), and what is not
+done yet. Every server they start
 listens on 127.0.0.1.
 
 pkcs11's tests run against SoftHSM2 (`brew install softhsm`, `apt install
 softhsm2`), each on a fresh token of its own; without it they are skipped,
 not failed. Its interop also needs OpenSC (`pkcs11-tool`) and OpenSSL.
+
+dns's client test starts goose-dnsd on 127.0.0.1 itself and needs nothing
+else; its interop and differential need Go (miekg/dns is fetched by
+`scripts/oracle`'s go.mod), and dig if it is installed.

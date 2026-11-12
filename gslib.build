@@ -1,11 +1,11 @@
 // gslib's sidecar. Its C is http.client's sockets (net/http/src/httpnet.c),
-// mime's platform constant (mime/src/path.c) and krb5's UDP, private files
-// and host names (krb5/src/krb5sys.c), and pkcs11's module loading
-// (pkcs11/src/p11.c), built only into programs that call
-// them. crypto/bignum's entropy module opens libc
-// through an extern "c" block; on Linux libc.so is a linker script, so the
-// library itself is named.
-c_sources = ["net/http/src/httpnet.c", "mime/src/path.c", "krb5/src/krb5sys.c", "pkcs11/src/p11.c"];
+// mime's platform constant (mime/src/path.c), krb5's UDP, private files
+// and host names (krb5/src/krb5sys.c), pkcs11's module loading
+// (pkcs11/src/p11.c), and dns's UDP and listening sockets
+// (dns/src/dnsnet.c), built only into programs that call them.
+// crypto/bignum's entropy module opens libc through an extern "c" block;
+// on Linux libc.so is a linker script, so the library itself is named.
+c_sources = ["net/http/src/httpnet.c", "mime/src/path.c", "krb5/src/krb5sys.c", "pkcs11/src/p11.c", "dns/src/dnsnet.c"];
 // pkcs11/src/p11.c loads PKCS#11 modules: dlopen, in libdl before glibc 2.34.
 c_libs_linux = ["dl"];
 c_libs_windows = ["ws2_32"];
@@ -27,4 +27,5 @@ exclude = [
     "krb5/test", "krb5/tools",
     "jwx/test", "jwx/tools",
     "pkcs11/test", "pkcs11/tools",
+    "dns/test", "dns/tools",
 ];

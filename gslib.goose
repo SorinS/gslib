@@ -4,10 +4,11 @@
 // 1.3 (tls), SSH and SFTP (ssh), LDAP (ldap), YAML (yaml), HTTP/1.1 and
 // HTTP/2 (http), compression and archives (compress), MIME (mime), and
 // Kerberos with GSS-API, SPNEGO and the PAC (krb5), JOSE: JWK, JWS,
-// JWE and JWT (jwx), and PKCS#11 modules, HSMs and tokens (pkcs11). A
+// JWE and JWT (jwx), PKCS#11 modules, HSMs and tokens (pkcs11), and the
+// DNS: messages, zone files, DNSSEC, TSIG, a client and a server (dns). A
 // program declares the package once and imports the modules it uses,
 // grouped as Go groups them (compress, crypto/, encoding/, mime, net/;
-// krb5, jwx and pkcs11 at the top too);
+// krb5, jwx, pkcs11 and dns at the top too);
 // each keeps its own namespace:
 //
 //   import gslib from "SorinS/gslib@v0.1";

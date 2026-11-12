@@ -1,0 +1,4 @@
+; Included: its own origin when given one, the includer's otherwise.
+inc     A 198.51.100.1
+$TTL 30
+        TXT "inside"

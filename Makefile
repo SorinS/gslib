@@ -14,15 +14,15 @@ PYTHON  ?= python3
 GOOSE   ?= $(or $(shell command -v goose 2>/dev/null),$(abspath $(ROOT)/../goose.git/build/goose))
 export GOOSE
 
-LIBS    := asn1 bignum x509 tls ssh ldap yaml http compress mime krb5 jwx pkcs11
+LIBS    := asn1 bignum x509 tls ssh ldap yaml http compress mime krb5 jwx pkcs11 dns
 
 # ------------------------------------------------------------------------------
 # Derived values
 # ------------------------------------------------------------------------------
 
 # A program is rebuilt when any of the package's sources changes.
-SOURCES := $(ROOT)/gslib.goose $(ROOT)/gslib.build $(ROOT)/compress.goose $(ROOT)/mime.goose $(ROOT)/krb5.goose $(ROOT)/jwx.goose $(ROOT)/pkcs11.goose \
-	$(shell find $(ROOT)/crypto $(ROOT)/encoding $(ROOT)/net $(ROOT)/compress $(ROOT)/mime $(ROOT)/krb5 $(ROOT)/jwx $(ROOT)/pkcs11 \
+SOURCES := $(ROOT)/gslib.goose $(ROOT)/gslib.build $(ROOT)/compress.goose $(ROOT)/mime.goose $(ROOT)/krb5.goose $(ROOT)/jwx.goose $(ROOT)/pkcs11.goose $(ROOT)/dns.goose \
+	$(shell find $(ROOT)/crypto $(ROOT)/encoding $(ROOT)/net $(ROOT)/compress $(ROOT)/mime $(ROOT)/krb5 $(ROOT)/jwx $(ROOT)/pkcs11 $(ROOT)/dns \
 		\( -name '*.goose' -o -name '*.c' -o -name '*.build' \) \
 		-not -path '*/test/*' -not -path '*/examples/*')
 
@@ -43,7 +43,9 @@ PROGRAMS := \
 	goose-ldapwhoami:net/ldap/tools/ldapwhoami.goose \
 	goose-ldapcompare:net/ldap/tools/ldapcompare.goose \
 	goose-krb5:krb5/tools/krb5.goose \
-	goose-gss:krb5/tools/gss.goose
+	goose-gss:krb5/tools/gss.goose \
+	goose-dig:dns/tools/dig.goose \
+	goose-dnsd:dns/tools/dnsd.goose
 
 prog_name   = $(word 1,$(subst :, ,$(1)))
 prog_source = $(word 2,$(subst :, ,$(1)))
@@ -51,7 +53,7 @@ BINARIES    := $(foreach p,$(PROGRAMS),$(BIN)/$(call prog_name,$(p))) $(BIN)/goo
 
 # Every tool and example with a main, for check.
 CHECKED := $(shell cd $(ROOT) && grep -l '^fn main' */*/tools/*.goose */*/examples/*.goose \
-	compress/tools/*.goose compress/examples/*.goose mime/tools/*.goose krb5/tools/*.goose jwx/tools/*.goose pkcs11/tools/*.goose)
+	compress/tools/*.goose compress/examples/*.goose mime/tools/*.goose krb5/tools/*.goose jwx/tools/*.goose pkcs11/tools/*.goose dns/tools/*.goose)
 
 # ------------------------------------------------------------------------------
 # Helpers
@@ -140,7 +142,7 @@ test-native: ## Run the unit tests, also built with the C compiler
 
 # test-asn1, test-bignum, ... (scripts/run_all.py refuses a name not in
 # LIBS). Not .PHONY: make looks for no pattern rule for a phony target.
-test-%: ## Run one library's unit tests: test-asn1 test-bignum test-x509 test-tls test-ssh test-ldap test-yaml test-http test-compress test-mime test-krb5 test-jwx test-pkcs11
+test-%: ## Run one library's unit tests: test-asn1 test-bignum test-x509 test-tls test-ssh test-ldap test-yaml test-http test-compress test-mime test-krb5 test-jwx test-pkcs11 test-dns
 	$(call echo,"Running $* unit tests")
 	cd $(ROOT) && $(PYTHON) scripts/run_all.py --only $*
 
@@ -148,7 +150,7 @@ test-%: ## Run one library's unit tests: test-asn1 test-bignum test-x509 test-tl
 # needs installed is in its library's README; a missing tool is skipped.
 
 .PHONY: interop
-interop: interop-http interop-h2spec interop-tls interop-ssh interop-ldap interop-krb5 interop-pkcs11 ## Run every live interop test
+interop: interop-http interop-h2spec interop-tls interop-ssh interop-ldap interop-krb5 interop-pkcs11 interop-dns ## Run every live interop test
 
 .PHONY: interop-http
 interop-http: ## HTTP against curl, Go's net/http, Python, nghttp2
@@ -182,13 +184,18 @@ interop-pkcs11: ## pkcs11 on SoftHSM2 against OpenSC's pkcs11-tool and OpenSSL
 	$(call echo,"pkcs11 against pkcs11-tool and openssl")
 	cd $(ROOT)/pkcs11 && $(PYTHON) scripts/interop.py
 
+.PHONY: interop-dns
+interop-dns: ## dns against dig and miekg/dns, both ways (needs Go; dig if installed)
+	$(call echo,"dns against dig and miekg/dns")
+	cd $(ROOT)/dns && $(PYTHON) scripts/interop.py
+
 .PHONY: interop-krb5
 interop-krb5: ## Kerberos against MIT's KDC, kinit/kvno/klist, gss-client/gss-server and curl --negotiate
 	$(call echo,"Kerberos interop")
 	cd $(ROOT)/krb5 && $(PYTHON) scripts/interop.py
 
 .PHONY: differential
-differential: differential-http differential-x509 differential-compress differential-mime differential-jwx ## Run every differential
+differential: differential-http differential-x509 differential-compress differential-mime differential-jwx differential-dns ## Run every differential
 
 .PHONY: differential-http
 differential-http: ## HTTP/1.1 parsing, URLs and HPACK against Go; gzip and deflate decoding against zlib
@@ -220,6 +227,11 @@ differential-compress: ## compress against Go's compress/* and archive/*, zlib, 
 differential-jwx: ## jwx against Go's lestrrat-go/jwx v3, both ways (needs Go)
 	$(call echo,"jwx against Go's jwx")
 	cd $(ROOT)/jwx && $(PYTHON) scripts/differential.py -n 3
+
+.PHONY: differential-dns
+differential-dns: ## dns against miekg/dns v1.1.73 on fresh vectors: records, messages, DNSSEC, TSIG (needs Go)
+	$(call echo,"dns against miekg/dns")
+	cd $(ROOT)/dns && $(PYTHON) scripts/differential.py -n 2
 
 .PHONY: differential-mime
 differential-mime: ## mime against Go's mime, mime/quotedprintable, mime/multipart and net/textproto
