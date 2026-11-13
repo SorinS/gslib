@@ -46,7 +46,7 @@ fn key_line(kind: const u8[:], idx: i64) -> u8[>..] {
     return none;
 }
 
-let NOW: i64 = 1800000000;
+let NOW:  i64 = 1800000000;
 let YEAR: i64 = 31536000;
 
 // A CA certificate, self-issued, under `key` (its own, or another's for a
@@ -202,8 +202,8 @@ fn main() {
     check("crl url", urls_ok);
 
     // Leaves on four key types; the P-521 one through the RSA-PSS path.
-    var leaves: u8[][>..] = [];
-    var keys_made: i64[4] = [x509::KEY_ED25519, x509::KEY_EC_P256, x509::KEY_EC_P521, x509::KEY_EC_P224];
+    var leaves:    u8[][>..] = [];
+    var keys_made: i64[4]    = [x509::KEY_ED25519, x509::KEY_EC_P256, x509::KEY_EC_P521, x509::KEY_EC_P224];
     for i in 4 {
         let lk = x509::generate_key(keys_made[i]);
         var lt, oklt = x509::template("CN=www.example.com", NOW - 10, NOW + YEAR);
@@ -267,6 +267,19 @@ fn main() {
     x509::add_dns(bt.san, "x.bad.example.com");
     let bleaf, eb = x509::create_certificate(bt, x509::marshal_public_key(bk), inter, int_key);
     check("excluded name", eb == x509::OK && x509::verify_chain(bleaf, inter, root, NOW, "") == x509::ERR_NAME_CONSTRAINTS);
+    // A decoy of the intermediate's name and another key, sent before or
+    // after it: the path through the intermediate came closer, so its
+    // error is the one reported, not the decoy's bad signature.
+    let decoy_key = x509::generate_key(x509::KEY_EC_P256);
+    let decoy = ca_cert("CN=Goose Made Issuing,O=Goose,C=US", 3, decoy_key);
+    var decoy_first: u8[>..] = [];
+    decoy_first.append(decoy);
+    decoy_first.append(inter);
+    var decoy_last: u8[>..] = [];
+    decoy_last.append(inter);
+    decoy_last.append(decoy);
+    check("excluded name, decoy first", x509::verify_chain(bleaf, decoy_first, root, NOW, "") == x509::ERR_NAME_CONSTRAINTS);
+    check("excluded name, decoy last", x509::verify_chain(bleaf, decoy_last, root, NOW, "") == x509::ERR_NAME_CONSTRAINTS);
     // A leaf cannot issue.
     var lf: u8[>..] = [];
     for l in leaves { if lf.len == 0 { lf = copy(l); } }
@@ -304,7 +317,7 @@ fn main() {
     // CRLs: the intermediate revokes one leaf; the root revokes nothing.
     let rl, erl = x509::parse(lf);
     var entries: x509::Revoked[>..] = [];
-    var serial: u8[..20] = [];
+    var serial:  u8[..20]           = [];
     serial.append(rl.der[rl.serial.off..rl.serial.end]);
     entries.push(x509::Revoked { serial: serial, time: NOW - 100, reason: x509::REASON_KEY_COMPROMISE });
     let crl, ecrl = x509::create_crl(inter, int_key, entries, NOW - 3600, NOW + 86400, 7);

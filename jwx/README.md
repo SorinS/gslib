@@ -173,6 +173,17 @@ invalid-curve point reaches the key agreement), PBES2 salts under 8 bytes.
 (`ERR_LIMIT`; `max_p2c` raises it), and a `zip` payload may inflate to 10
 MB (`max_inflate`). Encrypting uses a count of 10000 unless told otherwise.
 
+## Examples
+
+In gslib's `examples/jwx/`, run from gslib's top as `goose examples/jwx/<name>.goose`
+(or from that folder); each checks its own results.
+
+- `keys.goose`: JSON Web Keys: generating, JWK and PEM, thumbprints, key sets.
+- `sign_verify.goose`: JWS compact and JSON, HS256, RS256, ES256 and EdDSA, and what is refused.
+- `encrypt_decrypt.goose`: JWE with RSA-OAEP, ECDH-ES, AES key wrap, dir and PBES2, zip, several recipients.
+- `jwt_tokens.goose`: a JWT issued, then verified against the issuer's JWKS and its claims validated.
+- `nested_jwt.goose`: a JWT signed then encrypted, and opened, verified and validated in one call.
+
 ## Tests
 
 `python3 scripts/run_tests.py` (or `make test-jwx`) runs every test/*.goose

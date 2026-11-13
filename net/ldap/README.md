@@ -24,7 +24,8 @@ socket, and TLS ([tlsgoose](../../crypto/tls) in `tools/`).
   extended operations (StartTLS, Who am I, Password Modify, Cancel),
   abandon, unbind; Notice of Disconnection.
 - **`ldap.filter`**: RFC 4515 filters compiled to BER and back, as
-  go-ldap's `CompileFilter` and `DecompileFilter`; `escape_filter`.
+  go-ldap's `CompileFilter` and `DecompileFilter`; `escape_filter`; and
+  matching an entry against a compiled filter (below).
 - **`ldap.dn`**: RFC 4514 DNs, as go-ldap's `ParseDN`; `dn_string` (its
   `String()`), `dn_equal`, `dn_equal_fold`, `dn_ancestor_of`;
   `escape_dn_value`.
@@ -71,6 +72,49 @@ message that is not well formed, or one over `c.max_message` (64 MiB)
 fails the connection. Messages are read as BER, as servers send it:
 Active Directory's four-octet lengths too (asn1's `ber` mode).
 
+### Matching an entry
+
+go-ldap has no matcher; `ldap.filter` has one, over the compiled filter
+(from `compile`, or the filter element of a decoded SearchRequest,
+`buf[t.start..t.end]`), as RFC 4511 §4.5.1.7 has it:
+
+```goose
+let f, ok = ldap::compile("(&(objectClass=person)(cn=alice*))");
+ldap::entry_matches(f, msgs, m);                       // a SearchResultEntry
+ldap::filter_matches(f, ldap::entry_attributes(msgs, m));   // the same
+ldap::filter_matches(f, r.body);                       // an LDIF add record (ldap.ldif)
+ldap::filter_match(f, r.body);    // MATCH_TRUE, MATCH_FALSE, MATCH_UNDEFINED, or MATCH_INVALID
+```
+
+`filter_match` gives the three-valued result; `filter_matches` is true
+only for TRUE (Undefined is no match, as a server returns no entry). An
+entry is its attributes, each a SEQUENCE of the description and the SET
+of values, one after another. With no schema, these are the rules:
+- `&`, `|` and `!` are three-valued: an AND is FALSE if a term is,
+  else Undefined if one is; OR the other way round; NOT of Undefined is
+  Undefined; `(&)` is TRUE and `(|)` FALSE (RFC 4526).
+- An attribute description names an attribute by its type, without
+  regard to case, the options of both left out: `cn;lang-en` matches
+  `cn`, `CN` and `cn;lang-fr`. A numeric OID is not its name.
+- Values compare as caseIgnoreMatch, simplified: ASCII letters folded
+  (other UTF-8 bytes as they are), spaces at either end dropped and a run
+  of them one (RFC 4518's insignificant space handling; the spaces at a
+  substring piece's inner ends count). `exact` (the last argument of
+  each) compares octet by octet instead.
+- Equality, approximate (as equality: no phonetic rule) and ordering
+  (`>=`, `<=`: the prepared values byte by byte, so `"900" > "1500"`) are
+  TRUE if one value satisfies them, FALSE if none does, and Undefined
+  when the entry has no such attribute; `=*` is TRUE or FALSE. Substrings
+  are initial, any and final in order, none overlapping.
+- Extensible matches are taken with `caseIgnoreMatch` (2.5.13.2),
+  `caseExactMatch` (2.5.13.5, spaces handled, case not folded),
+  `octetStringMatch` (2.5.13.17), by OID or name and whatever `exact`
+  says, or without a rule as the type's equality; without a type,
+  against every attribute. `:dn:` and any other rule are Undefined.
+- A filter that is not well formed (or more than 256 deep), or
+  attributes that are not, are `MATCH_INVALID` whatever the entry; every
+  term is read, even after one that decides the result.
+
 Where go-ldap is not RFC 4514 and 4515, this is:
 - a filter must close each parenthesis it opens (go-ldap takes
   `(!(a=b)x` and `(&(a=b)x`), and `!` takes a parenthesized filter (go-ldap
@@ -112,6 +156,18 @@ Without `-x`, `-D`, `-w` or `-Y` there is no bind (OpenLDAP's would be
 SASL). tools/net.c is their operating-system part (TCP and Unix
 sockets, the terminal), for macOS and Linux.
 
+## Examples
+
+In gslib's `examples/ldap/`, run from gslib's top as `goose examples/ldap/<name>.goose`
+(or from that folder); each checks its own results.
+
+- `dn.goose`: distinguished names: parsing, the normal form, building one safely from a value, comparing.
+- `filters.goose`: search filters to BER and back, escaping a user's value, and matching an entry.
+- `ldap_urls.goose`: LDAP URLs: ldap://, ldaps://, ldapi:// and a whole search in one URL.
+- `ldif_changes.goose`: an LDIF change file turned into LDAP requests.
+- `search_messages.goose`: a bind and a paged search with both sides played in memory, entries printed as LDIF.
+- `search.goose`: a live search printing LDIF, as ldapsearch does: `URL [BINDDN PASSWORD]`. Needs a live server; `run_tests.py` only type-checks it.
+
 ## Tests
 
 ```bash
@@ -147,6 +203,11 @@ socket in a temporary directory, and leaves nothing running.
   requests, a Notice of Disconnection, the connection failed by
   malformed, mismatched, unsolicited and oversized messages and by the
   transport ending.
+- `match`: filters matched against an entry: each kind, nesting,
+  Undefined through `!`, `&` and `|`, descriptions' case and options,
+  values folded and exact, escapes, extensible rules, the entry from LDIF
+  and from a SearchResultEntry, a filter from a SearchRequest, and
+  filters and entries that are not well formed.
 - `text`: LDIF written (base64, folding) and read (every change type,
   controls, URL values, errors and their lines), LDAP URLs, the inputs
   where go-ldap and the RFCs part, deep and long filters, and DIGEST-MD5

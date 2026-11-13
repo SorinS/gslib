@@ -269,7 +269,7 @@ fn pkinit_other_info(h: i64, client: const PrincipalName&, crealm: const u8[:], 
     put_octets_f(body, 0, pkinit_principal_der(client, crealm));
     put_octets_f(body, 1, pkinit_principal_der(server, srealm));
     var supp: u8[>..] = [];
-    put_int_f(supp, 0, etype as i64);
+    put_int_f(supp, 0, etype);
     put_octets_f(supp, 1, as_req);
     put_octets_f(supp, 2, pk_as_rep);
     var suppseq: u8[>..] = [];
@@ -310,7 +310,7 @@ fn encode_auth_pack(now: i64, usec: i64, nonce: u32, body_der: const u8[:], fres
     var pa: u8[>..] = [];
     put_int_f(pa, 0, usec);
     put_ktime_f(pa, 1, now);
-    put_int_f(pa, 2, nonce as i64);
+    put_int_f(pa, 2, nonce);
     put_octets_f(pa, 3, bignum::hash_bits(160, body_der));
     if has_freshness { put_octets_f(pa, 4, freshness); }
     var pas: u8[>..] = [];

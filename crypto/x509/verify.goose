@@ -68,6 +68,13 @@ fn same_identity(a: const Cert&, b: const Cert&) -> bool {
         && a.has_san == b.has_san && a.der[a.san.start..a.san.end] == b.der[b.san.start..b.san.end]
 }
 
+// The error to report of two met in a path search, each with how close
+// its path came (verify_pools); of equals, the later.
+fn closer(best: i64, best_rank: i64, e: i64, rank: i64) -> i64, i64 {
+    if rank >= best_rank { return e, rank; }
+    return best, best_rank;
+}
+
 // The checks that need the whole path, given top-down as `chain` (n
 // certificates, the leaf last) under `root`: name constraints, policies,
 // and revocation as the options ask.
@@ -177,7 +184,11 @@ fn verify_client_with_system_roots(leaf_der: const u8[:], intermediates: const u
 // checked. The roots' own signatures and dates are not checked, only
 // their keys and constraints, as trust anchors are. Issuers are looked up
 // by name in the pools, those with the matching key identifier first.
-// Returns OK or the error of the path that came closest.
+// Returns OK or the error of the path that came closest: the longest
+// path whose signatures verified, and at its top a failed check on the
+// whole path before an issuer that is not a CA (or is expired, and so
+// on), and that before a bad signature, likely just another CA of the
+// same name.
 fn verify_pools(leaf_der: const u8[:], intermediates: const CertPool&, roots: const CertPool&,
                 crls: const u8[:], now: i64, host: const u8[:], opts: const Options&) -> i64 {
     let leaf, e = parse(leaf_der);
@@ -194,9 +205,10 @@ fn verify_pools(leaf_der: const u8[:], intermediates: const CertPool&, roots: co
     // Depth-first search. path[i] is the index in `intermediates` of the
     // i-th certificate above the leaf; tried[i] is how many of the
     // candidates for the next one up have been tried.
-    var path: i64[>..<] = [];
+    var path:  i64[>..<] = [];
     var tried: i64[>..<] = [0];
     var best = ERR_UNKNOWN_ISSUER;
+    var best_rank = -1;
     var sigs = 0;
     loop {
         let depth = path.len;
@@ -213,11 +225,11 @@ fn verify_pools(leaf_der: const u8[:], intermediates: const CertPool&, roots: co
                 // self-issued (a v1 root); otherwise roots are held to the
                 // same rules as any CA.
                 let ok_root = ce == OK || (ce == ERR_NOT_CA && !root.has_basic_constraints && self_issued(root));
-                if !ok_root { best = ce; continue; }
+                if !ok_root { best, best_rank = closer(best, best_rank, ce, 3 * depth + 1); continue; }
                 if sigs == MAX_SIGNATURE_CHECKS { return ERR_TOO_MANY_SIGNATURES; }
                 sigs++;
                 let se = check_signature(top, root);
-                if se != OK { best = se; continue; }
+                if se != OK { best, best_rank = closer(best, best_rank, se, 3 * depth); continue; }
                 var chain: u8[>..] = [];
                 var k = depth;
                 while k > 0 {
@@ -227,7 +239,7 @@ fn verify_pools(leaf_der: const u8[:], intermediates: const CertPool&, roots: co
                 chain.append(leaf_der);
                 let pe = check_path(root, chain, depth + 1, crls, now, opts);
                 if pe == OK { return OK; }
-                best = pe;
+                best, best_rank = closer(best, best_rank, pe, 3 * depth + 2);
             }
         }
         // Otherwise an intermediate that issued it, not already on the path.
@@ -248,11 +260,11 @@ fn verify_pools(leaf_der: const u8[:], intermediates: const CertPool&, roots: co
                 }
                 if on_path { continue; }
                 let ce = check_issuer(cand, now, depth, opts.key_usages);
-                if ce != OK { best = ce; continue; }
+                if ce != OK { best, best_rank = closer(best, best_rank, ce, 3 * depth + 1); continue; }
                 if sigs == MAX_SIGNATURE_CHECKS { return ERR_TOO_MANY_SIGNATURES; }
                 sigs++;
                 let se = check_signature(top, cand);
-                if se != OK { best = se; continue; }
+                if se != OK { best, best_rank = closer(best, best_rank, se, 3 * depth); continue; }
                 path.push(here);
                 tried.push(0);
                 found = true;
@@ -260,7 +272,7 @@ fn verify_pools(leaf_der: const u8[:], intermediates: const CertPool&, roots: co
             }
             tried[depth] = ::max(ci, 1);
         } else {
-            best = ERR_CHAIN_TOO_LONG;
+            best, best_rank = closer(best, best_rank, ERR_CHAIN_TOO_LONG, 3 * depth + 1);
         }
         if found { continue; }
         // A dead end: back up one level.

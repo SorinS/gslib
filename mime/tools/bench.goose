@@ -52,7 +52,7 @@ fn main() {
         if ev == multipart::EV_END || ev == multipart::EV_ERROR { break; }
     }
     let t1 = clock();
-    print("multipart read: ", parts, " parts, ", total, " bytes, ", ((body.len as f64) / (t1 - t0) / 1e6) as i64, " MB/s");
+    print("multipart read: ", parts, " parts, ", total, " bytes, ", (body.len / (t1 - t0) / 1e6) as i64, " MB/s");
     // many small fields through ReadForm
     var small: u8[>..] = [];
     for i in 1000 { format(small, "--", boundary, "\r\nContent-Disposition: form-data; name=\"field", i, "\"\r\n\r\nvalue ", i, "\r\n"); }
@@ -74,7 +74,7 @@ fn main() {
     var dec: u8[>..] = [];
     for k in 10 { dec.clear(); quotedprintable::decode_all(dec, enc); }
     let t6 = clock();
-    print("QP encode: ", ((10.0 * text.len as f64) / (t5 - t4) / 1e6) as i64, " MB/s, decode: ", ((10.0 * enc.len as f64) / (t6 - t5) / 1e6) as i64, " MB/s");
+    print("QP encode: ", (10.0 * text.len / (t5 - t4) / 1e6) as i64, " MB/s, decode: ", (10.0 * enc.len / (t6 - t5) / 1e6) as i64, " MB/s");
     let t7 = clock();
     var n = 0;
     for k in 100000 {

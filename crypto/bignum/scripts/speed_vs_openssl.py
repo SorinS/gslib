@@ -1,6 +1,6 @@
 """Every primitive's speed against openssl's on this machine.
 
-Builds examples/speed.goose natively, runs it, measures the same
+Builds gslib's examples/bignum/speed.goose natively, runs it, measures the same
 operations with `openssl speed` (16 KiB buffers, the EVP interface, so
 openssl uses its assembly and the CPU's crypto instructions where it has
 them), PBKDF2 and scrypt through hashlib (which calls OpenSSL), and
@@ -114,7 +114,7 @@ def main():
     SECS = args.seconds
     with tempfile.TemporaryDirectory() as tmp:
         exe = os.path.join(tmp, "speed")
-        subprocess.run([args.goose, "build", "-o", exe, os.path.join(ROOT, "examples", "speed.goose")],
+        subprocess.run([args.goose, "build", "-o", exe, os.path.join(ROOT, "..", "..", "examples", "bignum", "speed.goose")],
                        check=True, capture_output=True)
         out = subprocess.run([exe, args.prefix], check=True, capture_output=True, text=True).stdout
     goose = []

@@ -145,7 +145,7 @@ let XZ_MAGIC: u8[6] = [0xfd, '7', 'z', 'X', 'Z', 0];
 // The size an LZMA2 dictionary-size byte (<= 40) stands for.
 fn lzma2_dict_size(b: u8) -> u64 {
     if b >= 40 { return 0xffffffff; }
-    return ((2 | (b & 1)) as u64) << ((b / 2 + 11) as! u64);
+    return ((2 | (b & 1)) as u64) << (b / 2 + 11);
 }
 
 // --- LZMA probability model ------------------------------------------------
@@ -298,7 +298,7 @@ fn bcj_x86(s: XzStage&, buf: u8[:], enc: bool) -> i64 {
                 let k = X86_BITNUM[prev_mask >> 1];
                 b = ((dest >> (24 - k * 8)) & 0xff) as! u8;
                 if !x86_test_ms(b) { break; }
-                src = dest ^ (((1 as u64) << ((32 - k * 8) as u64)) - 1) as! u32;
+                src = dest ^ (((1 as u64) << (32 - k * 8)) - 1) as! u32;
             }
             buf[i + 4] = if ((dest >> 24) & 1) != 0 { 0xff } else { 0 };
             buf[i + 3] = ((dest >> 16) & 0xff) as! u8;
@@ -651,7 +651,7 @@ fn dict_grow(d: XzReader&) {
 
 // The byte dist + 1 back (0 if there is none).
 fn dict_get(d: const XzReader&, dist: u32) -> u8 {
-    var i = d.dpos - (dist as i64) - 1;
+    var i = d.dpos - dist - 1;
     if i < 0 { i += d.dsize; }
     if i < 0 || i >= d.dict.len { return 0; }
     return d.dict[i];
@@ -667,7 +667,7 @@ fn dict_put(d: XzReader&, b: u8) {
 
 // Copies n bytes from dist + 1 back.
 fn dict_repeat(d: XzReader&, dist: u32, n: i64) {
-    var src = d.dpos - (dist as i64) - 1;
+    var src = d.dpos - dist - 1;
     if src < 0 { src += d.dsize; }
     var left = n;
     while left > 0 {
@@ -694,7 +694,7 @@ fn dict_repeat(d: XzReader&, dist: u32, n: i64) {
 
 fn dict_has(d: const XzReader&, dist: u32) -> bool {
     let full = if d.dtotal < d.dsize { d.dtotal } else { d.dsize };
-    return (dist as i64) < full;
+    return dist < full;
 }
 
 // The last n bytes written to the dictionary, to dst.
@@ -745,7 +745,7 @@ fn rc_bit(d: XzReader&, src: const u8[:], end: i64, i: i64) -> u32 {
 
 fn rc_tree(d: XzReader&, src: const u8[:], end: i64, base: i64, bits: i64) -> u32 {
     var m: u32 = 1;
-    for k in bits { m = (m << 1) | rc_bit(d, src, end, base + (m as i64)); }
+    for k in bits { m = (m << 1) | rc_bit(d, src, end, base + m); }
     return m - ((1 as u32) << (bits as! u32));
 }
 
@@ -753,7 +753,7 @@ fn rc_tree_rev(d: XzReader&, src: const u8[:], end: i64, base: i64, bits: i64) -
     var m: u32 = 1;
     var r: u32 = 0;
     for k in bits {
-        let b = rc_bit(d, src, end, base + (m as i64));
+        let b = rc_bit(d, src, end, base + m);
         m = (m << 1) | b;
         r |= b << (k as! u32);
     }
@@ -795,14 +795,14 @@ fn lzma_symbol(d: XzReader&, src: const u8[:], end: i64) {
         let base = LZ_LITERAL + 0x300 * lit_state;
         var sym: u32 = 1;
         if st < 7 {
-            while sym < 0x100 { sym = (sym << 1) | rc_bit(d, src, end, base + (sym as i64)); }
+            while sym < 0x100 { sym = (sym << 1) | rc_bit(d, src, end, base + sym); }
         } else {
             var mb = dict_get(d, d.lz.rep0) as u32;
             var offs: u32 = 0x100;
             while sym < 0x100 {
                 mb <<= 1;
                 let mbit = mb & offs;
-                let b = rc_bit(d, src, end, base + ((offs + mbit + sym) as i64));
+                let b = rc_bit(d, src, end, base + (offs + mbit + sym));
                 sym = (sym << 1) | b;
                 if b == 0 { offs &= ~mbit; } else { offs &= mbit; }
             }
@@ -822,9 +822,9 @@ fn lzma_symbol(d: XzReader&, src: const u8[:], end: i64) {
             let footer = (slot >> 1) - 1;
             dist = (2 | (slot & 1)) << footer;
             if slot < 14 {
-                dist += rc_tree_rev(d, src, end, LZ_DIST_SPECIAL + (dist as i64) - (slot as i64) - 1, footer as i64);
+                dist += rc_tree_rev(d, src, end, LZ_DIST_SPECIAL + dist - slot - 1, footer);
             } else {
-                dist += rc_direct(d, src, end, (footer - 4) as i64) << 4;
+                dist += rc_direct(d, src, end, footer - 4) << 4;
                 dist += rc_tree_rev(d, src, end, LZ_DIST_ALIGN, 4);
             }
         }
@@ -971,8 +971,8 @@ fn lzma2_run(d: XzReader&, src: const u8[:], room: i64) -> i64, i64 {
             }
             let p = d.sp;
             if c >= 0x80 {
-                d.l2_uleft = (((c & 0x1f) as i64) << 16) + ((src[p + 1] as i64) << 8) + (src[p + 2] as i64) + 1;
-                d.l2_cleft = ((src[p + 3] as i64) << 8) + (src[p + 4] as i64) + 1;
+                d.l2_uleft = (((c & 0x1f) as i64) << 16) + ((src[p + 1] as i64) << 8) + src[p + 2] + 1;
+                d.l2_cleft = ((src[p + 3] as i64) << 8) + src[p + 4] + 1;
                 if c >= 0xc0 {
                     if !lzma_set_props(d.lz, src[p + 5]) { return ERR_DATA, made; }
                     d.l2_need_props = false;
@@ -983,7 +983,7 @@ fn lzma2_run(d: XzReader&, src: const u8[:], room: i64) -> i64, i64 {
                 d.l2_rc_init = false;
                 d.l2 = L2_LZMA;
             } else {
-                d.l2_uleft = ((src[p + 1] as i64) << 8) + (src[p + 2] as i64) + 1;
+                d.l2_uleft = ((src[p + 1] as i64) << 8) + src[p + 2] + 1;
                 d.l2 = L2_COPY;
             }
             d.sp += hsize;
@@ -1219,7 +1219,7 @@ fn xz_stream_header(d: XzReader&, src: const u8[:]) -> i64 {
     if crc32(src[p + 6..p + 8]) != get_le32(src, p + 8) { return ERR_DATA; }
     if src[p + 6] != 0 || (src[p + 7] & 0xf0) != 0 { return ERR_UNSUPPORTED; }
     d.flags1 = src[p + 7];
-    d.check = (src[p + 7] & 15) as i64;
+    d.check = src[p + 7] & 15;
     d.check_size = XZ_CHECK_SIZES[d.check];
     if d.check != XZ_CHECK_NONE && d.check != XZ_CHECK_CRC32 && d.check != XZ_CHECK_CRC64 && d.check != XZ_CHECK_SHA256 {
         d.unverified = true;

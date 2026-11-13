@@ -120,7 +120,7 @@ fn nreduce(c: const Curve&, x: const u32[:]) -> u32[..17] {
 fn ec_sub2(x: u32[:]) {
     var borrow: u64 = 2;
     for i in x.len {
-        let t = (x[i] as u64) - borrow;
+        let t = x[i] - borrow;
         x[i] = t as! u32;
         borrow = (t >> 32) & 1;
     }

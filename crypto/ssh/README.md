@@ -156,6 +156,18 @@ the key in OpenSSH's format with mode 0600 and `file.pub` beside it. `-y
 file` changes the passphrase, `-l [-E sha256|md5] -f file` prints the
 fingerprint.
 
+## Examples
+
+In gslib's `examples/ssh/`, run from gslib's top as `goose examples/ssh/<name>.goose`
+(or from that folder); each checks its own results.
+
+- `keys.goose`: keys as ssh-keygen makes them: authorized_keys lines, fingerprints, OpenSSH key files with and without a passphrase, PEM.
+- `exec.goose`: an SSH client and server in one process: public-key login, known_hosts, a command's output and exit status.
+- `login.goose`: a first login as ssh does it: an unknown host key accepted and saved, then a password.
+- `transport.goose`: the transport layer piece by piece: negotiation, mlkem768x25519-sha256, key derivation, packets.
+- `sftp.goose`: SFTP over an in-memory connection: upload, listing, download in chunks.
+- `port_forward.goose`: local (-L) and remote (-R) port forwarding in memory.
+
 ## Tests
 
 ```bash

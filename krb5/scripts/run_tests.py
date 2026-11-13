@@ -20,7 +20,8 @@ import sys
 import tempfile
 
 ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
-EXAMPLE_ARGS = {}
+# None: the example needs a live KDC, so it is only type-checked.
+EXAMPLE_ARGS = {"kinit": None, "service_ticket": None}
 
 
 def find_goose(arg):
@@ -55,7 +56,8 @@ def main():
     # A test is a program; the shared helpers (test/tv.goose) have no main.
     tests = sorted(f for f in os.listdir(test_dir)
                    if f.endswith(".goose") and "fn main()" in open(os.path.join(test_dir, f)).read())
-    ex_dir = os.path.join(ROOT, "examples")
+    # The examples are gslib's examples/krb5.
+    ex_dir = os.path.join(ROOT, "..", "examples", "krb5")
     examples = sorted(f for f in os.listdir(ex_dir) if f.endswith(".goose")) if os.path.isdir(ex_dir) else []
     if args.k:
         tests = [t for t in tests if args.k in t]
@@ -96,8 +98,11 @@ def main():
                 check(f"{t} native", rc, out, err, expected)
 
     for e in examples:
-        rc, out, err = run([goose, e, "--", *EXAMPLE_ARGS.get(e[:-6], [])], os.path.join(ROOT, "examples"))
-        check(f"examples/{e}", rc, out, err, None)
+        # None: the example needs a live peer, so it is only type-checked.
+        ex_args = EXAMPLE_ARGS.get(e[:-6], [])
+        cmd = [goose, "check", e] if ex_args is None else [goose, e, "--", *ex_args]
+        rc, out, err = run(cmd, ex_dir)
+        check(f"examples/krb5/{e}", rc, out, err, None)
 
     print(f"\n{passed} passed, {len(failed)} failed")
     sys.exit(1 if failed else 0)

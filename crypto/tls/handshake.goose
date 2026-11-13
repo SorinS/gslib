@@ -677,7 +677,10 @@ fn make_share(c: Conn&, group: u16) -> u8[>..] {
 // the ECDH secret, in the share's order.
 fn shared_secret(c: const Conn&, peer: const u8[:]) -> u8[>..], bool {
     let k = mlkem_k(c.group);
-    if k == 0 { return ecdh_secret(c, c.group, peer); }
+    if k == 0 {
+        let s, ok = ecdh_secret(c, c.group, peer);
+        return s, ok;
+    }
     let g = ecdh_part(c.group);
     var out: u8[>..] = [];
     if peer.len != mlkem_ct_len(k) + ecdh_len(g) { return out, false; }
@@ -1777,7 +1780,7 @@ fn parse_hello(m: const u8[:]) -> Hello, bool {
             h.cookie = get_vec(e, m, 2);
         } else if ty == EXT_PSK_KEY_EXCHANGE_MODES {
             var l = get_vec(e, m, 1);
-            while l.pos < l.end { if get_u8(l, m) == PSK_DHE_KE as i64 { h.psk_dhe = true; } }
+            while l.pos < l.end { if get_u8(l, m) == PSK_DHE_KE { h.psk_dhe = true; } }
             if l.bad { return h, false; }
         } else if ty == EXT_PRE_SHARED_KEY {
             // The last extension (§4.2.11).
@@ -2414,9 +2417,13 @@ fn post_handshake(c: Conn&, m: const u8[:], out: u8[>..]&) -> i64 {
     return fail(c, ALERT_UNEXPECTED_MESSAGE, out);
 }
 
-// One whole record.
-fn handle_record(c: Conn&, ccfg: const ClientConfig&, scfg: const ServerConfig&, rec: const u8[:],
-                 out: u8[>..]&, app: u8[>..]&) -> i64 {
+// A handshake message to the side whose configuration cfg is.
+fn role_message(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: u8[>..]&) -> i64 { client_message(c, cfg, m, out) }
+fn role_message(c: Conn&, cfg: const ServerConfig&, m: const u8[:], out: u8[>..]&) -> i64 { server_message(c, cfg, m, out) }
+
+// One whole record. cfg is the side's own configuration, a ClientConfig or
+// a ServerConfig: this and feed are compiled once for each.
+fn handle_record(c: Conn&, cfg, rec: const u8[:], out: u8[>..]&, app: u8[>..]&) -> i64 {
     let outer = rec[0];
     var ctype = outer;
     var payload: u8[>..] = [];
@@ -2508,7 +2515,7 @@ fn handle_record(c: Conn&, ccfg: const ClientConfig&, scfg: const ServerConfig&,
         var rest: u8[..65540] = [];
         rest.append(c.hs[n..]);
         c.hs = rest;
-        let r = if c.is_server { server_message(c, scfg, msg, out) } else { client_message(c, ccfg, msg, out) };
+        let r = role_message(c, cfg, msg, out);
         if r != 0 { return r; }
         // A change of read keys (after ServerHello) must fall at a record boundary.
         if c.hs.len > 0 && c.state == ST_WAIT_EE { return fail(c, ALERT_UNEXPECTED_MESSAGE, out); }
@@ -2523,8 +2530,7 @@ fn handle_record(c: Conn&, ccfg: const ClientConfig&, scfg: const ServerConfig&,
 // Feeds received bytes; appends what to send to `out` and application
 // data to `app`. Returns 0, or -1 once the connection has failed (the
 // alert, already in `out` when it was ours, is in c.alert).
-fn feed(c: Conn&, ccfg: const ClientConfig&, scfg: const ServerConfig&, input: const u8[:],
-        out: u8[>..]&, app: u8[>..]&) -> i64 {
+fn feed(c: Conn&, cfg, input: const u8[:], out: u8[>..]&, app: u8[>..]&) -> i64 {
     var off = 0;
     while off < input.len {
         if c.state == ST_FAILED { return -1; }
@@ -2547,32 +2553,16 @@ fn feed(c: Conn&, ccfg: const ClientConfig&, scfg: const ServerConfig&, input: c
         var rec: u8[>..] = [];
         rec.append(c.inbuf);
         c.inbuf.clear();
-        let r = handle_record(c, ccfg, scfg, rec, out, app);
+        let r = handle_record(c, cfg, rec, out, app);
         if r != 0 { return r; }
     }
     return if c.state == ST_FAILED { -1 } else { 0 };
 }
 
-fn no_server() -> ServerConfig {
-    ServerConfig { key: x509::empty_key(), min_version: VERSION_TLS12, max_version: VERSION_TLS13, groups: [], suites: [],
-                   suites12: [], alpn: [], seed: 0, now: 0, tickets: 0,
-                   ticket_key: [0; 32], chain: [], client_auth: NO_CLIENT_CERT, ech_keys: [],
-                   client_cas: x509::new_pool() }
-}
-
-fn no_client() -> ClientConfig {
-    ClientConfig { server_name: [], verify: false, now: 0, min_version: VERSION_TLS12, max_version: VERSION_TLS13,
-                   groups: [], suites: [], suites12: [], alpn: [], seed: 0,
-                   session: no_session(), cert_key: x509::empty_key(), cert_chain: [], ech_config_list: [],
-                   system_roots: false, roots: x509::new_pool() }
-}
-
 fn client_feed(c: Conn&, cfg: const ClientConfig&, input: const u8[:], out: u8[>..]&, app: u8[>..]&) -> i64 {
-    let none = no_server();
-    return feed(c, cfg, none, input, out, app);
+    return feed(c, cfg, input, out, app);
 }
 
 fn server_feed(c: Conn&, cfg: const ServerConfig&, input: const u8[:], out: u8[>..]&, app: u8[>..]&) -> i64 {
-    let none = no_client();
-    return feed(c, none, cfg, input, out, app);
+    return feed(c, cfg, input, out, app);
 }

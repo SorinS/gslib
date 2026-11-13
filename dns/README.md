@@ -103,6 +103,12 @@ layout is unknown and kept opaque, written as RFC 3597's `\# n hex`.
 | `ClientConfigFromFile`, `NameList` | `client_config_file`, `client_config`, `name_list` |
 | `Server`, `HandleFunc`, `Transfer.Out` | `server_open(cfg)`, `serve(srv, cfg) { req, resp, peer => ... }`; a TCP reply too big for one message is split, so a handler answers AXFR by putting the zone in its answer |
 
+`serve`'s handler is a block, so a `return` in it returns from the
+function that called `serve`, ending the server, as it would in a `for`
+body. To answer early, fill in `resp` and end that call of the block with
+`guard cond;` (the rest runs only where `cond` holds) or an `if`/`else`.
+`peer.addr` is the client's address over both UDP and TCP.
+
 ## Tools
 
 - **goose-dig** (`tools/dig.goose`), miekg's `q`: `goose-dig [@server]
@@ -116,6 +122,23 @@ layout is unknown and kept opaque, written as RFC 3597's `\# n hex`.
   from the zone when DO is set, AXFR and IXFR (the whole zone) over TCP,
   NOTIFY, dynamic updates applied in memory; with `-y`, transfers and
   updates must be signed.
+
+## Examples
+
+In gslib's `examples/dns/`, run from gslib's top as `goose examples/dns/<name>.goose`
+(or from that folder); each checks its own results.
+
+- `query_reply.goose`: a query and its reply built, packed, unpacked and printed as dig does, and truncation.
+- `records.goose`: records in text and wire form, and domain-name functions.
+- `parse_zone.goose`: `example.zone` parsed, its records counted and looked up, and a broken zone's error line.
+- `edns.goose`: EDNS0 options: cookie, client subnet, NSID, keepalive, Extended DNS Error.
+- `dnssec_sign.goose`: keys made, RRsets signed and verified, a DS, BIND private-key files, NSEC3.
+- `tsig.goose`: a TSIG-signed query and reply, and what is refused.
+- `sig0.goose`: an update signed with SIG(0) and verified.
+- `dyn_update.goose`: a dynamic update built and applied to a zone in memory.
+- `loopback.goose`: the server and the client in one process over UDP on 127.0.0.1, TSIG included.
+- `query.goose`: a dig-like client: UDP falling back to TCP, AXFR: `[@SERVER[:PORT]] NAME [TYPE] [+tcp]`. Needs a live server; `run_tests.py` only type-checks it.
+- `serve.goose`: an authoritative server for `example.zone` (or a zone file given) on 127.0.0.1, for `query` to ask. It serves until stopped, so `run_tests.py` only type-checks it.
 
 ## Tests
 

@@ -1,5 +1,5 @@
-/* krb5sys: what krb5 needs from the system beyond http's TCP sockets
-   (net/http/src/httpnet.c, which krb5.net also uses): a UDP exchange with
+/* krb5sys: what krb5 needs from the system beyond net's TCP sockets
+   (net/src/net.c, which krb5.net also uses): a UDP exchange with
    a KDC, files only their owner may read (credential caches, keytabs),
    the user's id for the default cache's name, and a host's canonical name.
    POSIX (macOS, Linux) and Windows. Strings arrive as Goose slices,

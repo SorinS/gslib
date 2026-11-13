@@ -2,8 +2,8 @@
    server.goose): UDP sockets connected to a server (so only its replies
    arrive), UDP and TCP sockets listening on an address, datagrams with
    their senders, accepting connections, and waiting on two sockets at
-   once. TCP connections, reads and writes are http.client's
-   (net/http/src/httpnet.c). POSIX (macOS, Linux) and Windows (Winsock).
+   once. TCP connections, reads and writes are net's
+   (net/src/net.c). POSIX (macOS, Linux) and Windows (Winsock).
    A socket is an int64_t; strings arrive as Goose slices, { data, len },
    not NUL-terminated.
 
@@ -181,6 +181,18 @@ int64_t dnsnet_recvfrom(int64_t fd, dnsnet_buf buf, dnsnet_buf from, dnsnet_buf 
     memcpy(from.data, &ss, (size_t)len);
     from_len.data[0] = (uint8_t)len;
     return n;
+}
+
+/* The other end of a connected socket (an accepted TCP client), as
+   recvfrom gives a sender: its sockaddr to from, the length in from_len[0]. */
+int64_t dnsnet_peername(int64_t fd, dnsnet_buf from, dnsnet_buf from_len) {
+    struct sockaddr_storage ss;
+    socklen_type len = sizeof ss;
+    if (from.len < (int64_t)sizeof ss || from_len.len < 1) return DNSNET_EARG;
+    if (getpeername((sock_t)fd, (struct sockaddr *)&ss, &len) != 0) return DNSNET_EIO;
+    memcpy(from.data, &ss, (size_t)len);
+    from_len.data[0] = (uint8_t)len;
+    return 0;
 }
 
 /* Sends a datagram to the sender recvfrom gave. */

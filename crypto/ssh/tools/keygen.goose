@@ -89,7 +89,7 @@ fn key_bits(p: const ssh::PublicKey&) -> i64 {
     var i = 0;
     while i < p.n.len && p.n[i] == 0 { i++; }
     if i == p.n.len { return 0; }
-    return (p.n.len - i) * 8 - clz(p.n[i] as u64) + 56;
+    return (p.n.len - i) * 8 - clz(p.n[i]) + 56;
 }
 
 fn type_label(kind: i64) -> const u8[:] {

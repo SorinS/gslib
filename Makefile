@@ -21,7 +21,7 @@ LIBS    := asn1 bignum x509 tls ssh ldap yaml http compress mime krb5 jwx pkcs11
 # ------------------------------------------------------------------------------
 
 # A program is rebuilt when any of the package's sources changes.
-SOURCES := $(ROOT)/gslib.goose $(ROOT)/gslib.build $(ROOT)/compress.goose $(ROOT)/mime.goose $(ROOT)/krb5.goose $(ROOT)/jwx.goose $(ROOT)/pkcs11.goose $(ROOT)/dns.goose \
+SOURCES := $(ROOT)/gslib.goose $(ROOT)/gslib.build $(ROOT)/net.goose $(ROOT)/compress.goose $(ROOT)/mime.goose $(ROOT)/krb5.goose $(ROOT)/jwx.goose $(ROOT)/pkcs11.goose $(ROOT)/dns.goose \
 	$(shell find $(ROOT)/crypto $(ROOT)/encoding $(ROOT)/net $(ROOT)/compress $(ROOT)/mime $(ROOT)/krb5 $(ROOT)/jwx $(ROOT)/pkcs11 $(ROOT)/dns \
 		\( -name '*.goose' -o -name '*.c' -o -name '*.build' \) \
 		-not -path '*/test/*' -not -path '*/examples/*')
@@ -52,8 +52,8 @@ prog_source = $(word 2,$(subst :, ,$(1)))
 BINARIES    := $(foreach p,$(PROGRAMS),$(BIN)/$(call prog_name,$(p))) $(BIN)/goose-ldapadd
 
 # Every tool and example with a main, for check.
-CHECKED := $(shell cd $(ROOT) && grep -l '^fn main' */*/tools/*.goose */*/examples/*.goose \
-	compress/tools/*.goose compress/examples/*.goose mime/tools/*.goose krb5/tools/*.goose jwx/tools/*.goose pkcs11/tools/*.goose dns/tools/*.goose)
+CHECKED := $(shell cd $(ROOT) && grep -l '^fn main' */*/tools/*.goose examples/*/*.goose \
+	compress/tools/*.goose mime/tools/*.goose krb5/tools/*.goose jwx/tools/*.goose pkcs11/tools/*.goose dns/tools/*.goose)
 
 # ------------------------------------------------------------------------------
 # Helpers

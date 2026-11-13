@@ -12,6 +12,7 @@ import std;
 import krb5.config;
 import krb5.messages;
 import krb5.sys;
+import net;
 
 let MAX_TCP_REPLY: i64 = 1 << 24;
 
@@ -28,7 +29,7 @@ fn net_opts(cfg: const Config&) -> NetOpts {
 
 // One exchange over TCP: the reply, or an error.
 fn tcp_exchange(host: const u8[:], port: i64, req: const u8[:], out: u8[>..]&, timeout_ms: i64) -> i64 {
-    let fd = httpnet_connect(host, port as! i32, timeout_ms as! i32);
+    let fd = net::dial(host, port as! i32, timeout_ms as! i32);
     if fd < 0 { return ERR_KDC_UNREACHABLE; }
     var msg: u8[>..] = [];
     let n = req.len;
@@ -37,12 +38,12 @@ fn tcp_exchange(host: const u8[:], port: i64, req: const u8[:], out: u8[>..]&, t
     msg.push((n >> 8) as! u8);
     msg.push(n as! u8);
     msg.append(req);
-    if httpnet_write(fd, msg, timeout_ms as! i32) != msg.len { httpnet_close(fd); return ERR_KDC_UNREACHABLE; }
+    if net::write(fd, msg, timeout_ms as! i32) != msg.len { net::close(fd); return ERR_KDC_UNREACHABLE; }
     var head: u8[4] = [0; 4];
     var got = 0;
     while got < 4 {
-        let r = httpnet_read(fd, head[got..], timeout_ms as! i32);
-        if r <= 0 { httpnet_close(fd); return ERR_KDC_UNREACHABLE; }
+        let r = net::read(fd, head[got..], timeout_ms as! i32);
+        if r <= 0 { net::close(fd); return ERR_KDC_UNREACHABLE; }
         got += r;
     }
     let h0: i64 = head[0];
@@ -51,16 +52,16 @@ fn tcp_exchange(host: const u8[:], port: i64, req: const u8[:], out: u8[>..]&, t
     let h3: i64 = head[3];
     let len = h0 << 24 | h1 << 16 | h2 << 8 | h3;
     // The high bit is reserved (§7.2.2); a KDC that sets it is not one we know.
-    if len <= 0 || len > MAX_TCP_REPLY { httpnet_close(fd); return ERR_MALFORMED; }
+    if len <= 0 || len > MAX_TCP_REPLY { net::close(fd); return ERR_MALFORMED; }
     let base = out.len;
     out.resize(base + len, 0);
     var have = 0;
     while have < len {
-        let r = httpnet_read(fd, out[base + have..base + len], timeout_ms as! i32);
-        if r <= 0 { httpnet_close(fd); out.resize(base, 0); return ERR_KDC_UNREACHABLE; }
+        let r = net::read(fd, out[base + have..base + len], timeout_ms as! i32);
+        if r <= 0 { net::close(fd); out.resize(base, 0); return ERR_KDC_UNREACHABLE; }
         have += r;
     }
-    httpnet_close(fd);
+    net::close(fd);
     return OK;
 }
 

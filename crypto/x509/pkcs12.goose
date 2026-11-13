@@ -83,7 +83,7 @@ fn pkcs12_kdf(h: i64, id: u8, password: const u8[:], salt: const u8[:], iteratio
             var k = v;
             while k > 0 {
                 k--;
-                let t = ib[j + k] as u32 + a[k % u] as u32 + carry;
+                let t = ib[j + k] as u32 + a[k % u] + carry;
                 ib[j + k] = t as! u8;
                 carry = t >> 8;
             }

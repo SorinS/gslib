@@ -392,7 +392,6 @@ fn ocsp_put_gtime(out: u8[>..]&, unix: i64) {
 // reason of 0 (unspecified) left out.
 fn ocsp_create_response(issuer: const Cert&, responder: const Cert&, key: const PrivateKey&, t: const OcspTemplate&,
                         produced_at: i64, include_cert: bool) -> u8[>..], i64 {
-    var none: u8[>..] = [];
     var alg = t.sig_alg;
     var h = t.sig_hash;
     if alg == 0 {
@@ -400,12 +399,12 @@ fn ocsp_create_response(issuer: const Cert&, responder: const Cert&, key: const 
         alg = a;
         h = hh;
     }
-    if !sig_fits_key(key.kind, alg, h) { return none, ERR_UNSUPPORTED_ALGORITHM; }
+    if !sig_fits_key(key.kind, alg, h) { return [], ERR_UNSUPPORTED_ALGORITHM; }
     var id = OcspCertId { hash: t.hash, name_hash: [], key_hash: [], serial: [] };
     let d = issuer.der[..];
     id.name_hash.append(bignum::hash_bits(t.hash, d[issuer.subject.start..issuer.subject.end]));
     let kb, okk = key_bytes(d, issuer.key);
-    if !okk { return none, ERR_MALFORMED; }
+    if !okk { return [], ERR_MALFORMED; }
     id.key_hash.append(bignum::hash_bits(t.hash, kb));
     id.serial.append(t.serial);
     var single: u8[>..] = [];
@@ -440,7 +439,7 @@ fn ocsp_create_response(issuer: const Cert&, responder: const Cert&, key: const 
     basic.append(tbs);
     basic.append(sig_alg_id(alg, h));
     let sig, oks = sign(key, alg, h, tbs);
-    if !oks { return none, ERR_SIGNING; }
+    if !oks { return [], ERR_SIGNING; }
     asn1::put_bits(basic, sig);
     if include_cert {
         var certs: u8[>..] = [];

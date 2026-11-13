@@ -367,7 +367,7 @@ fn zip_find_end_sig(b: const u8[:]) -> i64 {
     var i = b.len - 22;
     while i >= 0 {
         if b[i] == 'P' && b[i + 1] == 'K' && b[i + 2] == 5 && b[i + 3] == 6 {
-            let n = b[i + 20] as i64 | (b[i + 21] as i64) << 8;
+            let n = b[i + 20] | (b[i + 21] as i64) << 8;
             if n + 22 + i > b.len { return -1; }
             return i;
         }
@@ -407,7 +407,7 @@ fn zip_read_dir_header(r: ZipReader&, buf: const u8[:], off: i64, e: ZipEntry&) 
     let xlen = get_le16(b, 30) as i64;
     let clen = get_le16(b, 32) as i64;
     e.external_attrs = get_le32(b, 38);
-    e.header_offset = get_le32(b, 42) as i64;
+    e.header_offset = get_le32(b, 42);
     let total = nlen + xlen + clen;
     let rest = r.size - (off + 46);
     if total > 0 && rest <= 0 { return 0, ZIP_ERR_EOF; }
@@ -482,10 +482,10 @@ fn zip_read_dir_header(r: ZipReader&, buf: const u8[:], off: i64, e: ZipEntry&) 
             }
         } else if tag == 0x000d || tag == 0x5855 {
             if f.len < 8 { continue; }
-            modified = zip_time(get_le32(f, 4) as i64);
+            modified = zip_time(get_le32(f, 4));
         } else if tag == 0x5455 {
             if f.len < 5 || (f[0] & 1) == 0 { continue; }
-            modified = zip_time(get_le32(f, 1) as i64);
+            modified = zip_time(get_le32(f, 1));
         }
     }
     let msdos = zip_msdos_time(e.mod_date, e.mod_time);
@@ -541,7 +541,7 @@ fn zip_read_directory(r: ZipReader&, buf: const u8[:], check_paths: bool) -> i64
     r.records = get_le16(b, 10);
     r.dir_size = get_le32(b, 12);
     r.dir_offset = get_le32(b, 16);
-    r.comment_len = get_le16(b, 20) as i64;
+    r.comment_len = get_le16(b, 20);
     r.comment_pos = end_off + 22;
     if r.records == 0xffff || r.dir_size == 0xffffffff || r.dir_offset == 0xffffffff {
         let loc_off = end_off - 20;
@@ -714,7 +714,7 @@ fn zip_file_start(e: const ZipEntry&, local: const u8[:], name: const u8[:]) -> 
         f.err = ERR_FORMAT;
         return f;
     }
-    f.data_pos = e.header_offset + 30 + (get_le16(local, 26) as i64) + (get_le16(local, 28) as i64);
+    f.data_pos = e.header_offset + 30 + get_le16(local, 26) + get_le16(local, 28);
     f.header_ok = true;
     if f.is_dir {
         if f.usize != 0 { f.err = ERR_FORMAT; f.state = ZF_FAILED; } else { f.state = ZF_DONE; }

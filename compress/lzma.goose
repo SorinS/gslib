@@ -261,7 +261,7 @@ fn lze_bit(w: XzWriter&, i: i64, bit: u32) {
         w.range = bound;
         w.p[i] = (p + ((2048 - p) >> 5)) as! u16;
     } else {
-        w.low += bound as u64;
+        w.low += bound;
         w.range -= bound;
         w.p[i] = (p - (p >> 5)) as! u16;
     }
@@ -276,7 +276,7 @@ fn lze_tree(w: XzWriter&, base: i64, bits: i64, v: u32) {
     var k = bits - 1;
     while k >= 0 {
         let b = (v >> (k as! u32)) & 1;
-        lze_bit(w, base + (m as i64), b);
+        lze_bit(w, base + m, b);
         m = (m << 1) | b;
         k--;
     }
@@ -288,7 +288,7 @@ fn lze_tree_rev(w: XzWriter&, base: i64, bits: i64, v0: u32) {
     for k in bits {
         let b = v & 1;
         v >>= 1;
-        lze_bit(w, base + (m as i64), b);
+        lze_bit(w, base + m, b);
         m = (m << 1) | b;
     }
 }
@@ -297,7 +297,7 @@ fn lze_direct(w: XzWriter&, v: u32, bits: i64) {
     var k = bits - 1;
     while k >= 0 {
         w.range >>= 1;
-        if ((v >> (k as! u32)) & 1) != 0 { w.low += w.range as u64; }
+        if ((v >> (k as! u32)) & 1) != 0 { w.low += w.range; }
         while w.range < 0x1000000 {
             w.range <<= 8;
             lze_shift_low(w);
@@ -361,21 +361,21 @@ fn lze_literal(w: XzWriter&, pos: i64) {
     lze_bit(w, LZ_IS_MATCH + (w.state << 4) + ps, 0);
     let rel = pos - w.dstart;
     let prev: u32 = if rel > 0 { lze_byte(w, pos - 1) } else { 0 };
-    let ls = ((rel & ((1 << (w.lp as! u64)) - 1)) << (w.lc as! u64)) + ((prev >> ((8 - w.lc) as! u32)) as i64);
+    let ls = ((rel & ((1 << (w.lp as! u64)) - 1)) << (w.lc as! u64)) + (prev >> ((8 - w.lc) as! u32));
     let base = LZ_LITERAL + 0x300 * ls;
     var sym = (lze_byte(w, pos) as u32) | 0x100;
     if w.state < 7 {
         while sym < 0x10000 {
-            lze_bit(w, base + ((sym >> 8) as i64), (sym >> 7) & 1);
+            lze_bit(w, base + (sym >> 8), (sym >> 7) & 1);
             sym <<= 1;
         }
     } else {
-        var mb = lze_byte(w, pos - (w.reps[0] as i64) - 1) as u32;
+        var mb = lze_byte(w, pos - w.reps[0] - 1) as u32;
         var offs: u32 = 0x100;
         while sym < 0x10000 {
             mb <<= 1;
             let mbit = mb & offs;
-            lze_bit(w, base + ((offs + mbit + (sym >> 8)) as i64), (sym >> 7) & 1);
+            lze_bit(w, base + (offs + mbit + (sym >> 8)), (sym >> 7) & 1);
             sym <<= 1;
             offs &= ~(mb ^ sym);
         }
@@ -396,9 +396,9 @@ fn lze_match(w: XzWriter&, pos: i64, dist: u32, len: i64) {
         let base = (2 | (slot & 1)) << footer;
         let reduced = dist - base;
         if slot < 14 {
-            lze_tree_rev(w, LZ_DIST_SPECIAL + (base as i64) - (slot as i64) - 1, footer as i64, reduced);
+            lze_tree_rev(w, LZ_DIST_SPECIAL + base - slot - 1, footer, reduced);
         } else {
-            lze_direct(w, reduced >> 4, (footer - 4) as i64);
+            lze_direct(w, reduced >> 4, footer - 4);
             lze_tree_rev(w, LZ_DIST_ALIGN, 4, reduced & 15);
         }
     }
@@ -501,19 +501,19 @@ fn lze_find(w: XzWriter&) {
     var d2 = me - m2;
     let d3 = me - m3;
     var n = 0;
-    if m2 != 0 && d2 < cyc && w.win[i - (d2 as i64)] == b0 {
+    if m2 != 0 && d2 < cyc && w.win[i - d2] == b0 {
         best = 2;
         w.matches[0] = LzMatch { len: 2, dist: d2 - 1 };
         n = 1;
     }
-    if m3 != 0 && d2 != d3 && d3 < cyc && w.win[i - (d3 as i64)] == b0 {
+    if m3 != 0 && d2 != d3 && d3 < cyc && w.win[i - d3] == b0 {
         best = 3;
         w.matches[n] = LzMatch { len: 3, dist: d3 - 1 };
         n++;
         d2 = d3;
     }
     if n > 0 {
-        best = lze_matchlen(w, pos - (d2 as i64), pos, best, limit);
+        best = lze_matchlen(w, pos - d2, pos, best, limit);
         w.matches[n - 1].len = best;
         if best >= limit {
             if w.normal { lze_bt(w, pos, me, cm, cyc, limit, best, n, false); }
@@ -532,7 +532,7 @@ fn lze_find(w: XzWriter&) {
     while depth > 0 && cm != 0 {
         let delta = me - cm;
         if delta >= cyc { break; }
-        let c = pos - (delta as i64);
+        let c = pos - delta;
         let ci = c - w.base;
         if w.win[ci + best] == w.win[i + best] && w.win[ci] == w.win[i] {
             let len = lze_matchlen(w, c, pos, 1, limit);
@@ -558,7 +558,7 @@ fn lze_extend(w: XzWriter&, pos: i64, avail: i64) {
     if m.len < w.nice { return; }
     var lim = avail;
     if lim > LZE_MAXMATCH { lim = LZE_MAXMATCH; }
-    w.matches[n - 1].len = lze_matchlen(w, pos - (m.dist as i64) - 1, pos, m.len, lim);
+    w.matches[n - 1].len = lze_matchlen(w, pos - m.dist - 1, pos, m.len, lim);
 }
 
 // Puts the next n positions in the tables without searching.
@@ -612,7 +612,7 @@ fn lze_bt(w: XzWriter&, pos: i64, me: u32, cm0: u32, cyc: u32, limit: i64, best0
             return n;
         }
         depth--;
-        let c = pos - (delta as i64);
+        let c = pos - delta;
         let pair = (c % w.cyc) * 2;
         let ci = c - w.base;
         var len = if len0 < len1 { len0 } else { len1 };
@@ -669,7 +669,7 @@ fn lze_choose(w: XzWriter&) -> i64, i64 {
     var rep_len: i64 = 0;
     var rep_index: i64 = 0;
     for r in 4 {
-        let back = pos - (w.reps[r] as i64) - 1;
+        let back = pos - w.reps[r] - 1;
         if back < w.dstart { continue; }
         if lze_byte(w, back) != lze_byte(w, pos) || lze_byte(w, back + 1) != lze_byte(w, pos + 1) { continue; }
         let len = lze_matchlen(w, back, pos, 2, avail);
@@ -715,7 +715,7 @@ fn lze_choose(w: XzWriter&) -> i64, i64 {
     var limit = len_main - 1;
     if limit < 2 { limit = 2; }
     for r in 4 {
-        let back = pos + 1 - (w.reps[r] as i64) - 1;
+        let back = pos + 1 - w.reps[r] - 1;
         if back < w.dstart { continue; }
         if lze_matchlen(w, back, pos + 1, 0, limit) == limit { return -1, 1; }
     }
@@ -769,7 +769,7 @@ fn lze_normalize(w: XzWriter&) {
     }
     for k in w.head4.len { w.head4[k] = if w.head4[k] > sub { w.head4[k] - sub } else { 0 }; }
     for k in w.chain.len { w.chain[k] = if w.chain[k] > sub { w.chain[k] - sub } else { 0 }; }
-    w.off -= sub as u64;
+    w.off -= sub;
 }
 
 // --- LZMA2 framing --------------------------------------------------------------
@@ -914,7 +914,7 @@ fn xz_write_stream_header(w: XzWriter&, out: u8[>..]&) {
     out.append(XZ_MAGIC);
     let flags: u8[2] = [0, (w.check & 15) as! u8];
     out.append(flags);
-    put_le32(out, crc32(flags) as u64);
+    put_le32(out, crc32(flags));
     w.header_done = true;
 }
 
@@ -930,7 +930,7 @@ fn xz_start_block(w: XzWriter&, out: u8[>..]&) {
             h.push((w.filter.delta_dist - 1) as! u8);
         } else if w.filter_start != 0 {
             h.push(4);
-            put_le32(h, w.filter_start as u64);
+            put_le32(h, w.filter_start);
         } else {
             h.push(0);
         }
@@ -943,7 +943,7 @@ fn xz_start_block(w: XzWriter&, out: u8[>..]&) {
     h[0] = ((h.len + 4) / 4 - 1) as! u8;
     let c = crc32(h);
     out.append(h);
-    put_le32(out, c as u64);
+    put_le32(out, c);
     w.bh_len = h.len + 4;
     w.block_open = true;
     w.block_taken = 0;
@@ -966,7 +966,7 @@ fn xz_end_block(w: XzWriter&, out: u8[>..]&) {
     w.block_out++;
     var padn = 0;
     while (w.block_out + padn) % 4 != 0 { out.push(0); padn++; }
-    if w.check == XZ_CHECK_CRC32 { put_le32(out, w.crc32 as u64); }
+    if w.check == XZ_CHECK_CRC32 { put_le32(out, w.crc32); }
     else if w.check == XZ_CHECK_CRC64 { put_le64(out, w.crc64); }
     else if w.check == XZ_CHECK_SHA256 { let h = sha256_final(w.sha); out.append(h); }
     xz_index_vli(w, w.bh_len + w.block_out + XZ_CHECK_SIZES[w.check]);
@@ -1064,14 +1064,14 @@ fn xz_close(w: XzWriter&, out: u8[>..]&) -> i64 {
     xz_write_vli(ix, w.nrec);
     for b in w.index { ix.push(b); }
     while ix.len % 4 != 0 { ix.push(0); }
-    put_le32(ix, crc32(ix) as u64);
+    put_le32(ix, crc32(ix));
     out.append(ix);
     // The footer.
     var f: u8[>..] = [];
     put_le32(f, (ix.len / 4 - 1) as u64);
     f.push(0);
     f.push((w.check & 15) as! u8);
-    put_le32(out, crc32(f) as u64);
+    put_le32(out, crc32(f));
     out.append(f);
     out.push('Y');
     out.push('Z');
@@ -1141,7 +1141,7 @@ fn lze_tree_price(w: const XzWriter&, base: i64, bits: i64, v: u32) -> u32 {
     var k = bits - 1;
     while k >= 0 {
         let b = (v >> (k as! u32)) & 1;
-        price += lze_pb(w, base + (m as i64), b);
+        price += lze_pb(w, base + m, b);
         m = (m << 1) | b;
         k--;
     }
@@ -1155,7 +1155,7 @@ fn lze_tree_rev_price(w: const XzWriter&, base: i64, bits: i64, v0: u32) -> u32 
     for k in bits {
         let b = v & 1;
         v >>= 1;
-        price += lze_pb(w, base + (m as i64), b);
+        price += lze_pb(w, base + m, b);
         m = (m << 1) | b;
     }
     return price;
@@ -1164,7 +1164,7 @@ fn lze_tree_rev_price(w: const XzWriter&, base: i64, bits: i64, v0: u32) -> u32 
 fn lze_lit_base(w: const XzWriter&, pos: i64) -> i64 {
     let rel = pos - w.dstart;
     let prev: u32 = if rel > 0 { lze_byte(w, pos - 1) } else { 0 };
-    let ls = ((rel & ((1 << (w.lp as! u64)) - 1)) << (w.lc as! u64)) + ((prev >> ((8 - w.lc) as! u32)) as i64);
+    let ls = ((rel & ((1 << (w.lp as! u64)) - 1)) << (w.lc as! u64)) + (prev >> ((8 - w.lc) as! u32));
     return LZ_LITERAL + 0x300 * ls;
 }
 
@@ -1174,7 +1174,7 @@ fn lze_lit_price(w: const XzWriter&, pos: i64, matched: bool, mbyte: u8) -> u32 
     var price: u32 = 0;
     if !matched {
         while sym < 0x10000 {
-            price += lze_pb(w, base + ((sym >> 8) as i64), (sym >> 7) & 1);
+            price += lze_pb(w, base + (sym >> 8), (sym >> 7) & 1);
             sym <<= 1;
         }
     } else {
@@ -1182,7 +1182,7 @@ fn lze_lit_price(w: const XzWriter&, pos: i64, matched: bool, mbyte: u8) -> u32 
         var offs: u32 = 0x100;
         while sym < 0x10000 {
             mb <<= 1;
-            price += lze_pb(w, base + ((offs + (mb & offs) + (sym >> 8)) as i64), (sym >> 7) & 1);
+            price += lze_pb(w, base + (offs + (mb & offs) + (sym >> 8)), (sym >> 7) & 1);
             sym <<= 1;
             offs &= ~(mb ^ sym);
         }
@@ -1229,8 +1229,8 @@ fn lze_fill_dist_prices(w: XzWriter&) {
                 let slot = lze_dist_slot(d as! u32);
                 let footer = (slot >> 1) - 1;
                 let base = (2 | (slot & 1)) << footer;
-                price = w.slot_prices[ls * 64 + (slot as i64)]
-                      + lze_tree_rev_price(w, LZ_DIST_SPECIAL + (base as i64) - (slot as i64) - 1, footer as i64, (d as! u32) - base);
+                price = w.slot_prices[ls * 64 + slot]
+                      + lze_tree_rev_price(w, LZ_DIST_SPECIAL + base - slot - 1, footer, (d as! u32) - base);
             }
             w.dist_prices[ls * 128 + d] = price;
         }
@@ -1240,8 +1240,8 @@ fn lze_fill_dist_prices(w: XzWriter&) {
 
 fn lze_match_price(w: const XzWriter&, dist: u32, len: i64) -> u32 {
     let ls = if len - 2 < 3 { len - 2 } else { 3 };
-    if dist < 128 { return w.dist_prices[ls * 128 + (dist as i64)]; }
-    return w.slot_prices[ls * 64 + (lze_dist_slot(dist) as i64)] + w.align_prices[dist & 15];
+    if dist < 128 { return w.dist_prices[ls * 128 + dist]; }
+    return w.slot_prices[ls * 64 + lze_dist_slot(dist)] + w.align_prices[dist & 15];
 }
 
 fn lze_rep1_price(w: const XzWriter&, st: i64, ps: i64) -> u32 {
@@ -1333,7 +1333,7 @@ fn lze_optimum(w: XzWriter&) -> i64, i64 {
     var rep_lens: i64[4] = [0; 4];
     var rep_max = 0;
     for r in 4 {
-        let back = start - (reps[r] as i64) - 1;
+        let back = start - reps[r] - 1;
         if back < w.dstart || !lze_bytes_eq(w, back, start) || !lze_bytes_eq(w, back + 1, start + 1) { continue; }
         rep_lens[r] = lze_matchlen(w, back, start, 2, avail);
         if rep_lens[r] > rep_lens[rep_max] { rep_max = r; }
@@ -1347,7 +1347,7 @@ fn lze_optimum(w: XzWriter&) -> i64, i64 {
         return 4 + (w.matches[npairs - 1].dist as i64), main_len;
     }
     let cur_byte = lze_byte(w, start);
-    let mb_at = start - (reps[0] as i64) - 1;
+    let mb_at = start - reps[0] - 1;
     let match_byte: u8 = if mb_at >= w.dstart { lze_byte(w, mb_at) } else { 0 };
     if main_len < 2 && cur_byte != match_byte && rep_lens[rep_max] < 2 { return -1, 1; }
     let st0 = w.state;
@@ -1461,7 +1461,7 @@ fn lze_optimum(w: XzWriter&) -> i64, i64 {
         let cur_price = w.opts[cur].price;
         var next_is_lit = false;
         let cb = lze_byte(w, position);
-        let mpos = position - (reps[0] as i64) - 1;
+        let mpos = position - reps[0] - 1;
         let mbyte: u8 = if mpos >= w.dstart { lze_byte(w, mpos) } else { 0 };
         let ps = lze_ps(w, position);
         let cur_and1 = cur_price + lze_p0(w, LZ_IS_MATCH + (state << 4) + ps) + lze_lit_price(w, position, state >= 7, mbyte);
@@ -1512,7 +1512,7 @@ fn lze_optimum(w: XzWriter&) -> i64, i64 {
         }
         var start_len: i64 = 2;
         for ri in 4 {
-            let d2 = position - (reps[ri] as i64) - 1;
+            let d2 = position - reps[ri] - 1;
             if d2 < w.dstart { continue; }
             if !lze_bytes_eq(w, position, d2) || !lze_bytes_eq(w, position + 1, d2 + 1) { continue; }
             var lt = 2;
@@ -1584,7 +1584,7 @@ fn lze_optimum(w: XzWriter&) -> i64, i64 {
                 }
                 if lt == w.matches[offs].len {
                     // A match, a literal, rep0.
-                    let d2 = position - (cur_back as i64) - 1;
+                    let d2 = position - cur_back - 1;
                     var lt2 = lt + 1;
                     var lim = lt2 + nice;
                     if lim > avail_full { lim = avail_full; }

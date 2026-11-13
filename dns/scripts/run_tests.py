@@ -3,7 +3,9 @@
 
 Every test/*.goose runs under the in-process JIT at -O0 and -O2 and with
 --debug (overflow, range and bounds checks); a test passes when it exits 0.
---native also builds and runs the tests with the C compiler.
+--native also builds and runs the tests with the C compiler. Each of gslib's
+examples/dns runs once; those that need a live server (EXAMPLE_ARGS None)
+are only type-checked.
 
 A test whose first line is "// needs: dnsd" gets a server: goose-dnsd
 (tools/dnsd.goose, built once, natively) on a free port of 127.0.0.1,
@@ -25,6 +27,8 @@ import tempfile
 import time
 
 ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+# None: the example needs a live server, so it is only type-checked.
+EXAMPLE_ARGS = {"query": None, "serve": None}
 SECRET = "c2VjcmV0IGtleSBmb3IgdGVzdGluZyBUU0lHIDEyMzQ1Ng=="
 
 
@@ -76,6 +80,11 @@ def main():
                    if f.endswith(".goose") and "fn main()" in open(os.path.join(test_dir, f)).read())
     if args.k:
         tests = [t for t in tests if args.k in t]
+    # The examples are gslib's examples/dns.
+    ex_dir = os.path.join(ROOT, "..", "examples", "dns")
+    examples = sorted(f for f in os.listdir(ex_dir) if f.endswith(".goose")) if os.path.isdir(ex_dir) else []
+    if args.k:
+        examples = [e for e in examples if args.k in e]
     needs = {t for t in tests if open(os.path.join(test_dir, t)).readline().startswith("// needs: dnsd")}
     failed = []
     passed = 0
@@ -114,6 +123,11 @@ def main():
                         server.kill()
                         server.wait()
                 check(f"{t} {' '.join(flags)}", p)
+
+    for e in examples:
+        ex_args = EXAMPLE_ARGS.get(e[:-6], [])
+        cmd = [goose, "check", e] if ex_args is None else [goose, e, "--", *ex_args]
+        check(f"examples/dns/{e}", subprocess.run(cmd, cwd=ex_dir, capture_output=True, text=True))
 
     print(f"\n{passed} passed, {len(failed)} failed")
     sys.exit(1 if failed else 0)

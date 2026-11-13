@@ -349,6 +349,21 @@ post-handshake client authentication, GREASE (RFC 8701), encrypt-then-MAC
 8879), record size limit (RFC 8449), OCSP stapling and SCTs, TLS 1.1 and
 older, and renegotiation.
 
+## Examples
+
+In gslib's `examples/tls/`, run from gslib's top as `goose examples/tls/<name>.goose`
+(or from that folder); each checks its own results.
+
+- `handshake.goose`: a TLS 1.3 client and server in one process, with certificates made by x509: data, a key update, close_notify.
+- `tls12.goose`: version negotiation: TLS 1.3 by default, TLS 1.2 when either side stops there, and its suites.
+- `client_cert.goose`: mutual TLS: the server requires and checks a client certificate.
+- `resumption.goose`: session tickets: a session saved as bytes and resumed on a second connection.
+- `alpn_sni.goose`: ALPN and the server name, and what is refused when they do not match.
+- `post_quantum.goose`: X25519MLKEM768, MLKEM1024 and a HelloRetryRequest, with ML-DSA certificates.
+- `ech.goose`: Encrypted Client Hello, and retry configs after a stale one.
+- `records.goose`: the key schedule and the record layer on their own.
+- `https_get.goose`: a TLS client over a socket, checked against the system's roots: `HOST [PORT [PATH]]`. Needs a live server; `run_tests.py` only type-checks it.
+
 ## Tests
 
 ```bash

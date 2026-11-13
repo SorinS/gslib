@@ -2,15 +2,15 @@
 """Run pkcs11's tests against SoftHSM2.
 
 Every test/*.goose runs under the JIT at -O0, -O2 and with --debug (and
-natively with --native), each run with a token of its own: a fresh SoftHSM
-token directory, one token initialized by softhsm2-util, labelled "gslib",
-with the SO PIN 12345678 and the user PIN 1234. The tests find it through
+natively with --native), and each of gslib's examples/pkcs11 once, each
+run with a token of its own: a fresh SoftHSM token directory, one token
+initialized by softhsm2-util, labelled "gslib", with the SO PIN 12345678 and the user PIN 1234. The tests find it through
 
     P11_MODULE, SOFTHSM2_CONF, P11_LABEL, P11_PIN, P11_SO_PIN
 
 The module is $P11_MODULE, else the first SoftHSM2 found in the usual
 places (Homebrew, Debian, Fedora). Without SoftHSM2 the tests are skipped,
-not failed.
+not failed, and the examples only type-checked.
 
     python3 scripts/run_tests.py [--goose PATH] [--native] [-k NAME]
 """
@@ -68,6 +68,19 @@ def strip_notes(text):
                    if not l.startswith(("parsed ok", "typechecked ok", "bce:")))
 
 
+def report(label, p, failed):
+    """Prints the result; True if it passed."""
+    if p.returncode == 0:
+        print("ok    " + label)
+        return True
+    failed.append(label)
+    print("FAIL  " + label)
+    out = strip_notes(p.stdout) + "\n".join(l for l in p.stderr.splitlines()
+                                            if "warning" not in l and not l.strip().startswith("^"))
+    print("      " + out.strip()[-3000:].replace("\n", "\n      "))
+    return False
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--goose")
@@ -76,17 +89,25 @@ def main():
     args = ap.parse_args()
     goose = find_goose(args.goose)
     module, util = find_module(), softhsm_util()
+    # The examples are gslib's examples/pkcs11.
+    ex_dir = os.path.join(ROOT, "..", "examples", "pkcs11")
+    examples = sorted(f for f in os.listdir(ex_dir) if f.endswith(".goose")) if os.path.isdir(ex_dir) else []
+    if args.k:
+        examples = [e for e in examples if args.k in e]
+    failed, passed = [], 0
     if not module or not util:
         print("SoftHSM2 not found (set P11_MODULE, install softhsm2): pkcs11's tests skipped")
-        print("\n0 passed, 0 failed")
-        return
+        for e in examples:
+            p = subprocess.run([goose, "check", e], cwd=ex_dir, capture_output=True, text=True)
+            passed += report(f"examples/pkcs11/{e} check", p, failed)
+        print(f"\n{passed} passed, {len(failed)} failed")
+        sys.exit(1 if failed else 0)
 
     test_dir = os.path.join(ROOT, "test")
     tests = sorted(f for f in os.listdir(test_dir)
                    if f.endswith(".goose") and "fn main()" in open(os.path.join(test_dir, f)).read())
     if args.k:
         tests = [t for t in tests if args.k in t]
-    failed, passed = [], 0
     runs = [["-O0"], ["-O2"], ["--debug"]] + ([["native"]] if args.native else [])
     for t in tests:
         for flags in runs:
@@ -100,16 +121,12 @@ def main():
                         p = subprocess.run([exe], cwd=test_dir, env=env, capture_output=True, text=True)
                 else:
                     p = subprocess.run([goose, *flags, t], cwd=test_dir, env=env, capture_output=True, text=True)
-            label = f"{t} {' '.join(flags)}"
-            if p.returncode == 0:
-                passed += 1
-                print("ok    " + label)
-            else:
-                failed.append(label)
-                print("FAIL  " + label)
-                out = strip_notes(p.stdout) + "\n".join(l for l in p.stderr.splitlines()
-                                                        if "warning" not in l and not l.strip().startswith("^"))
-                print("      " + out.strip()[-3000:].replace("\n", "\n      "))
+            passed += report(f"{t} {' '.join(flags)}", p, failed)
+    for e in examples:
+        with tempfile.TemporaryDirectory() as tmp:
+            env = token_env(tmp, module, util)
+            p = subprocess.run([goose, e], cwd=ex_dir, env=env, capture_output=True, text=True)
+        passed += report(f"examples/pkcs11/{e}", p, failed)
     print(f"\n{passed} passed, {len(failed)} failed")
     sys.exit(1 if failed else 0)
 

@@ -5,7 +5,7 @@
 // (publicsuffix.org's format), and the cookie files of curl and Netscape.
 //
 //   var jar = http::new_jar();
-//   http::jar_set_cookies(jar, psl, u, "id=7; Path=/; Max-Age=3600", now_ms);
+//   http::jar_set_cookie(jar, psl, u, "id=7; Path=/; Max-Age=3600", now_ms);
 //   var line: u8[>..] = [];
 //   http::jar_cookie_header(jar, psl, u, now_ms, line);   // "id=7"
 //
@@ -302,7 +302,7 @@ fn psl_hash(rule: const u8[:]) -> u64 {
 
 fn psl_slot(p: const Psl&, k: i64) -> i64 {
     let at = p.text_len + k * 4;
-    return (p.rules[at] as i64) | ((p.rules[at + 1] as i64) << 8) | ((p.rules[at + 2] as i64) << 16) | ((p.rules[at + 3] as i64) << 24);
+    return p.rules[at] | ((p.rules[at + 1] as i64) << 8) | ((p.rules[at + 2] as i64) << 16) | ((p.rules[at + 3] as i64) << 24);
 }
 
 // The table for the text: at least twice as many slots as rules.

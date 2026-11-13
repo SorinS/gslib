@@ -432,6 +432,20 @@ round-trip extractions, 0 failures. Reading a 200 MB archive natively, CRC
 included, takes 0.13 s.
 
 
+## Examples
+
+In gslib's `examples/compress/`, run from gslib's top as `goose examples/compress/<name>.goose`
+(or from that folder); each checks its own results.
+
+- `deflate_zlib_gzip.goose`: one-shot DEFLATE, zlib and gzip, a preset dictionary, and an output limit against bombs.
+- `gzstream.goose`: gzip written and read as streams over small buffers: `FILE [LEVEL]`.
+- `checksums.goose`: CRC-32, Adler-32 and CRC-64, whole and in pieces.
+- `bzip2_roundtrip.goose`: bzip2 in one call and as a stream.
+- `xz_lzma.goose`: .xz and .lzma in one call, and an .xz stream with a SHA-256 check and a Delta filter.
+- `lzw_gif_tiff.goose`: LZW in GIF order and in TIFF/PDF order.
+- `zip_archive.goose`: a zip built, listed, and one file extracted; an optional OUT.zip.
+- `tar_archive.goose`: a .tar.gz built, listed, and one file extracted; an optional OUT.tar.gz.
+
 ## Tests
 
     python3 scripts/run_tests.py             # every test/*.goose at -O0, -O2 and --debug

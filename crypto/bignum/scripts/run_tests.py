@@ -54,7 +54,9 @@ def main():
 
     test_dir = os.path.join(ROOT, "test")
     tests = sorted(f for f in os.listdir(test_dir) if f.endswith(".goose"))
-    examples = sorted(f for f in os.listdir(os.path.join(ROOT, "examples")) if f.endswith(".goose"))
+    # The examples are gslib's examples/bignum.
+    ex_dir = os.path.join(ROOT, "..", "..", "examples", "bignum")
+    examples = sorted(f for f in os.listdir(ex_dir) if f.endswith(".goose")) if os.path.isdir(ex_dir) else []
     if args.k:
         tests = [t for t in tests if args.k in t]
         examples = [e for e in examples if args.k in e]
@@ -94,8 +96,11 @@ def main():
                 check(f"{t} native", rc, out, err, expected)
 
     for e in examples:
-        rc, out, err = run([goose, e, "--", *EXAMPLE_ARGS.get(e[:-6], [])], os.path.join(ROOT, "examples"))
-        check(f"examples/{e}", rc, out, err, None)
+        # None: the example needs a live peer, so it is only type-checked.
+        ex_args = EXAMPLE_ARGS.get(e[:-6], [])
+        cmd = [goose, "check", e] if ex_args is None else [goose, e, "--", *ex_args]
+        rc, out, err = run(cmd, ex_dir)
+        check(f"examples/bignum/{e}", rc, out, err, None)
 
     rc, out, err = run([sys.executable, os.path.join(ROOT, "scripts", "ct_audit.py")], ROOT)
     check("scripts/ct_audit.py", rc, out, err, None)

@@ -11,7 +11,6 @@ import gslib.krb5.crypto;
 import gslib.krb5.config;
 import tv;
 
-
 fn parse() {
     var text: u8[>..] = [];
     tv::check("read krb5.conf", read_file("vectors/krb5.conf", text));
@@ -160,6 +159,23 @@ fn includes() {
     delete_file("/tmp/krb5_config_test.conf");
 }
 
+// A path that cannot be read is ERR_FILE, alone or with every other
+// file of the list; with one file that can, the others are skipped.
+fn missing() {
+    let c1, e1 = krb5::config_load("/tmp/nonexistent_krb5.conf");
+    tv::check_int("missing file", e1, krb5::ERR_FILE);
+    let c2, e2 = krb5::config_load("/tmp/nonexistent_krb5.conf:/tmp/nonexistent_krb5_2.conf");
+    tv::check_int("missing list", e2, krb5::ERR_FILE);
+    let c3, e3 = krb5::config_load("");
+    tv::check_int("empty list", e3, krb5::ERR_FILE);
+    write_file("/tmp/krb5_config_missing.conf", "[libdefaults]\n default_realm = ONE.REALM\n");
+    let c4, e4 = krb5::config_load("/tmp/nonexistent_krb5.conf:/tmp/krb5_config_missing.conf");
+    tv::check_int("missing then present", e4, krb5::OK);
+    let r, ok = krb5::default_realm(c4);
+    tv::check("realm of the present file", ok && r == "ONE.REALM");
+    delete_file("/tmp/krb5_config_missing.conf");
+}
+
 fn main() {
     parse();
     bad();
@@ -167,5 +183,6 @@ fn main() {
     etypes();
     paths();
     includes();
+    missing();
     tv::done("config");
 }

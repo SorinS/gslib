@@ -20,7 +20,7 @@
 //   krb5.spake      SPAKE pre-authentication
 //   krb5.pkinit     PKINIT: certificates and anonymous (RFC 4556, 8062, 8636)
 //   krb5.ldap       SASL GSSAPI binds (RFC 4752) and SID lookups in AD
-//   krb5.sys        the C it calls (src/krb5sys.c, http's TCP sockets)
+//   krb5.sys        the C it calls (src/krb5sys.c; TCP is net's, net.goose)
 //
 // Nothing here does I/O but krb5.net, the file functions (keytabs,
 // caches, krb5.conf) and the tools; krb5.ldap writes and reads bytes for

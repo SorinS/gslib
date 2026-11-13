@@ -149,6 +149,17 @@ Parsing a 6 MB document of 840000 nodes takes 187 ms here (built
 natively, on an arm64 Mac) and 323 ms in yaml.v3; writing it back, 76 ms
 and 490 ms.
 
+## Examples
+
+In gslib's `examples/yaml/`, run from gslib's top as `goose examples/yaml/<name>.goose`
+(or from that folder); each checks its own results.
+
+- `read_config.goose`: a service's configuration through the tree accessors, with a `<<` merge key; a file of your own as its argument.
+- `decode_struct.goose`: YAML into the program's own structs with a Reader, and yaml.v3's "unmarshal errors" report.
+- `write_yaml.goose`: a tree built and written as yaml.Marshal does, read back, changed and written again; a two-document stream.
+- `validate.goose`: syntax errors with their line and column, and what `check` refuses: repeated keys, bad tags and merges, an alias bomb.
+- `core_schema.goose`: what a scalar means: `resolve`, `resolve_tag`, timestamps and `!!binary`.
+
 ## Tests
 
 ```bash

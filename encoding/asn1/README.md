@@ -78,6 +78,15 @@ label, der)` writes a block. `dump(der)` prints one line per element, as
 `openssl asn1parse -i` does: offset, depth, header length, content length,
 `cons` or `prim`, and class:number.
 
+## Examples
+
+In gslib's `examples/asn1/`, run from gslib's top as `goose examples/asn1/<name>.goose`
+(or from that folder); each checks its own results.
+
+- `der_record.goose`: a record written in DER and read back with the typed readers, its `dump`, and what strict DER refuses.
+- `pem_keys.goose`: an X25519 key pair as PKCS #8 and SubjectPublicKeyInfo in one PEM text, read back by label.
+- `ldap_ber.goose`: an LDAP bind: the request in DER, and a response with Active Directory's long-form lengths read as BER.
+
 ## Tests
 
 ```bash

@@ -45,7 +45,7 @@ fn rc2_init(key: const u8[:], t1: i64) -> Rc2 {
         i--;
     }
     var c = Rc2 { k: [0; 64] };
-    for j in 64 { c.k[j] = (l[2 * j] as u16) | (l[2 * j + 1] as u16) << 8; }
+    for j in 64 { c.k[j] = l[2 * j] | (l[2 * j + 1] as u16) << 8; }
     return c;
 }
 
@@ -55,7 +55,7 @@ let RC2_SHIFTS: u16[4] = [1, 2, 3, 5];
 
 fn rc2_load(b: const u8[:]) -> u16[4] {
     var r: u16[4] = [0; 4];
-    for i in 4 { r[i] = (b[2 * i] as u16) | (b[2 * i + 1] as u16) << 8; }
+    for i in 4 { r[i] = b[2 * i] | (b[2 * i + 1] as u16) << 8; }
     return r;
 }
 

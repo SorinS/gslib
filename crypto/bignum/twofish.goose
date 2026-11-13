@@ -55,7 +55,7 @@ let TWOFISH_CHAIN: u8[20] = [1, 1, 0, 0, 1,   0, 1, 1, 0, 0,   0, 0, 0, 1, 1,   
 
 struct Twofish { k: u32[40], s: u32[1024] }
 
-fn tf_q(which: i64, x: u8) -> u8 { TWOFISH_Q[256 * which + x as i64] }
+fn tf_q(which: i64, x: u8) -> u8 { TWOFISH_Q[256 * which + x] }
 
 // a * b in GF(2^8) modulo the polynomial p.
 fn tf_gf_mult(a0: u8, b: u8, p: u32) -> u8 {
@@ -131,8 +131,8 @@ fn twofish_init(key: const u8[:]) -> Twofish {
         let chain = TWOFISH_CHAIN[5 * col + 4 - k..5 * col + 5];
         for i in 256 {
             var y = i as! u8;
-            for j in k { y = tf_q(chain[j] as i64, y) ^ s[col + 4 * j]; }
-            c.s[256 * col + i] = tf_mds_column(tf_q(chain[k] as i64, y), col);
+            for j in k { y = tf_q(chain[j], y) ^ s[col + 4 * j]; }
+            c.s[256 * col + i] = tf_mds_column(tf_q(chain[k], y), col);
         }
     }
     return c;

@@ -30,25 +30,27 @@ import dns.msg;
 import dns.edns;
 import dns.tsig;
 import dns.client;
+import net;
 
 extern fn dnsnet_listen(addr: const u8[:], port: i32, tcp: i32) -> i64;
 extern fn dnsnet_local_port(fd: i64) -> i32;
 extern fn dnsnet_recvfrom(fd: i64, buf: u8[:], from: u8[:], from_len: u8[:]) -> i64;
+extern fn dnsnet_peername(fd: i64, from: u8[:], from_len: u8[:]) -> i64;
 extern fn dnsnet_sendto(fd: i64, data: const u8[:], to: const u8[:]) -> i64;
 extern fn dnsnet_addr_text(sa: const u8[:], out: u8[:]) -> i64;
 extern fn dnsnet_accept(fd: i64, timeout_ms: i32) -> i64;
 extern fn dnsnet_wait2(a: i64, b: i64, timeout_ms: i32) -> i32;
 
 struct ServerConfig {
-    addr: u8[..64] = "",            // "" for every address
-    port: i32 = 53,                 // 0 for one the OS picks (server_open says which)
-    udp: bool = true,
-    tcp: bool = true,
-    tsig_name: u8[..255] = "",      // a TSIG key: name (text), secret (base64)
-    tsig_secret: u8[..128] = "",
-    tsig_fudge: u16 = 300,
-    max_requests: i64 = 0,
-    idle_ms: i32 = 8000,            // how long a TCP connection may wait for its next query
+    addr:         u8[..64]  = "",   // "" for every address
+    port:         i32       = 53,   // 0 for one the OS picks (server_open says which)
+    udp:          bool      = true,
+    tcp:          bool      = true,
+    tsig_name:    u8[..255] = "",   // a TSIG key: name (text), secret (base64)
+    tsig_secret:  u8[..128] = "",
+    tsig_fudge:   u16       = 300,
+    max_requests: i64       = 0,
+    idle_ms:      i32       = 8000, // how long a TCP connection may wait for its next query
 }
 
 struct Server { udp: i64, tcp: i64, port: i32, err: i64 }
@@ -58,18 +60,28 @@ struct Server { udp: i64, tcp: i64, port: i32, err: i64 }
 // which the handler sets to send no reply at all.
 struct Peer { tcp: bool, addr: u8[..64], tsig: i64, drop: bool }
 
-// Opens the sockets the config asks for.
+// Opens the sockets the config asks for. Port 0 takes the port the system
+// gives UDP for TCP too; when TCP's is taken, it tries again with another.
 fn server_open(cfg: const ServerConfig&) -> Server {
     var s = Server { -1, -1, cfg.port, OK };
-    if cfg.udp {
-        s.udp = dnsnet_listen(cfg.addr, cfg.port, 0);
-        if s.udp < 0 { s.err = ERR_IO; return s; }
-        s.port = dnsnet_local_port(s.udp);
-    }
-    if cfg.tcp {
-        s.tcp = dnsnet_listen(cfg.addr, s.port, 1);
-        if s.tcp < 0 { s.err = ERR_IO; if s.udp >= 0 { dnsnet_close(s.udp); s.udp = -1; } return s; }
-        s.port = dnsnet_local_port(s.tcp);
+    let tries = if cfg.port == 0 && cfg.udp && cfg.tcp { 20 } else { 1 };
+    for t in tries {
+        s = Server { -1, -1, cfg.port, OK };
+        if cfg.udp {
+            s.udp = dnsnet_listen(cfg.addr, cfg.port, 0);
+            if s.udp < 0 { s.err = ERR_IO; return s; }
+            s.port = dnsnet_local_port(s.udp);
+        }
+        if cfg.tcp {
+            s.tcp = dnsnet_listen(cfg.addr, s.port, 1);
+            if s.tcp < 0 {
+                s.err = ERR_IO;
+                if s.udp >= 0 { dnsnet_close(s.udp); s.udp = -1; }
+                continue;
+            }
+            s.port = dnsnet_local_port(s.tcp);
+        }
+        return s;
     }
     return s;
 }
@@ -116,7 +128,7 @@ fn handle<H, S>(cfg: const ServerConfig&, w: const u8[:], peer: Peer&) {
     if ue != OK { error_reply(w, RCODE_FORMAT_ERROR, out); S(out); return; }
     // TSIG first: a request that fails it is answered here.
     var request_mac: u8[>..] = [];
-    var secret: u8[>..] = [];
+    var secret:      u8[>..] = [];
     peer.tsig = ERR_NO_SIG;
     let toff, trd, te = find_tsig(w);
     if te == OK {
@@ -241,6 +253,10 @@ fn serve<F>(srv: Server&, cfg: const ServerConfig&) {
             if c >= 0 {
                 peer.tcp = true;
                 peer.addr.clear();
+                if dnsnet_peername(c, from, flen) >= 0 {
+                    let tl = dnsnet_addr_text(from[..flen[0]], text);
+                    if tl > 0 { peer.addr.append(text[..tl]); }
+                }
                 // Queries on the connection until it closes or idles.
                 var req: u8[>..] = [];
                 while cfg.max_requests == 0 || handled < cfg.max_requests {
@@ -250,7 +266,7 @@ fn serve<F>(srv: Server&, cfg: const ServerConfig&) {
                     handle(cfg, req, peer, F) { out => write_tcp_msg(c, out, cfg.idle_ms); };
                     handled++;
                 }
-                httpnet_close(c);
+                net::close(c);
             }
         }
     }

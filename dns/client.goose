@@ -24,11 +24,7 @@ import dns.rdata;
 import dns.msg;
 import dns.edns;
 import dns.tsig;
-
-extern fn httpnet_connect(host: const u8[:], port: i32, timeout_ms: i32) -> i64;
-extern fn httpnet_read(fd: i64, buf: u8[:], timeout_ms: i32) -> i64;
-extern fn httpnet_write(fd: i64, data: const u8[:], timeout_ms: i32) -> i64;
-extern fn httpnet_close(fd: i64);
+import net;
 
 extern fn dnsnet_udp_open(host: const u8[:], port: i32) -> i64;
 extern fn dnsnet_send(fd: i64, data: const u8[:]) -> i64;
@@ -137,7 +133,7 @@ fn read_full(fd: i64, n: i64, out: u8[>..]&, timeout_ms: i32) -> i64 {
     out.resize(start + n, 0);
     var got = 0;
     while got < n {
-        let r = httpnet_read(fd, out[start + got .. start + n], timeout_ms);
+        let r = net::read(fd, out[start + got .. start + n], timeout_ms);
         if r <= 0 { out.resize(start); return if r == 0 { ERR_IO } else { net_error(r) }; }
         got += r;
     }
@@ -157,13 +153,13 @@ fn write_tcp_msg(fd: i64, w: const u8[:], timeout_ms: i32) -> i64 {
     var framed: u8[>..] = [];
     put16(framed, w.len as! u16);
     framed.append(w);
-    return if httpnet_write(fd, framed, timeout_ms) == framed.len { OK } else { ERR_IO };
+    return if net::write(fd, framed, timeout_ms) == framed.len { OK } else { ERR_IO };
 }
 
 fn exchange_tcp(c: const Client&, query: const u8[:], host: const u8[:], port: i32, out: u8[>..]&) -> i64 {
-    let fd = httpnet_connect(host, port, c.timeout_ms);
+    let fd = net::dial(host, port, c.timeout_ms);
     if fd < 0 { return net_error(fd); }
-    defer httpnet_close(fd);
+    defer net::close(fd);
     let we = write_tcp_msg(fd, query, c.timeout_ms);
     if we != OK { return we; }
     while true {
@@ -248,9 +244,9 @@ fn transfer_in<F>(c: const Client&, m: Msg&, server: const u8[:]) -> i64 {
     if pe != OK { return pe; }
     var ixfr = false;
     each_question(m.question) { q => ixfr = q.qtype == TYPE_IXFR; };
-    let fd = httpnet_connect(host, port, c.timeout_ms);
+    let fd = net::dial(host, port, c.timeout_ms);
     if fd < 0 { return net_error(fd); }
-    defer httpnet_close(fd);
+    defer net::close(fd);
     let we = write_tcp_msg(fd, w, c.timeout_ms);
     if we != OK { return we; }
     var first = true;

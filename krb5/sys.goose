@@ -1,13 +1,8 @@
-// krb5.sys: the C that krb5 calls (krb5/src/krb5sys.c, and http's TCP
-// sockets in net/http/src/httpnet.c). Results >= 0 are successes; the
+// krb5.sys: the C that krb5 calls (krb5/src/krb5sys.c; its TCP is net's,
+// net::dial and the rest, in krb5.net). Results >= 0 are successes; the
 // negative ones are SYS_E*.
 
 namespace krb5;
-
-extern fn httpnet_connect(host: const u8[:], port: i32, timeout_ms: i32) -> i64;
-extern fn httpnet_read(fd: i64, buf: u8[:], timeout_ms: i32) -> i64;
-extern fn httpnet_write(fd: i64, data: const u8[:], timeout_ms: i32) -> i64;
-extern fn httpnet_close(fd: i64);
 
 extern fn krb5sys_udp_exchange(host: const u8[:], port: i32, req: const u8[:], out: u8[:], timeout_ms: i32) -> i64;
 extern fn krb5sys_write_private(path: const u8[:], data: const u8[:]) -> i32;

@@ -154,7 +154,7 @@ fn decode_symbol(d: const Inflate&, b: Bits&, h: const Huffman&) -> i64 {
         code |= need(d, b, 1);
         if !b.ok { return -1; }
         let count = h.count[len] as i64;
-        if code - count < first { return h.symbol[index + (code - first)] as i64; }
+        if code - count < first { return h.symbol[index + (code - first)]; }
         index += count;
         first += count;
         first <<= 1;
@@ -168,15 +168,15 @@ fn decode_symbol(d: const Inflate&, b: Bits&, h: const Huffman&) -> i64 {
 fn construct(h: Huffman&, lengths: const i16[:]) -> i64 {
     for k in 16 { h.count[k] = 0; }
     for l in lengths { h.count[l]++; }
-    if h.count[0] as i64 == lengths.len { return 0; }
+    if h.count[0] == lengths.len { return 0; }
     var left: i64 = 1;
     for len in 1..MAXBITS + 1 {
         left <<= 1;
-        left -= h.count[len] as i64;
+        left -= h.count[len];
         if left < 0 { return left; }
     }
     var offs: i64[16] = [0; 16];
-    for len in 1..MAXBITS { offs[len + 1] = offs[len] + h.count[len] as i64; }
+    for len in 1..MAXBITS { offs[len + 1] = offs[len] + h.count[len]; }
     for sym in lengths.len {
         let l = lengths[sym];
         if l != 0 {
@@ -223,8 +223,8 @@ fn block_header(d: Inflate&) -> i64 {
         // Stored: to a byte boundary, then LEN and NLEN.
         if b.bit != 0 { b.bit = 0; b.pos++; }
         if b.pos + 4 > d.pending.len { return 0; }
-        let len = d.pending[b.pos] as i64 | (d.pending[b.pos + 1] as i64) << 8;
-        let nlen = d.pending[b.pos + 2] as i64 | (d.pending[b.pos + 3] as i64) << 8;
+        let len = d.pending[b.pos] | (d.pending[b.pos + 1] as i64) << 8;
+        let nlen = d.pending[b.pos + 2] | (d.pending[b.pos + 3] as i64) << 8;
         if len != (nlen ^ 0xffff) { return FLATE_ERR_DATA; }
         b.pos += 4;
         commit(d, b);
@@ -287,9 +287,9 @@ fn block_header(d: Inflate&) -> i64 {
         if lengths[256] == 0 { return FLATE_ERR_DATA; }      // no end-of-block code
         // An incomplete code is allowed only for a single length of one bit.
         let e1 = construct(d.lencode, lengths[..nlen]);
-        if e1 < 0 || (e1 > 0 && nlen - (d.lencode.count[0] as i64) != 1) { return FLATE_ERR_DATA; }
+        if e1 < 0 || (e1 > 0 && nlen - d.lencode.count[0] != 1) { return FLATE_ERR_DATA; }
         let e2 = construct(d.distcode, lengths[nlen..nlen + ndist]);
-        if e2 < 0 || (e2 > 0 && ndist - (d.distcode.count[0] as i64) != 1) { return FLATE_ERR_DATA; }
+        if e2 < 0 || (e2 > 0 && ndist - d.distcode.count[0] != 1) { return FLATE_ERR_DATA; }
         commit(d, b);
         d.state = FS_CODES;
         return 1;
@@ -316,11 +316,11 @@ fn codes(d: Inflate&, out: u8[>..]&) -> i64 {
         }
         let s = sym - 257;
         if s >= 29 { return FLATE_ERR_DATA; }
-        let len = LBASE[s] as i64 + need(d, b, LEXT[s] as i64);
+        let len = LBASE[s] + need(d, b, LEXT[s]);
         let ds = decode_symbol(d, b, d.distcode);
         if !b.ok { return 0; }
         if ds < 0 || ds >= 30 { return FLATE_ERR_DATA; }
-        let dist = DBASE[ds] as i64 + need(d, b, DEXT[ds] as i64);
+        let dist = DBASE[ds] + need(d, b, DEXT[ds]);
         if !b.ok { return 0; }
         let have = if d.wfull { 32768 } else { d.wpos };
         if dist > have { return FLATE_ERR_DATA; }
@@ -352,7 +352,7 @@ fn gzip_header(d: Inflate&) -> i64 {
         } else if d.gh == GH_XLEN {
             if (d.gh_flags & 4) == 0 { d.gh = GH_NAME; continue; }      // FEXTRA
             if m.len < 2 { return 0; }
-            d.gh_left = m[0] as i64 | (m[1] as i64) << 8;
+            d.gh_left = m[0] | (m[1] as i64) << 8;
             used = 2;
             d.gh = GH_EXTRA;
         } else if d.gh == GH_EXTRA {
@@ -378,7 +378,7 @@ fn gzip_header(d: Inflate&) -> i64 {
             if (d.gh_flags & 2) != 0 {                                      // FHCRC
                 if m.len < 2 { return 0; }
                 let c = (d.gh_crc ^ 0xffffffff) & 0xffff;
-                if c != (m[0] as u32 | (m[1] as u32) << 8) { return FLATE_ERR_CHECK; }
+                if c != (m[0] | (m[1] as u32) << 8) { return FLATE_ERR_CHECK; }
                 var b2 = Bits { pos: 2, bit: 0, ok: true };
                 commit(d, b2);
             }
@@ -415,7 +415,7 @@ fn zlib_header(d: Inflate&) -> i64 {
 }
 
 fn get_le32(m: const u8[:], p: i64) -> u32 {
-    return m[p] as u32 | (m[p + 1] as u32) << 8 | (m[p + 2] as u32) << 16 | (m[p + 3] as u32) << 24;
+    return m[p] | (m[p + 1] as u32) << 8 | (m[p + 2] as u32) << 16 | (m[p + 3] as u32) << 24;
 }
 
 // The trailer: gzip's CRC-32 and ISIZE, zlib's Adler-32, none for raw.
@@ -431,7 +431,7 @@ fn trailer(d: Inflate&) -> i64 {
         return 1;
     }
     if m.len < 4 { return 0; }
-    let want = (m[0] as u32) << 24 | (m[1] as u32) << 16 | (m[2] as u32) << 8 | m[3] as u32;
+    let want = (m[0] as u32) << 24 | (m[1] as u32) << 16 | (m[2] as u32) << 8 | m[3];
     if want != d.adler { return FLATE_ERR_CHECK; }
     var b = Bits { pos: 4, bit: 0, ok: true };
     commit(d, b);

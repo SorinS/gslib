@@ -167,7 +167,7 @@ Algorithm D.
   own input. Use `add_to(x, y)`, or `let t = add(x, y); x = copy(t);`.
 - A `BigInt` is resizable, so it cannot be an array element and `==` does
   not apply. Use `eq`, and keep collections as limb arrays (see
-  `examples/factorial.goose`).
+  gslib's `examples/bignum/factorial.goose`).
 
 ## Layer 2: constant time
 
@@ -378,7 +378,8 @@ crypto/mlkem) and the encapsulation key; k is 2, 3 or 4 for ML-KEM-512,
 -768 or -1024. `mlkem_encaps(k, ek) -> secret, ct, ok` refuses a malformed
 ek (wrong length, or a coefficient of q or more). `mlkem_decaps(k, seed,
 ct) -> secret, ok` and `mlkem_decaps_dk(k, dk, ct)` decapsulate, from the
-seed or from the expanded key that `mlkem_keys_from_seed` gives. A
+seed or from the expanded key, the second result of
+`mlkem_keys_from_seed(k, seed) -> ek, dk`. A
 ciphertext that does not re-encrypt to itself yields the implicit
 rejection key J(z ‖ c), selected with a mask. `mlkem_encaps_with` takes
 the message, for tests. Every reduction mod q, including Compress's
@@ -500,7 +501,7 @@ native build (clang -O2), openssl's from `openssl speed -evp` over 16 KiB
 buffers, PBKDF2 and scrypt through Python's hashlib (which calls OpenSSL),
 and Argon2id through `openssl kdf` less its start-up time. The last column
 is Goose / OpenSSL: above 1 is faster. `python3 scripts/speed_vs_openssl.py
-[prefix]` rebuilds `examples/speed.goose` and prints this table afresh.
+[prefix]` rebuilds `examples/bignum/speed.goose` and prints this table afresh.
 
 | Operation | Goose | OpenSSL 3.6.4 | Goose / OpenSSL |
 |---|---:|---:|---:|
@@ -589,7 +590,7 @@ generation takes about 0.27 s on average (ten runs, in constant time).
 ## Tests
 
 ```bash
-python3 scripts/run_tests.py            # every test at -O0, -O2 and --debug, plus the examples
+python3 scripts/run_tests.py            # every test at -O0, -O2 and --debug, plus gslib's examples/bignum
 python3 scripts/run_tests.py --native   # also built with the C compiler
 python3 scripts/ct_audit.py             # BigInt only on public values (run_tests.py runs it)
 python3 scripts/ct_timing.py [scale]    # timing tests of the constant-time code (about 10 s)
@@ -766,15 +767,36 @@ then `../goose.git/build/goose`.
 
 ## Examples
 
-- `examples/pi_digits.goose`: digits of π by Machin's formula.
-- `examples/factorial.goose`: n! two ways, direct and by prime powers with
+In gslib's `examples/bignum/`, run from gslib's top as `goose examples/bignum/<name>.goose`
+(or from that folder).
+
+- `pi_digits.goose`: digits of π by Machin's formula.
+- `factorial.goose`: n! two ways, direct and by prime powers with
   binary splitting.
-- `examples/x25519_demo.goose`: a key exchange.
-- `examples/rsa_demo.goose`: key generation, signatures and OAEP, timed.
-- `examples/aes_gcm_demo.goose`: sealing, opening and tamper detection, and throughput.
-- `examples/ecc_demo.goose`: ECDHE and ECDSA on P-256 and P-384, Ed25519,
+- `bigint_basics.goose`: BigInt parsing and bases, arithmetic, truncating and floor division,
+  gcd, modinv and modpow, bits and bytes.
+- `random_bytes.goose`: the OS's random bytes for keys and nonces, a token, a number below a bound.
+- `hashes.goose`: SHA-2, SHA-3, SHAKE and cSHAKE, BLAKE2, and the legacy hashes.
+- `mac.goose`: HMAC, CMAC and Poly1305, tags checked in constant time.
+- `derive_keys.goose`: HKDF, PBKDF2 and scrypt.
+- `password_hash.goose`: storing and checking passwords with Argon2id and bcrypt; bcrypt_pbkdf.
+- `aes_gcm_demo.goose`: sealing, opening and tamper detection, and throughput.
+- `chacha20_poly1305.goose`: ChaCha20-Poly1305 records, XChaCha20-Poly1305, bare ChaCha20.
+- `block_modes.goose`: CBC with padding, CTR, CFB, OFB and XTS.
+- `key_wrap.goose`: AES key wrap, plain and padded, and envelope encryption.
+- `legacy_ciphers.goose`: 3DES, DES, Blowfish, CAST5, Twofish, XTEA, RC2, RC4, Salsa20.
+- `x25519_demo.goose`: a key exchange.
+- `rsa_demo.goose`: key generation, signatures and OAEP, timed.
+- `ecc_demo.goose`: ECDHE and ECDSA on P-256 and P-384, Ed25519,
   and HKDF, timed.
-- `examples/speed.goose`: every primitive's throughput or rate, one line
+- `dsa_demo.goose`: DSA parameters, keys, random and RFC 6979 signatures.
+- `ffdh_demo.goose`: finite-field Diffie-Hellman over MODP group 14, bad peer values refused.
+- `mlkem_demo.goose`: ML-KEM-768 encapsulation and decapsulation.
+- `mldsa_demo.goose`: ML-DSA-65 signatures, with contexts and external mu.
+- `hpke_demo.goose`: HPKE base and auth modes, export, and X-Wing.
+- `nacl_demo.goose`: NaCl secretbox, box, sealed boxes, sign and auth.
+- `constant_time.goose`: the `ct` masks, select, swap and compare, Montgomery modexp and inverse.
+- `speed.goose`: every primitive's throughput or rate, one line
   each; `scripts/speed_vs_openssl.py` sets it against openssl.
-- `examples/bench.goose`: schoolbook vs Karatsuba by size, 10000!, 2048-bit
+- `bench.goose`: schoolbook vs Karatsuba by size, 10000!, 2048-bit
   modpow.

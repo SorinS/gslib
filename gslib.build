@@ -1,20 +1,22 @@
-// gslib's sidecar. Its C is http.client's sockets (net/http/src/httpnet.c),
-// mime's platform constant (mime/src/path.c), krb5's UDP, private files
+// gslib's sidecar. Its C is net's TCP sockets (net/src/net.c), which
+// http.client, dns and krb5 use, mime's platform constant
+// (mime/src/path.c), krb5's UDP, private files
 // and host names (krb5/src/krb5sys.c), pkcs11's module loading
 // (pkcs11/src/p11.c), and dns's UDP and listening sockets
 // (dns/src/dnsnet.c), built only into programs that call them.
 // crypto/bignum's entropy module opens libc through an extern "c" block;
 // on Linux libc.so is a linker script, so the library itself is named.
-c_sources = ["net/http/src/httpnet.c", "mime/src/path.c", "krb5/src/krb5sys.c", "pkcs11/src/p11.c", "dns/src/dnsnet.c"];
+c_sources = ["net/src/net.c", "mime/src/path.c", "krb5/src/krb5sys.c", "pkcs11/src/p11.c", "dns/src/dnsnet.c"];
 // pkcs11/src/p11.c loads PKCS#11 modules: dlopen, in libdl before glibc 2.34.
 c_libs_linux = ["dl"];
 c_libs_windows = ["ws2_32"];
 dylibs_linux = ["c=libc.so.6"];
 
-// Programs of each library (tests, tools, examples), not the package's own
+// The examples, and programs of each library (tests, tools), not the package's own
 // modules: the JIT's symbol table does not look for externs there.
 exclude = [
-    "crypto/bignum/examples", "crypto/bignum/test", "crypto/bignum/tools",
+    "examples",
+    "crypto/bignum/test", "crypto/bignum/tools",
     "encoding/asn1/test",
     "crypto/x509/test", "crypto/x509/tools",
     "crypto/tls/test", "crypto/tls/tools",
@@ -22,7 +24,7 @@ exclude = [
     "net/ldap/test", "net/ldap/tools",
     "encoding/yaml/test",
     "net/http/test", "net/http/tools",
-    "compress/test", "compress/tools", "compress/examples",
+    "compress/test", "compress/tools",
     "mime/test", "mime/tools",
     "krb5/test", "krb5/tools",
     "jwx/test", "jwx/tools",

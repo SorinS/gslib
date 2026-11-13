@@ -22,6 +22,7 @@ later.
 | `pkcs11` | PKCS#11 (Cryptoki), as Go's miekg/pkcs11: modules (HSMs, tokens, SoftHSM) loaded at run time, every C_* function, templates, mechanisms and their parameters, all the OASIS constants; and miekg's p11 layer (Module, Slot, Session, Object, keys) | [README](pkcs11/README.md) |
 | `dns` | The DNS, as Go's miekg/dns: messages and the 79 record types it implements, in wire form (with compression) and text, zone files (`$ORIGIN`, `$TTL`, `$INCLUDE`, `$GENERATE`), EDNS0, DNSSEC (signing, verifying, DS, NSEC3, keys), TSIG and SIG(0), dynamic updates, zone transfers, a client and a server; goose-dig and goose-dnsd | [README](dns/README.md) |
 | `net/http` | HTTP/1.1 and HTTP/2, server and client: a client with Go's policy (redirects, cookies, credentials, proxies, gzip, TLS session resumption, streaming uploads, several responses at once), URLs, cookies, HPACK; goose-http and goose-httpd | [README](net/http/README.md) |
+| `net` | TCP client sockets, as the client half of Go's net: `net::dial` with a deadline, `net::read` and `net::write` with timeouts, `net::readable`, `net::close`; what http, dns, krb5 and the examples connect with (POSIX and Winsock) | [net.goose](net.goose) |
 
 ## dns, pkcs11 and jwx
 
@@ -196,7 +197,8 @@ modules a program imports are compiled. The libraries need one another (http nee
 tls, x509, asn1 and bignum), and since they are one package, a program
 declares only gslib.
 
-The C is http's sockets (`net/http/src/httpnet.c`), mime's platform
+The C is net's TCP sockets (`net/src/net.c`, behind `net.goose`:
+`import gslib.net;`, then `net::dial`), mime's platform
 constant (`mime/src/path.c`), krb5's UDP, owner-only files and host
 names (`krb5/src/krb5sys.c`), pkcs11's module loading
 (`pkcs11/src/p11.c`) and dns's UDP and listening sockets
@@ -210,11 +212,13 @@ libc, by an `extern "c"` block; mime's multipart takes them from there.
 gslib.goose, gslib.build              the package's entry and its sidecar
 <group>/<lib>.goose                   each library's main module (crypto/tls.goose)
 <group>/<lib>/*.goose                 its other modules (crypto/tls/handshake.goose)
-<group>/<lib>/test, tools, examples   its programs (excluded from the package in gslib.build)
+<group>/<lib>/test, tools            its programs (excluded from the package in gslib.build)
 <group>/<lib>/scripts                 its test runners, differentials, interop
 <group>/<lib>/README.md               its documentation
 compress.goose, compress/             compress, laid out the same way at the top
+net.goose, net/src/                   net's sockets and their C (net/ is also http's and ldap's group)
 mime.goose, mime/                     mime, the same
+examples/<lib>/                       each library's examples (excluded too)
 scripts/run_all.py            every library's unit tests
 Makefile                      the programs, checks and tests
 ```
@@ -222,6 +226,23 @@ Makefile                      the programs, checks and tests
 Each library came from a repository of its own (bigmongoose, asn1goose,
 x509goose, tlsgoose, sshgoose, ldapgoose, yamlgoose, httpgoose,
 compressgoose, mimegoose), and `git log --follow -- <group>/<lib>` shows that history.
+
+## Examples
+
+`examples/` has a folder for each library (`examples/dns`, `examples/ldap`,
+...), with programs for what a user does first with each of its modules:
+parse a zone, sign a JWT, make a CA, run a TLS or SSH client and server
+against each other in one process. Each is short, runs from gslib's top as
+
+```bash
+goose examples/jwx/jwt_tokens.goose
+```
+
+and checks its own results, so `make test` runs them too, with each
+library's tests. The few that need a live peer (an HTTP, LDAP or DNS
+server, a KDC) take it as arguments and are only type-checked there; the
+pkcs11 ones run against a fresh SoftHSM token. Each library's README lists
+its examples.
 
 ## Requirements
 

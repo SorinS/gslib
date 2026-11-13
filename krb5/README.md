@@ -16,7 +16,7 @@ reading theirs. Only `krb5.net`, the file functions and the tools do I/O.
 | `krb5.messages` | Every message of RFC 4120 §5 as a struct, decoded and encoded (DER out, DER and BER's long lengths in): tickets, AS/TGS-REQ and REP and their encrypted parts, AP-REQ, Authenticator, AP-REP, KRB-SAFE, KRB-PRIV, KRB-CRED, KRB-ERROR, PA-ENC-TS-ENC, ETYPE-INFO(2), TYPED-DATA; FAST's (RFC 6113): PA-FX-FAST request and reply, KrbFastArmor, KrbFastReq, KrbFastResponse, KrbFastFinished; principal names |
 | `krb5.keytab` | MIT keytabs (versions 1 and 2, holes, 32-bit key versions): `keytab_load`, `keytab_save_private`, `keytab_key`, `keytab_entries_from_password` (ktutil's addent) |
 | `krb5.ccache` | MIT FILE credential caches (versions 1 to 4, configuration entries): `ccache_load`, `ccache_save` (0600), `ccache_find`, `ccache_add`, `ccache_config`, `ccache_with_config`, `default_ccache_name` |
-| `krb5.config` | krb5.conf in MIT's profile syntax (sections, subsections, `include`, `includedir`, final markers): `default_config`, the realms' KDCs, `domain_realm`, `capaths`, enctype lists, durations |
+| `krb5.config` | krb5.conf in MIT's profile syntax (sections, subsections, `include`, `includedir`, final markers): `config_load` (a `:`-separated list, as `$KRB5_CONFIG`; files that cannot be read are skipped, `ERR_FILE` when none can), `default_config` (empty when no file is there, as MIT's), the realms' KDCs, `domain_realm`, `capaths`, enctype lists, durations |
 | `krb5.net` | Sending to a realm's KDCs: UDP first below `udp_preference_limit`, TCP above it or on KRB_ERR_RESPONSE_TOO_BIG, each KDC in turn, as MIT does |
 | `krb5.client` | AS exchanges (`get_tgt_password`, `get_tgt_keytab`, encrypted-timestamp pre-authentication from ETYPE-INFO2, enterprise names and client referrals; armored with FAST: `get_tgt_password_fast`, `get_tgt_keytab_fast`, with encrypted challenge; SPAKE when the KDC offers it, armored or not, its optimistic challenge taken; `disable_encrypted_timestamp` as MIT has it; PKINIT: `get_tgt_identity`, anonymous `get_tgt_anonymous`), TGS exchanges (`get_service_ticket`: cross-realm along `capaths` or the hierarchy, server referrals; armored by the TGT, as MIT's are), `renew`, `forward_tgt`, clock skew learned from the KDC; `kinit_password`, `kinit_keytab`, `kinit_password_fast`, `kinit_keytab_fast` (MIT's `kinit -T`), `kinit_identity` (`kinit -X`, armored or not), `kinit_anonymous` (`kinit -n`), `get_service_ticket_cached` keep a cache (with MIT's `fast_avail` entry when the KDC does FAST) |
 | `krb5.fast` | FAST (RFC 6113), the client's side: armor from a TGT (`fast_armor_as`) or a TGS request's own (`fast_armor_tgs`), `fast_wrap`, the reply's checks (`fast_reply`: nonce, finished part, the ticket's checksum), `fast_reply_key` (the strengthen key), `fast_error` (the error inside the armor, the cookie), encrypted challenge both ways |
@@ -28,7 +28,7 @@ reading theirs. Only `krb5.net`, the file functions and the tools do I/O.
 | `krb5.ndr` | NDR as MS-RPCE's type serialization: the reader the PAC's types use |
 | `krb5.pac` | The PAC: logon info (`LogonInfo`, `logon_sids`), client info, UPN/DNS info with its SAM-name and SID extension, S4U delegation info, device info, attributes, requestor, signatures; `pac_verify` (server signature with the service key, client info against the ticket), `pac_verify_kdc` |
 | `krb5.claims` | The PAC's claims (client and device): `decode_claims`, `pac_claims`, with MS-XCA's LZ77+Huffman decompression (`xpress_huff_decompress`) for the compressed ones |
-| `krb5.sys` | The C krb5 calls (`src/krb5sys.c`: UDP, files only their owner reads, the uid, host names; and http's TCP sockets) |
+| `krb5.sys` | The C krb5 calls (`src/krb5sys.c`: UDP, files only their owner reads, the uid, host names; TCP is gslib's `net` module, `net::dial`) |
 
 ```goose
 import gslib from "SorinS/gslib@v0.1";   // or a path to gslib.git
@@ -76,6 +76,22 @@ armored by the cache's TGT, a computer's for AD's compound identity),
 `$KRB5CCNAME`. `tools/gss.goose` (goose-gss): a GSS-API client and server
 speaking MIT's gss-sample protocol, and an HTTP Negotiate client and
 server; servers listen on 127.0.0.1 only.
+
+## Examples
+
+In gslib's `examples/krb5/`, run from gslib's top as `goose examples/krb5/<name>.goose`
+(or from that folder); each checks its own results.
+
+- `string_to_key.goose`: keys from a password for each encryption type, encryption with key usages, checksums, the PRF.
+- `keytab.goose`: a service keytab written, read back and listed like `klist -k`.
+- `ccache.goose`: a credential cache written, read back and listed like `klist`.
+- `config.goose`: krb5.conf: realms, KDCs, domain_realm, capaths, an app's own section.
+- `messages.goose`: a password login's messages built and decoded on both sides: AS-REQ, PREAUTH_REQUIRED, PA-ENC-TIMESTAMP.
+- `gss_context.goose`: a client and a service authenticating each other in memory: AP-REQ/AP-REP, a GSS-API context, Wrap and MIC.
+- `http_negotiate.goose`: SPNEGO over HTTP Negotiate in memory, with mutual authentication.
+- `read_pac.goose`: an AD PAC from the test vectors: its signature, the user, the groups and claims.
+- `kinit.goose`: a TGT into a cache: password, keytab, PKINIT or FAST: `KRB5_CONF CCACHE ...`. Needs a live KDC; `run_tests.py` only type-checks it.
+- `service_ticket.goose`: a service ticket from the cached TGT, and its Negotiate header: `KRB5_CONF CCACHE ...`. Needs a live KDC; `run_tests.py` only type-checks it.
 
 ## Tests
 

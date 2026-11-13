@@ -172,7 +172,7 @@ fn parse_public_key(blob: const u8[:]) -> PublicKey, bool {
         let n, okn = get_mpint(r, blob);
         if !done(r) || !oke || !okn { return k, false; }
         let nb = bytes(blob, n);
-        let bits = 8 * nb.len - (if nb.len > 0 { ::clz(nb[0] as u64) - 56 } else { 0 });
+        let bits = 8 * nb.len - (if nb.len > 0 { ::clz(nb[0]) - 56 } else { 0 });
         if bits < 1024 || bits > 8192 || nb.len > k.n.cap || e.end - e.pos > k.e.cap { return k, false; }
         k.e.append(bytes(blob, e));
         k.n.append(nb);
@@ -508,7 +508,7 @@ fn parse_openssh_key(b: const u8[:], passphrase: const u8[:]) -> PrivateKey, i64
         return none, KEY_MALFORMED;
     }
     if passphrase.len == 0 { return none, KEY_ENCRYPTED; }
-    let kiv, okk = bignum::bcrypt_pbkdf(passphrase, bytes(b, salt), rounds as i64, klen + ivlen);
+    let kiv, okk = bignum::bcrypt_pbkdf(passphrase, bytes(b, salt), rounds, klen + ivlen);
     if !okk { return none, KEY_MALFORMED; }
     var dec: u8[>..] = [];
     dec.append(bytes(b, priv));

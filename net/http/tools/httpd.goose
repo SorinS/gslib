@@ -235,7 +235,8 @@ fn serve(fd: i32, root: const u8[:], on_tls: bool, scfg: const tls::ServerConfig
                 answer(hc, root, method, target, body, plain);
                 if http::closing(hc) { stop = true; }
             }
-            if stop || ev.kind == http::EV_NEED_MORE || ev.kind == http::EV_WAIT || ev.kind == http::EV_ERROR { break; }
+            if stop || ev.kind == http::EV_NEED_MORE || ev.kind == http::EV_WAIT || ev.kind == http::EV_ERROR ||
+               ev.kind == http::EV_CLOSED { break; }
         }
         if !flush(fd, on_tls, tc, plain, wire) { break; }
         if late_ticket && on_tls && !stop && !http::closing(hc) && tls::version(tc) == tls::VERSION_TLS13 {

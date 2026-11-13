@@ -404,7 +404,7 @@ fn mldsa_sample_in_ball(c: u32[:], seed: const u8[:], tau: i64) {
     for i in 256 - tau..256 {
         loop {
             shake_read(x, one);
-            if one[0] as i64 <= i { break; }
+            if one[0] <= i { break; }
         }
         let j: i64 = one[0];
         c[i] = c[j];

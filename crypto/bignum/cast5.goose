@@ -286,7 +286,7 @@ let CAST5_B: u8[80] = [
 
 struct Cast5 { km: u32[16], kr: u32[16] }
 
-fn cast5_sbox(i: i64, x: u32) -> u32 { CAST5_S[256 * i + (x & 255) as i64] }
+fn cast5_sbox(i: i64, x: u32) -> u32 { CAST5_S[256 * i + (x & 255)] }
 
 // Byte b (0-31) of the x || z words.
 fn cast5_byte(t: const u32[:], b: u8) -> u32 { (t[b >> 2] >> (24 - 8 * (b & 3) as u32)) & 255 }

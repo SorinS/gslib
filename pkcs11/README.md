@@ -113,6 +113,20 @@ little-endian:
 Results of unknown size use PKCS#11's two calls (the length, then the
 data), retried if the module's answer grows in between.
 
+## Examples
+
+In gslib's `examples/pkcs11/`, run from gslib's top as `goose examples/pkcs11/<name>.goose`
+(or from that folder); each checks its own results. All but `templates` take
+`[MODULE [PIN]]`, else `$P11_MODULE` and `$P11_PIN`; `run_tests.py` runs each
+against a fresh SoftHSM token.
+
+- `templates.goose`: attribute templates, mechanism parameters and constants, with no module needed.
+- `token_info.goose`: a module's slots, tokens and mechanisms; its header says how to make a SoftHSM token to try them on.
+- `objects.goose`: logging in, finding objects by template, reading and changing attributes.
+- `sign_verify.goose`: RSA and P-256 key pairs made on the token, signing and verifying, and checking with crypto/bignum.
+- `aes_encrypt.goose`: an AES key kept on the token: GCM, CBC in pieces, wrapping and unwrapping a key.
+- `p11_keys.goose`: the p11 layer: Module, Slot, Session, Object, signing, encryption and ECDH.
+
 ## Tests
 
 `python3 scripts/run_tests.py` (or `make test-pkcs11`) runs every

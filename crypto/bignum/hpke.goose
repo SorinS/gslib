@@ -209,7 +209,8 @@ fn hpke_dh(dh: i64, sk: const u8[:], pk: const u8[:]) -> u8[>..], bool {
         return out, ok;
     }
     let c = hpke_curve(dh);
-    return ecdh_shared(c, sk, pk);
+    let s, ok = ecdh_shared(c, sk, pk);
+    return s, ok;
 }
 
 // DeriveKeyPair (§7.1.3): X25519's key is expanded directly; a NIST
@@ -282,7 +283,10 @@ fn hpke_hybrid_secret(kem: i64, ss_pq: const u8[:], ss_t: const u8[:], ct_t: con
 fn hpke_public_key(kem: i64, sk: const u8[:]) -> u8[>..], bool {
     var out: u8[>..] = [];
     if !hpke_kem_ok(kem) || sk.len != hpke_nsk(kem) { return out, false; }
-    if hpke_is_dh(kem) { return hpke_dh_public(kem, sk); }
+    if hpke_is_dh(kem) {
+        let pk, ok = hpke_dh_public(kem, sk);
+        return pk, ok;
+    }
     if hpke_is_mlkem(kem) {
         let ek, dk = mlkem_keys_from_seed(hpke_mlkem_k(kem), sk);
         return ek, true;
@@ -298,7 +302,10 @@ fn hpke_public_key(kem: i64, sk: const u8[:]) -> u8[>..], bool {
 // DeriveKeyPair: a key pair from input keying material.
 fn hpke_derive_key_pair(kem: i64, ikm: const u8[:]) -> u8[>..], u8[>..] {
     assert(hpke_kem_ok(kem));
-    if hpke_is_dh(kem) { return hpke_dh_derive(kem, ikm); }
+    if hpke_is_dh(kem) {
+        let dsk, dpk = hpke_dh_derive(kem, ikm);
+        return dsk, dpk;
+    }
     let sk = hpke_labeled_derive(256, hpke_kem_suite(kem), ikm, "DeriveKeyPair", "", hpke_nsk(kem));
     let pk, ok = hpke_public_key(kem, sk);
     return sk, pk;
@@ -393,7 +400,10 @@ fn hpke_decap(kem: i64, enc: const u8[:], sk: const u8[:], pk_s: const u8[:]) ->
         return hpke_dh_shared(kem, dhv, kc), true;
     }
     let k = hpke_mlkem_k(kem);
-    if hpke_is_mlkem(kem) { return mlkem_decaps(k, sk, enc); }
+    if hpke_is_mlkem(kem) {
+        let s, ok = mlkem_decaps(k, sk, enc);
+        return s, ok;
+    }
     let pq, t = hpke_hybrid_expand(kem, sk);
     let ctl = mlkem_ct_len(k);
     let s1, ok1 = mlkem_decaps(k, pq, enc[..ctl]);
@@ -557,10 +567,9 @@ fn hpke_seal_once(kem: i64, kdf: i64, aead: i64, pk: const u8[:], info: const u8
 }
 
 fn hpke_open_once(kem: i64, kdf: i64, aead: i64, sk: const u8[:], info: const u8[:], data: const u8[:]) -> u8[>..], bool {
-    var none: u8[>..] = [];
-    if !hpke_kem_ok(kem) || data.len < hpke_nenc(kem) { return none, false; }
+    if !hpke_kem_ok(kem) || data.len < hpke_nenc(kem) { return [], false; }
     let n = hpke_nenc(kem);
     var c, ok = hpke_recipient(kem, kdf, aead, sk, data[..n], info);
-    if !ok { return none, false; }
+    if !ok { return [], false; }
     return hpke_open(c, "", data[n..]);
 }

@@ -120,7 +120,8 @@ fn kex_client_secret(k: const Kex&, theirs: const u8[:]) -> u8[>..], bool {
         put_string(out, bignum::sha256(both));
         return out, true;
     }
-    return shared_secret(k, theirs);
+    let s, ok = shared_secret(k, theirs);
+    return s, ok;
 }
 
 // The ECDH or DH secret with the peer's public value, as an mpint.
@@ -170,7 +171,8 @@ fn kex_server_secret(k: Kex&, theirs: const u8[:]) -> u8[>..], bool {
         return out, true;
     }
     kex_keygen(k);
-    return shared_secret(k, theirs);
+    let s, ok = shared_secret(k, theirs);
+    return s, ok;
 }
 
 // How a public value goes into the exchange hash and the messages: an

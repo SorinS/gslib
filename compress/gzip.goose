@@ -120,7 +120,7 @@ fn gzip_header(r: GzipReader&, input: const u8[:]) -> i64, i64 {
                 p++;
             }
             if r.hbuf.len < 2 { return p, 0; }
-            r.xleft = get_le16(r.hbuf, 0) as i64;
+            r.xleft = get_le16(r.hbuf, 0);
             r.hcrc = crc32_update(r.hcrc, r.hbuf);
             r.hbuf.clear();
             r.gh = GH_EXTRA;
@@ -257,8 +257,8 @@ fn gzip_latin1_to_utf8(s: const u8[:], out: u8[>..]&) {
         if c < 0x80 {
             out.push(c);
         } else {
-            out.push((0xc0 | (c >> 6)) as! u8);
-            out.push((0x80 | (c & 0x3f)) as! u8);
+            out.push(0xc0 | (c >> 6));
+            out.push(0x80 | (c & 0x3f));
         }
     }
 }
@@ -393,8 +393,8 @@ fn gzip_close(w: GzipWriter&, out: u8[>..]&) -> i64 {
         w.err = e;
         return e;
     }
-    put_le32(out, w.crc as u64);
-    put_le32(out, w.size as u64);
+    put_le32(out, w.crc);
+    put_le32(out, w.size);
     return 0;
 }
 

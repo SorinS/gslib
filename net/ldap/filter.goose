@@ -3,7 +3,10 @@
 // DecompileFilter do: the same encodings and the same errors, except
 // that a filter must close each parenthesis it opens where go-ldap
 // assumes it does ("(!(a=b)x" and "(&(a=b)x" are refused here), and "!"
-// takes a parenthesized filter. EscapeFilter too.
+// takes a parenthesized filter. EscapeFilter too. And a compiled filter
+// matched against an entry's attributes (filter_match, filter_matches),
+// without a schema: attribute types compare without regard to case and
+// options, values as caseIgnoreMatch (or, exact, octet by octet).
 
 namespace ldap;
 
@@ -12,16 +15,16 @@ import net.ldap;
 import encoding.asn1;
 
 // Filter choices, the context tags of §4.5.1.
-let FILTER_AND: u32 = 0;
-let FILTER_OR: u32 = 1;
-let FILTER_NOT: u32 = 2;
-let FILTER_EQUALITY: u32 = 3;
-let FILTER_SUBSTRINGS: u32 = 4;
+let FILTER_AND:              u32 = 0;
+let FILTER_OR:               u32 = 1;
+let FILTER_NOT:              u32 = 2;
+let FILTER_EQUALITY:         u32 = 3;
+let FILTER_SUBSTRINGS:       u32 = 4;
 let FILTER_GREATER_OR_EQUAL: u32 = 5;
-let FILTER_LESS_OR_EQUAL: u32 = 6;
-let FILTER_PRESENT: u32 = 7;
-let FILTER_APPROX: u32 = 8;
-let FILTER_EXTENSIBLE: u32 = 9;
+let FILTER_LESS_OR_EQUAL:    u32 = 6;
+let FILTER_PRESENT:          u32 = 7;
+let FILTER_APPROX:           u32 = 8;
+let FILTER_EXTENSIBLE:       u32 = 9;
 
 // How deep filters may nest.
 let FILTER_MAX_DEPTH: i64 = 256;
@@ -32,7 +35,7 @@ fn rune_width(s: const u8[:], i: i64) -> i64 {
     let c = s[i];
     if c < 0x80 { return 1; }
     var n = 0;
-    var cp: u32 = 0;
+    var cp:  u32 = 0;
     var min: u32 = 0;
     if c >= 0xc2 && c <= 0xdf { n = 2; cp = c & 0x1f; min = 0x80; }
     else if c >= 0xe0 && c <= 0xef { n = 3; cp = c & 0x0f; min = 0x800; }
@@ -208,9 +211,9 @@ recursive fn compile_at(f: const u8[:], pos: i64, depth: i64, out: u8[>..]&, err
 // The BER element b written again with every length in the fewest
 // octets: the nodes in order, then their new lengths from the leaves up.
 fn minimal_lengths(b: const u8[:], out: u8[>..]&) -> bool {
-    var nodes: asn1::Tlv[>..] = [];
-    var parent: i64[>..] = [];
-    var stack: i64[>..] = [];
+    var nodes:  asn1::Tlv[>..] = [];
+    var parent: i64[>..]       = [];
+    var stack:  i64[>..]       = [];
     let root, ok = asn1::parse(b, true);
     if !ok { return false; }
     nodes.push(root);
@@ -243,7 +246,7 @@ fn minimal_lengths(b: const u8[:], out: u8[>..]&) -> bool {
         k--;
     }
     // Written depth first: a stack of node indices, children pushed in reverse.
-    var kids: i64[>..] = [];
+    var kids:  i64[>..] = [];
     var first: i64[>..] = [];
     var count: i64[>..] = [];
     for t in nodes { first.push(-1); count.push(0); }
@@ -392,4 +395,271 @@ fn decompile(ber: const u8[:]) -> u8[>..], bool {
     var out: u8[>..] = [];
     let ok = decompile_filter(ber, out);
     return out, ok;
+}
+
+// --- Matching ---------------------------------------------------------------------
+
+// What a filter is for an entry (§4.5.1.7): TRUE, FALSE or Undefined,
+// and MATCH_INVALID for a filter (or attribute list) that is not well
+// formed, whatever the entry, where a server answers protocolError.
+let MATCH_FALSE:     i64 = 0;
+let MATCH_TRUE:      i64 = 1;
+let MATCH_UNDEFINED: i64 = 2;
+let MATCH_INVALID:   i64 = -1;
+
+// How values compare, without a schema: caseIgnoreMatch's way (ASCII
+// case folded, spaces as RFC 4518 §2.6.1 has them, simplified: none at
+// either end, a run of them one), caseExactMatch's (the spaces alone),
+// or octet by octet (octetStringMatch, and every value when matching
+// is exact).
+let RULE_CASE_IGNORE: i64 = 0;
+let RULE_CASE_EXACT:  i64 = 1;
+let RULE_OCTET:       i64 = 2;
+
+// A matching rule by OID or name, -1 for one not known here.
+fn matching_rule(r: const u8[:]) -> i64 {
+    if r == "2.5.13.2" || equal_fold(r, "caseIgnoreMatch") { return RULE_CASE_IGNORE; }
+    if r == "2.5.13.5" || equal_fold(r, "caseExactMatch") { return RULE_CASE_EXACT; }
+    if r == "2.5.13.17" || equal_fold(r, "octetStringMatch") { return RULE_OCTET; }
+    return -1;
+}
+
+// v as the rule compares it; lead and trail keep one space for spaces at
+// that end (a substring piece's inner ends are significant).
+fn prep_value(out: u8[>..]&, v: const u8[:], rule: i64, lead: bool = false, trail: bool = false) {
+    if rule == RULE_OCTET { out.append(v); return; }
+    var space = false;
+    for c in v {
+        if c == ' ' { space = true; continue; }
+        if space && (out.len > 0 || lead) { out.push(' '); }
+        space = false;
+        out.push(if rule == RULE_CASE_IGNORE { lower(c) } else { c });
+    }
+    if space && trail { out.push(' '); }
+}
+
+fn compare_bytes(a: const u8[:], b: const u8[:]) -> i64 {
+    let n = if a.len < b.len { a.len } else { b.len };
+    for i in n {
+        if a[i] != b[i] { return if a[i] < b[i] { -1 } else { 1 }; }
+    }
+    return if a.len < b.len { -1 } else if a.len > b.len { 1 } else { 0 };
+}
+
+// An attribute description without its options: cn;lang-en is cn.
+fn description_type(d: const u8[:]) -> const u8[:] {
+    let i = position(d, ';');
+    return if i >= 0 { d[..i] } else { d };
+}
+
+// Whether attrs is attributes one after another, each a SEQUENCE of its
+// description and SET of values.
+fn attributes_ok(attrs: const u8[:]) -> bool {
+    var p = 0;
+    while p < attrs.len {
+        let a, ok = asn1::read(attrs, p, attrs.len, true);
+        if !ok || a.tag != asn1::SEQUENCE { return false; }
+        let parts, okp = asn1::children(attrs, a, true);
+        if !okp || parts.len != 2 || !octets_ok(parts[0]) || parts[1].tag != asn1::SET { return false; }
+        let vals, okv = asn1::children(attrs, parts[1], true);
+        if !okv { return false; }
+        for v in vals { if !octets_ok(v) { return false; } }
+        p = a.end;
+    }
+    return true;
+}
+
+// The values of the attributes the description d names, its type
+// compared without regard to case and the options of both left out (all:
+// every attribute's), and whether there was such an attribute.
+fn values_of(attrs: const u8[:], d: const u8[:], all: bool) -> const u8[:][>..], bool {
+    var out: const u8[:][>..] = [];
+    var found = false;
+    var p = 0;
+    while p < attrs.len {
+        let a, ok = asn1::read(attrs, p, attrs.len, true);
+        p = a.end;
+        let parts, okp = asn1::children(attrs, a, true);
+        if !all && !equal_fold(description_type(bytes(attrs, parts[0])), description_type(d)) { continue; }
+        found = true;
+        let vals, okv = asn1::children(attrs, parts[1], true);
+        for v in vals { out.push(bytes(attrs, v)); }
+    }
+    return out, found;
+}
+
+// An equality, ordering or approximate assertion of value a: TRUE if
+// one of the values satisfies it, FALSE if none does, Undefined without
+// the attribute. Approximate is equality (no phonetic rule here);
+// ordering compares the prepared values byte by byte.
+fn match_assertion(attrs: const u8[:], d: const u8[:], all: bool, n: u32, a: const u8[:], rule: i64) -> i64 {
+    var pa: u8[>..] = [];
+    prep_value(pa, a, rule);
+    let vals, found = values_of(attrs, d, all);
+    if !found { return MATCH_UNDEFINED; }
+    for v in vals {
+        var pv: u8[>..] = [];
+        prep_value(pv, v, rule);
+        let c = compare_bytes(pv, pa);
+        if n == FILTER_GREATER_OR_EQUAL { if c >= 0 { return MATCH_TRUE; } }
+        else if n == FILTER_LESS_OR_EQUAL { if c <= 0 { return MATCH_TRUE; } }
+        else if c == 0 { return MATCH_TRUE; }
+    }
+    return MATCH_FALSE;
+}
+
+// Whether v holds the pieces in order, none overlapping another: initial
+// [0] at the start, each any [1] at its first place after the piece
+// before it, final [2] at the end.
+fn substrings_hold(v: const u8[:], tags: const u32[:], pieces: const u8[:], ends: const i64[:]) -> bool {
+    var pos = 0;
+    var start = 0;
+    for i in tags.len {
+        let s = pieces[start..ends[i]];
+        start = ends[i];
+        if tags[i] == 0 {
+            if !starts_with(v, s) { return false; }
+            pos = s.len;
+        } else if tags[i] == 1 {
+            let k = find(v[pos..], s);
+            if k < 0 { return false; }
+            pos = pos + k + s.len;
+        } else {
+            if v.len - pos < s.len || !ends_with(v, s) { return false; }
+            pos = v.len;
+        }
+    }
+    return true;
+}
+
+fn match_substrings(buf: const u8[:], t: asn1::Tlv, attrs: const u8[:], rule: i64) -> i64 {
+    let cs, ok = asn1::children(buf, t, true);
+    if !ok || cs.len != 2 || !octets_ok(cs[0]) || cs[1].tag != asn1::SEQUENCE { return MATCH_INVALID; }
+    let parts, okp = asn1::children(buf, cs[1], true);
+    if !okp || parts.len == 0 { return MATCH_INVALID; }
+    var tags:   u32[>..] = [];
+    var pieces: u8[>..]  = [];
+    var ends:   i64[>..] = [];
+    for i in parts.len {
+        let tag = parts[i].tag;
+        // At most one initial, first, and one final, last.
+        if tag != ctx_prim(0) && tag != ctx_prim(1) && tag != ctx_prim(2) { return MATCH_INVALID; }
+        if (tag == ctx_prim(0) && i != 0) || (tag == ctx_prim(2) && i != parts.len - 1) { return MATCH_INVALID; }
+        let k = parts[i].number;
+        // A space at the value's own start or end is not significant.
+        var pp: u8[>..] = [];
+        prep_value(pp, bytes(buf, parts[i]), rule, k != 0, k != 2);
+        pieces.append(pp);
+        tags.push(k);
+        ends.push(pieces.len);
+    }
+    let vals, found = values_of(attrs, bytes(buf, cs[0]), false);
+    if !found { return MATCH_UNDEFINED; }
+    for v in vals {
+        var pv: u8[>..] = [];
+        prep_value(pv, v, rule);
+        if substrings_hold(pv, tags, pieces, ends) { return MATCH_TRUE; }
+    }
+    return MATCH_FALSE;
+}
+
+// An extensible match: by caseIgnoreMatch, caseExactMatch or
+// octetStringMatch (by OID or name), or, without a rule, as equality of
+// the type; without a type, against every attribute. dnAttributes and
+// any other rule are Undefined.
+fn match_extensible(buf: const u8[:], t: asn1::Tlv, attrs: const u8[:], rule: i64) -> i64 {
+    let cs, ok = asn1::children(buf, t, true);
+    if !ok { return MATCH_INVALID; }
+    // The type and the value as Tlvs; an absent one is empty.
+    var name = asn1::Tlv { tag: 0, cls: 0, constructed: false, number: 0, start: t.off, off: t.off, end: t.off };
+    var value = name;
+    var has_rule = false;
+    var has_type = false;
+    var has_value = false;
+    var dn_attrs = false;
+    var r = rule;
+    for c in cs {
+        if c.tag == ctx_prim(1) {
+            has_rule = true;
+            r = matching_rule(bytes(buf, c));
+        } else if c.tag == ctx_prim(2) { name = c; has_type = true; }
+        else if c.tag == ctx_prim(3) { value = c; has_value = true; }
+        else if c.tag == ctx_prim(4) {
+            let v, okb = asn1::read_bool(buf, c, true, ctx_prim(4));
+            if !okb { return MATCH_INVALID; }
+            dn_attrs = v;
+        } else { return MATCH_INVALID; }
+    }
+    if !has_value || (!has_rule && !has_type) { return MATCH_INVALID; }
+    if dn_attrs || r < 0 { return MATCH_UNDEFINED; }
+    return match_assertion(attrs, bytes(buf, name), !has_type, FILTER_EQUALITY, bytes(buf, value), r);
+}
+
+// The filter t of buf for the entry's attributes.
+recursive fn match_at(buf: const u8[:], t: asn1::Tlv, depth: i64, attrs: const u8[:], exact: bool) -> i64 {
+    if depth > FILTER_MAX_DEPTH || t.cls != asn1::CLASS_CONTEXT { return MATCH_INVALID; }
+    let n = t.number;
+    let rule = if exact { RULE_OCTET } else { RULE_CASE_IGNORE };
+    if n == FILTER_AND || n == FILTER_OR || n == FILTER_NOT {
+        if !t.constructed { return MATCH_INVALID; }
+        // Every term is read, so that a filter that is not well formed
+        // is invalid whatever the entry.
+        var trues = 0;
+        var falses = 0;
+        var undefined = 0;
+        var p = t.off;
+        while p < t.end {
+            let c, ok = asn1::read(buf, p, t.end, true);
+            if !ok { return MATCH_INVALID; }
+            let r = match_at(buf, c, depth + 1, attrs, exact);
+            if r == MATCH_INVALID { return r; }
+            if r == MATCH_TRUE { trues++; } else if r == MATCH_FALSE { falses++; } else { undefined++; }
+            p = c.end;
+        }
+        if n == FILTER_NOT && trues + falses + undefined != 1 { return MATCH_INVALID; }
+        // An empty and is TRUE, an empty or FALSE (RFC 4526).
+        if n == FILTER_NOT { return if trues > 0 { MATCH_FALSE } else if falses > 0 { MATCH_TRUE } else { MATCH_UNDEFINED }; }
+        if n == FILTER_AND { return if falses > 0 { MATCH_FALSE } else if undefined > 0 { MATCH_UNDEFINED } else { MATCH_TRUE }; }
+        return if trues > 0 { MATCH_TRUE } else if undefined > 0 { MATCH_UNDEFINED } else { MATCH_FALSE };
+    }
+    if n == FILTER_PRESENT {
+        if t.constructed { return MATCH_INVALID; }
+        let vals, found = values_of(attrs, bytes(buf, t), false);
+        return if found { MATCH_TRUE } else { MATCH_FALSE };
+    }
+    if n == FILTER_SUBSTRINGS { return match_substrings(buf, t, attrs, rule); }
+    if n == FILTER_EQUALITY || n == FILTER_GREATER_OR_EQUAL || n == FILTER_LESS_OR_EQUAL || n == FILTER_APPROX {
+        let cs, ok = asn1::children(buf, t, true);
+        if !ok || cs.len != 2 || !octets_ok(cs[0]) || !octets_ok(cs[1]) { return MATCH_INVALID; }
+        return match_assertion(attrs, bytes(buf, cs[0]), false, n, bytes(buf, cs[1]), rule);
+    }
+    if n == FILTER_EXTENSIBLE { return match_extensible(buf, t, attrs, rule); }
+    return MATCH_INVALID;
+}
+
+// What the compiled filter is for an entry's attributes: a
+// SearchResultEntry's (entry_attributes) or an LDIF add record's
+// (Record.body), each an attribute SEQUENCE after another. A filter from
+// a decoded SearchRequest is its element, buf[t.start..t.end]. exact
+// compares values octet by octet, not as caseIgnoreMatch.
+fn filter_match(filter: const u8[:], attrs: const u8[:], exact: bool = false) -> i64 {
+    let t, ok = asn1::parse(filter, true);
+    if !ok || !attributes_ok(attrs) { return MATCH_INVALID; }
+    return match_at(filter, t, 0, attrs, exact);
+}
+
+// Whether the entry matches: TRUE; Undefined is not a match (§4.5.1.7).
+fn filter_matches(filter: const u8[:], attrs: const u8[:], exact: bool = false) -> bool {
+    return filter_match(filter, attrs, exact) == MATCH_TRUE;
+}
+
+// A SearchResultEntry's attributes, as filter_match takes them.
+fn entry_attributes(buf: const u8[:], m: const Message&) -> const u8[:] {
+    if m.op != OP_SEARCH_ENTRY { return ""; }
+    let cs, ok = asn1::children(buf, m.body, true);
+    return if ok && cs.len == 2 { bytes(buf, cs[1]) } else { "" };
+}
+
+fn entry_matches(filter: const u8[:], buf: const u8[:], m: const Message&, exact: bool = false) -> bool {
+    return m.op == OP_SEARCH_ENTRY && filter_matches(filter, entry_attributes(buf, m), exact);
 }

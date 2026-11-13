@@ -1632,7 +1632,7 @@ fn connection_message(c: Conn&, m: const u8[:], out: u8[>..]&, events: u8[>..]&)
     if t == MSG_CHANNEL_WINDOW_ADJUST {
         let n = get_u32(r, m);
         if r.bad { return fail(c, DISCONNECT_PROTOCOL_ERROR, "bad WINDOW_ADJUST", out); }
-        let sum: u64 = (c.channels[ch].out_window as u64) + (n as u64);
+        let sum: u64 = (c.channels[ch].out_window as u64) + n;
         c.channels[ch].out_window = if sum > 0xffffffff { 0xffffffff } else { sum as! u32 };
         event(events, EV_WINDOW, ch, n, "");
         return 0;
@@ -1643,7 +1643,7 @@ fn connection_message(c: Conn&, m: const u8[:], out: u8[>..]&, events: u8[>..]&)
         let d = get_string(r, m);
         let n: i64 = d.end - d.pos;
         let win: i64 = c.channels[ch].in_window;
-        if !done(r) || n > win || n > CHANNEL_MAX_PACKET as i64 || c.channels[ch].recv_eof {
+        if !done(r) || n > win || n > CHANNEL_MAX_PACKET || c.channels[ch].recv_eof {
             return fail(c, DISCONNECT_PROTOCOL_ERROR, "channel data past the window", out);
         }
         event(events, if t == MSG_CHANNEL_DATA { EV_DATA } else { EV_EXTENDED_DATA }, ch, code, bytes(m, d));

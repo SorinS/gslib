@@ -327,6 +327,22 @@ whose hash is the digest algorithm, and checks the signature over the
 attributes' DER (SET OF tag). SHA-1 only with `allow_sha1`. The signer's
 certificate path and usages are the caller's to check.
 
+## Examples
+
+In gslib's `examples/x509/`, run from gslib's top as `goose examples/x509/<name>.goose`
+(or from that folder); each checks its own results.
+
+- `parse_cert.goose`: a PEM chain's certificates taken apart, host matching, and which signed which (`example-chain.pem`, or a file of your own).
+- `make_ca.goose`: a private CA: root, intermediate and server certificate, verified; an optional DIR gets the PEM files.
+- `keys.goose`: P-256, P-384, Ed25519, RSA and ML-DSA keys: generating, PKCS #8 PEM, SEC 1 and PKCS #1, signing.
+- `verify_pool.goose`: path building over root and intermediate pools, name constraints, policies, and key usages.
+- `csr.goose`: a CSR made, checked against a name policy and issued; a changed one refused.
+- `crl.goose`: a CRL issued, read and looked up, and path validation with revocation checking.
+- `ocsp.goose`: an OCSP request and response, client and responder in one process, with a delegated responder.
+- `pkcs12.goose`: a .p12 read (`example.p12`, password `goose`), its key matched to its certificate and written as PKCS #8.
+- `cms_signed.goose`: CMS SignedData with ECDSA and RSA-PSS: signing, verifying signer and path, refusing changed content.
+- `system_roots.goose`: the OS's root store loaded and used, with a private root added to a copy.
+
 ## Tests
 
 ```bash

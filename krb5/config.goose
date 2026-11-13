@@ -65,7 +65,7 @@ fn expand_includes(text0: const u8[:]) -> u8[>..], i64 {
     var text: u8[>..] = [];
     text.append(text0);
     for pass in 9 {
-        var out: u8[>..] = [];
+        var out:     u8[>..] = [];
         var section: u8[>..] = [];
         var depth = 0;
         var changed = false;
@@ -125,9 +125,9 @@ fn expand_includes(text0: const u8[:]) -> u8[>..], i64 {
 // Parses text without includes, appending its relations. OK or
 // ERR_CONFIG with the line.
 fn config_parse_into(text: const u8[:], entries: ConfEntry[>..]&) -> i64, i64 {
-    var section: u8[>..] = [];
-    var stack: u8[>..] = [];          // the path of open subsections, '/'-joined
-    var marks: i64[>..] = [];         // stack's length before each open subsection
+    var section: u8[>..]  = [];
+    var stack:   u8[>..]  = [];       // the path of open subsections, '/'-joined
+    var marks:   i64[>..] = [];       // stack's length before each open subsection
     var lineno = 0;
     var start = 0;
     var i = 0;
@@ -187,9 +187,12 @@ fn config_parse(text: const u8[:]) -> Config, i64 {
 }
 
 // Reads the files of a ':'-separated list (MIT's KRB5_CONFIG), in order;
-// files that are not there are skipped.
+// files that cannot be read are skipped, as by MIT's profile library, but
+// ERR_FILE if none can (go-krb5's config.Load fails on a file it cannot
+// open, and so does MIT's profile_init then).
 fn config_load(paths: const u8[:]) -> Config, i64 {
     var entries: ConfEntry[>..] = [];
+    var read = 0;
     var s = 0;
     for j in paths.len + 1 {
         if j < paths.len && paths[j] != ':' { continue; }
@@ -198,16 +201,20 @@ fn config_load(paths: const u8[:]) -> Config, i64 {
         if p.len == 0 { continue; }
         var t: u8[>..] = [];
         if !read_file(p, t) { continue; }
+        read++;
         let full, ierr = expand_includes(t);
         if ierr != OK { return Config { entries: entries }, ierr; }
         let err, line = config_parse_into(full, entries);
         if err != OK { return Config { entries: entries }, err; }
     }
+    if read == 0 { return Config { entries: entries }, ERR_FILE; }
     return Config { entries: entries }, OK;
 }
 
 // $KRB5_CONFIG, else /etc/krb5.conf (C:\ProgramData\MIT\Kerberos5\krb5.ini
-// on Windows, where /etc is not).
+// on Windows, where /etc is not). As with MIT's krb5_init_context, the
+// configuration is empty when none of the files is there, and ERR_FILE
+// when one is there but none can be read.
 fn default_config() -> Config, i64 {
     var paths: u8[>..] = [];
     if !env("KRB5_CONFIG", paths) || paths.len == 0 {
@@ -218,7 +225,20 @@ fn default_config() -> Config, i64 {
             paths.append("C:\\ProgramData\\MIT\\Kerberos5\\krb5.ini");
         }
     }
-    return config_load(paths);
+    let cfg, err = config_load(paths);
+    if err == ERR_FILE && !any_file_exists(paths) { return empty_config(), OK; }
+    return cfg, err;
+}
+
+fn any_file_exists(paths: const u8[:]) -> bool {
+    var s = 0;
+    for j in paths.len + 1 {
+        if j < paths.len && paths[j] != ':' { continue; }
+        let p = paths[s..j];
+        s = j + 1;
+        if p.len > 0 && file_exists(p) { return true; }
+    }
+    return false;
 }
 
 // --- Lookups ------------------------------------------------------------------
@@ -300,7 +320,7 @@ fn parse_duration(s0: const u8[:]) -> i64, bool {
         return parts[0] * 3600 + parts[1] * 60 + parts[2], true;
     }
     var total: i64 = 0;
-    var cur: i64 = 0;
+    var cur:   i64 = 0;
     var have = false;
     var rank = 5;                     // units must come in order: d h m s
     for c in s {

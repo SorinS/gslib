@@ -180,6 +180,19 @@ fn file_content(f, i, out: u8[>..]&) -> bool          // FileHeader.Open, read w
 The writer appends the boundary lines and headers to `out`; the caller
 appends each part's body after its `create_*` call.
 
+## Examples
+
+In gslib's `examples/mime/`, run from gslib's top as `goose examples/mime/<name>.goose`
+(or from that folder); each checks its own results.
+
+- `media_types.goose`: Content-Type and Content-Disposition values, with RFC 2231 parameters.
+- `file_types.goose`: file extensions to media types and back, and a type of your own.
+- `encoded_words.goose`: RFC 2047 encoded-words in headers, both ways.
+- `quoted_printable.goose`: quoted-printable, whole and in pieces.
+- `header_section.goose`: MIME header sections (textproto): folding, repeated fields, canonical keys.
+- `email_attachment.goose`: a multipart/mixed mail with an attachment, written and read back part by part.
+- `form_upload.goose`: multipart/form-data both ways, a large file spilling to a temporary file.
+
 ## Tests
 
 ```sh
