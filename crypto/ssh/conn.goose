@@ -4,7 +4,7 @@
 // send to one builder and what happened, as events, to another:
 //
 //   var c = ssh::client(cfg);
-//   ssh::start(c, out);                                // version and KEXINIT
+//   ssh::client_start(c, cfg, out);                     // version and KEXINIT
 //   ... send out, read into input ...
 //   ssh::client_feed(c, cfg, input, out, events);       // until EV_AUTHENTICATED
 //   let ch = ssh::open_session(c, out);                 // EV_CHANNEL_OPENED, then
@@ -403,22 +403,18 @@ fn disconnect(c: Conn&, out: u8[>..]&) {
     c.state = ST_CLOSED;
 }
 
-// The version line, then KEXINIT, without waiting for the peer's.
-fn start(c: Conn&, ccfg: const ClientConfig&, scfg: const ServerConfig&, out: u8[>..]&) {
+// The version line, then KEXINIT, without waiting for the peer's. cfg is
+// the side's own configuration, a ClientConfig or a ServerConfig: this and
+// the rest of the exchange that takes one are compiled once for each.
+fn start(c: Conn&, cfg, out: u8[>..]&) {
     out.append(c.my_version);
     out.append("\r\n");
-    send_kexinit(c, ccfg, scfg, out);
+    send_kexinit(c, cfg, out);
 }
 
-fn client_start(c: Conn&, cfg: const ClientConfig&, out: u8[>..]&) {
-    let none = no_server();
-    start(c, cfg, none, out);
-}
+fn client_start(c: Conn&, cfg: const ClientConfig&, out: u8[>..]&) { start(c, cfg, out); }
 
-fn server_start(c: Conn&, cfg: const ServerConfig&, out: u8[>..]&) {
-    let none = no_client();
-    start(c, none, cfg, out);
-}
+fn server_start(c: Conn&, cfg: const ServerConfig&, out: u8[>..]&) { start(c, cfg, out); }
 
 // --- Key exchange -------------------------------------------------------------------
 
@@ -459,29 +455,33 @@ fn client_host_key_algs(cfg: const ClientConfig&) -> u8[>..] {
     return known;
 }
 
-fn send_kexinit(c: Conn&, ccfg: const ClientConfig&, scfg: const ServerConfig&, out: u8[>..]&) {
+// The host key algorithms the side whose configuration cfg is offers.
+fn role_host_key_algs(cfg: const ClientConfig&) -> u8[>..] { client_host_key_algs(cfg) }
+fn role_host_key_algs(cfg: const ServerConfig&) -> u8[>..] { server_host_key_algs(cfg) }
+
+fn send_kexinit(c: Conn&, cfg, out: u8[>..]&) {
     // The kex list carries the extension and strict-kex markers on the
     // first exchange only. Each list offers only what this package has.
     // What a rekey sends (no markers) is kept, for send_packet's.
     let first = c.kex_count == 0;
-    let lists = kexinit_lists(c, ccfg, scfg, first);
-    if first { c.rekey_lists = kexinit_lists(c, ccfg, scfg, false); } else { c.rekey_lists = lists; }
+    let lists = kexinit_lists(c, cfg, first);
+    if first { c.rekey_lists = kexinit_lists(c, cfg, false); } else { c.rekey_lists = lists; }
     send_kexinit_lists(c, lists, out);
 }
 
 // A KEXINIT's name-lists, guess flag and reserved word: all of it after the
 // cookie.
-fn kexinit_lists(c: const Conn&, ccfg: const ClientConfig&, scfg: const ServerConfig&, markers: bool) -> u8[..4096] {
+fn kexinit_lists(c: const Conn&, cfg, markers: bool) -> u8[..4096] {
     var b: u8[>..] = [];
-    var kexl = supported_names(if c.is_server { scfg.kex[..] } else { ccfg.kex[..] }, KEX_SUPPORTED);
+    var kexl = supported_names(cfg.kex, KEX_SUPPORTED);
     if markers {
         add_name(kexl, if c.is_server { "ext-info-s" } else { "ext-info-c" });
         add_name(kexl, if c.is_server { "kex-strict-s-v00@openssh.com" } else { "kex-strict-c-v00@openssh.com" });
     }
     put_string(b, kexl);
-    if c.is_server { put_string(b, server_host_key_algs(scfg)); } else { put_string(b, client_host_key_algs(ccfg)); }
-    let ciphers = supported_names(if c.is_server { scfg.ciphers[..] } else { ccfg.ciphers[..] }, CIPHERS);
-    let macs = supported_names(if c.is_server { scfg.macs[..] } else { ccfg.macs[..] }, MACS);
+    put_string(b, role_host_key_algs(cfg));
+    let ciphers = supported_names(cfg.ciphers, CIPHERS);
+    let macs = supported_names(cfg.macs, MACS);
     put_string(b, ciphers);
     put_string(b, ciphers);
     put_string(b, macs);
@@ -522,9 +522,9 @@ fn rekey_due(c: const Conn&) -> bool {
 
 // A rekey: a new KEXINIT; the exchange then runs as the first did, under
 // the old keys, the session ID unchanged.
-fn rekey(c: Conn&, ccfg: const ClientConfig&, scfg: const ServerConfig&, out: u8[>..]&) -> bool {
+fn rekey(c: Conn&, cfg, out: u8[>..]&) -> bool {
     if c.state != ST_CONNECTED || c.in_kex { return false; }
-    send_kexinit(c, ccfg, scfg, out);
+    send_kexinit(c, cfg, out);
     return true;
 }
 
@@ -596,13 +596,13 @@ fn negotiate_all(c: Conn&, out: u8[>..]&) -> i64 {
     return 0;
 }
 
-fn on_kexinit(c: Conn&, ccfg: const ClientConfig&, scfg: const ServerConfig&, m: const u8[:], out: u8[>..]&) -> i64 {
+fn on_kexinit(c: Conn&, cfg, m: const u8[:], out: u8[>..]&) -> i64 {
     if c.in_kex && c.peer_kexinit.len > 0 { return fail(c, DISCONNECT_PROTOCOL_ERROR, "KEXINIT twice", out); }
     // Strict: KEXINIT must be the first packet of the connection.
     if m.len > c.peer_kexinit.cap { return fail(c, DISCONNECT_PROTOCOL_ERROR, "KEXINIT too long", out); }
     c.peer_kexinit.clear();
     c.peer_kexinit.append(m);
-    if !c.sent_kexinit { send_kexinit(c, ccfg, scfg, out); }
+    if !c.sent_kexinit { send_kexinit(c, cfg, out); }
     if negotiate_all(c, out) != 0 { return -1; }
     if c.kex_count == 0 && c.strict && c.rx.seq != 1 { return fail(c, DISCONNECT_PROTOCOL_ERROR, "strict KEX: KEXINIT not first", out); }
     if !c.is_server {
@@ -754,7 +754,7 @@ fn host_key_accept(c: Conn&, cfg: const ClientConfig&, out: u8[>..]&, events: u8
 // The peer's NEWKEYS: its new keys from here on. With both sent, the
 // exchange is done: the first one goes on to authentication (and the
 // server's EXT_INFO).
-fn on_newkeys(c: Conn&, scfg: const ServerConfig&, m: const u8[:], out: u8[>..]&) -> i64 {
+fn on_newkeys(c: Conn&, m: const u8[:], out: u8[>..]&) -> i64 {
     if !c.in_kex || !c.sent_newkeys || m.len != 1 { return fail(c, DISCONNECT_PROTOCOL_ERROR, "unexpected NEWKEYS", out); }
     let seq = c.rx.seq;
     c.rx = c.rx_next;
@@ -1718,8 +1718,28 @@ fn connection_message(c: Conn&, m: const u8[:], out: u8[>..]&, events: u8[>..]&)
 
 // --- Receiving -----------------------------------------------------------------------------
 
-fn handle_message(c: Conn&, ccfg: const ClientConfig&, scfg: const ServerConfig&, m: const u8[:], out: u8[>..]&,
-                  events: u8[>..]&) -> i64 {
+// A key exchange message (30 to 49) to the side whose configuration cfg is:
+// the server takes the client's ECDH_INIT, the client the server's reply.
+fn role_kex_message(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: u8[>..]&, events: u8[>..]&) -> i64 {
+    if m[0] == MSG_KEX_ECDH_REPLY { return client_kex_reply(c, cfg, m, out, events); }
+    return fail(c, DISCONNECT_PROTOCOL_ERROR, "unexpected KEX message", out);
+}
+
+fn role_kex_message(c: Conn&, cfg: const ServerConfig&, m: const u8[:], out: u8[>..]&, events: u8[>..]&) -> i64 {
+    if m[0] == MSG_KEX_ECDH_INIT { return server_kex_init(c, cfg, m, out); }
+    return fail(c, DISCONNECT_PROTOCOL_ERROR, "unexpected KEX message", out);
+}
+
+// An authentication message to the side whose configuration cfg is.
+fn role_auth(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: u8[>..]&, events: u8[>..]&) -> i64 {
+    client_auth(c, cfg, m, out, events)
+}
+
+fn role_auth(c: Conn&, cfg: const ServerConfig&, m: const u8[:], out: u8[>..]&, events: u8[>..]&) -> i64 {
+    server_auth(c, cfg, m, out, events)
+}
+
+fn handle_message(c: Conn&, cfg, m: const u8[:], out: u8[>..]&, events: u8[>..]&) -> i64 {
     if m.len == 0 { return fail(c, DISCONNECT_PROTOCOL_ERROR, "empty packet", out); }
     let t = m[0];
     let first_kex = c.kex_count == 0;
@@ -1737,17 +1757,15 @@ fn handle_message(c: Conn&, ccfg: const ClientConfig&, scfg: const ServerConfig&
         return fail(c, DISCONNECT_PROTOCOL_ERROR, "strict KEX: unexpected message", out);
     }
     if t == MSG_IGNORE || t == MSG_DEBUG || t == MSG_UNIMPLEMENTED { return 0; }
-    if t == MSG_KEXINIT { return on_kexinit(c, ccfg, scfg, m, out); }
+    if t == MSG_KEXINIT { return on_kexinit(c, cfg, m, out); }
     if t >= 30 && t <= 49 {
         if c.ignore_next { c.ignore_next = false; return 0; }
         if !c.in_kex || c.peer_kexinit.len == 0 || c.sent_newkeys {
             return fail(c, DISCONNECT_PROTOCOL_ERROR, "unexpected KEX message", out);
         }
-        if c.is_server && t == MSG_KEX_ECDH_INIT { return server_kex_init(c, scfg, m, out); }
-        if !c.is_server && t == MSG_KEX_ECDH_REPLY { return client_kex_reply(c, ccfg, m, out, events); }
-        return fail(c, DISCONNECT_PROTOCOL_ERROR, "unexpected KEX message", out);
+        return role_kex_message(c, cfg, m, out, events);
     }
-    if t == MSG_NEWKEYS { return on_newkeys(c, scfg, m, out); }
+    if t == MSG_NEWKEYS { return on_newkeys(c, m, out); }
     if c.state == ST_KEX || c.state == ST_VERSION {
         return fail(c, DISCONNECT_PROTOCOL_ERROR, "message before the key exchange is done", out);
     }
@@ -1792,9 +1810,7 @@ fn handle_message(c: Conn&, ccfg: const ClientConfig&, scfg: const ServerConfig&
         return fail(c, DISCONNECT_PROTOCOL_ERROR, "unexpected message before authentication", out);
     }
     if c.state == ST_AUTH {
-        if t >= 50 && t <= 79 {
-            return if c.is_server { server_auth(c, scfg, m, out, events) } else { client_auth(c, ccfg, m, out, events) };
-        }
+        if t >= 50 && t <= 79 { return role_auth(c, cfg, m, out, events); }
         return fail(c, DISCONNECT_PROTOCOL_ERROR, "unexpected message during authentication", out);
     }
     if c.state == ST_CONNECTED {
@@ -1844,8 +1860,7 @@ fn take_version(c: Conn&, out: u8[>..]&) -> i64 {
 // Feeds received bytes; appends what to send to `out` and what happened to
 // `events`. Returns 0, or -1 once the connection has failed (c.reason and
 // c.message say why).
-fn feed(c: Conn&, ccfg: const ClientConfig&, scfg: const ServerConfig&, input: const u8[:], out: u8[>..]&,
-        events: u8[>..]&) -> i64 {
+fn feed(c: Conn&, cfg, input: const u8[:], out: u8[>..]&, events: u8[>..]&) -> i64 {
     var off = 0;
     while off < input.len || c.inbuf.len > 0 {
         if c.state == ST_FAILED { return -1; }
@@ -1873,7 +1888,7 @@ fn feed(c: Conn&, ccfg: const ClientConfig&, scfg: const ServerConfig&, input: c
             c.inbuf.clear();
             c.inbuf.append(rest);
             progressed = true;
-            if handle_message(c, ccfg, scfg, payload, out, events) != 0 { return -1; }
+            if handle_message(c, cfg, payload, out, events) != 0 { return -1; }
             if c.state == ST_CLOSED { return 0; }
         }
         // Rekey once enough has gone either way, in bytes (rekey_bytes, 0
@@ -1881,7 +1896,7 @@ fn feed(c: Conn&, ccfg: const ClientConfig&, scfg: const ServerConfig&, input: c
         // received, as RFC 4253 §9 asks): here for what came in;
         // send_packet does the same for what goes out.
         if rekey_due(c) {
-            let ok = rekey(c, ccfg, scfg, out);
+            let ok = rekey(c, cfg, out);
         }
         // Held for the application, or nothing more to do with what came.
         if c.host_key_wait && (take == 0 || off >= input.len) { break; }
@@ -1890,31 +1905,15 @@ fn feed(c: Conn&, ccfg: const ClientConfig&, scfg: const ServerConfig&, input: c
     return if c.state == ST_FAILED { -1 } else { 0 };
 }
 
-fn no_server() -> ServerConfig {
-    var s = server_config();
-    s.kex.clear();
-    return s;
-}
-
-fn no_client() -> ClientConfig { client_config("", "") }
-
 fn client_feed(c: Conn&, cfg: const ClientConfig&, input: const u8[:], out: u8[>..]&, events: u8[>..]&) -> i64 {
-    let none = no_server();
-    return feed(c, cfg, none, input, out, events);
+    return feed(c, cfg, input, out, events);
 }
 
 fn server_feed(c: Conn&, cfg: const ServerConfig&, input: const u8[:], out: u8[>..]&, events: u8[>..]&) -> i64 {
-    let none = no_client();
-    return feed(c, none, cfg, input, out, events);
+    return feed(c, cfg, input, out, events);
 }
 
 // Rekeying from the application's side.
-fn client_rekey(c: Conn&, cfg: const ClientConfig&, out: u8[>..]&) -> bool {
-    let none = no_server();
-    return rekey(c, cfg, none, out);
-}
+fn client_rekey(c: Conn&, cfg: const ClientConfig&, out: u8[>..]&) -> bool { rekey(c, cfg, out) }
 
-fn server_rekey(c: Conn&, cfg: const ServerConfig&, out: u8[>..]&) -> bool {
-    let none = no_client();
-    return rekey(c, none, cfg, out);
-}
+fn server_rekey(c: Conn&, cfg: const ServerConfig&, out: u8[>..]&) -> bool { rekey(c, cfg, out) }
