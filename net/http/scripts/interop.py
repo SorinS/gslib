@@ -46,6 +46,16 @@ def find_goose(arg):
     sys.exit("no goose compiler found: pass --goose or set GOOSE")
 
 
+# The Go toolchain builds the gointerop peer; Homebrew's and the official
+# installer's places are tried when go is not on PATH.
+def find_go():
+    for cand in [os.environ.get("GO"), shutil.which("go"), "/opt/homebrew/bin/go", "/usr/local/go/bin/go",
+                 "/usr/local/bin/go"]:
+        if cand and os.path.isfile(cand):
+            return cand
+    sys.exit("no go toolchain found (it builds tools/gointerop): put go on PATH or set GO")
+
+
 skipped = []
 
 
@@ -964,7 +974,7 @@ def main():
             if p.returncode != 0:
                 sys.exit(p.stdout + p.stderr)
         env = dict(os.environ, GOPROXY="off")
-        subprocess.run(["go", "build", "-o", os.path.join(tmp, "gointerop"), "."], cwd=os.path.join(tools, "gointerop"),
+        subprocess.run([find_go(), "build", "-o", os.path.join(tmp, "gointerop"), "."], cwd=os.path.join(tools, "gointerop"),
                        env=env, check=True)
         www = os.path.join(tmp, "root")
         os.makedirs(os.path.join(www, "sub"))
@@ -976,7 +986,7 @@ def main():
             f.write(big())
         os.symlink("/etc/passwd", os.path.join(www, "escape"))
         cert, key = os.path.join(tmp, "cert.pem"), os.path.join(tmp, "key.pem")
-        subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes",
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-pkeyopt", "ec_param_enc:named_curve", "-nodes",
                         "-keyout", key, "-out", cert, "-days", "2", "-subj", "/CN=localhost",
                         "-addext", "subjectAltName=DNS:localhost,DNS:origin.test,IP:127.0.0.1"], check=True, capture_output=True)
         httpd = os.path.join(tmp, "goose-httpd")

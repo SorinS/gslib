@@ -78,7 +78,8 @@ class Pki:
         if kind.startswith("rsa"):
             self.run(["genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:" + kind[3:], "-out", out])
         else:
-            self.run(["genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:" + kind, "-out", out])
+            self.run(["genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:" + kind,
+                      "-pkeyopt", "ec_param_enc:named_curve", "-out", out])
 
     def ca(self, name, cn, kind="rsa2048"):
         self.key(name, kind)

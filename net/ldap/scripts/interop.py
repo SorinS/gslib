@@ -88,9 +88,9 @@ def b64(v):
 def make_certs(d):
     def run(*a):
         subprocess.run(["openssl", *a], cwd=d, check=True, capture_output=True)
-    run("req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes", "-keyout", "ca.key",
+    run("req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-pkeyopt", "ec_param_enc:named_curve", "-nodes", "-keyout", "ca.key",
         "-out", "ca.pem", "-days", "2", "-subj", "/O=Goose Test/CN=Goose Test CA")
-    run("req", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes", "-keyout", "server.key",
+    run("req", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-pkeyopt", "ec_param_enc:named_curve", "-nodes", "-keyout", "server.key",
         "-out", "server.csr", "-subj", "/O=Goose Test/CN=localhost")
     with open(os.path.join(d, "server.ext"), "w") as f:
         f.write("subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1\nextendedKeyUsage=serverAuth\n")
@@ -102,7 +102,7 @@ def make_certs(d):
     run("x509", "-req", "-in", "client.csr", "-CA", "ca.pem", "-CAkey", "ca.key", "-CAcreateserial", "-out", "client.pem",
         "-days", "2", "-extfile", "client.ext")
     # A CA that signed nothing here, for the failures.
-    run("req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes", "-keyout", "other.key",
+    run("req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-pkeyopt", "ec_param_enc:named_curve", "-nodes", "-keyout", "other.key",
         "-out", "other.pem", "-days", "2", "-subj", "/CN=Some Other CA")
 
 
