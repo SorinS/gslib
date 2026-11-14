@@ -1,0 +1,11 @@
+RFC 9964, "ML-DSA for JSON Object Signing and Encryption (JOSE) and CBOR
+Object Signing and Encryption (COSE)", May 2026, Appendix A.1 (Figures 3,
+4 and 5): https://www.rfc-editor.org/rfc/rfc9964.txt
+
+The three JSON objects as the RFC prints them, with the line breaks of its
+text format removed; they are byte for byte those of
+draft-ietf-cose-dilithium-11 (15 November 2025). "priv" at the top is the
+seed in hex (all zeros), "jwk" the private JWK, whose "kid" is its RFC 7638
+thumbprint, "jws" a compact JWS of "It’s a dangerous business, Frodo,
+going out your door.", and the raw_* members its signing input, signature
+and public key in hex.

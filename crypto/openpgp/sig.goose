@@ -85,7 +85,7 @@ struct Signature {
     hashed:  u8[..4096] = [],        // the hashed subpacket area, as it is hashed
     left16:  u8[2]      = [0; 2],
     salt:    u8[..32]   = [],        // v6
-    mat:     u8[..1100] = [],        // the signature material
+    mat:     u8[..4800] = [],        // the signature material (ML-DSA-87+Ed448's is 4741)
     // From the subpackets (issuer data from either area, the rest hashed only).
     created:          i64        = 0,
     expires:          i64        = 0, // seconds after created; 0 never
@@ -105,7 +105,7 @@ struct Signature {
     pref_compression: u8[..8]    = [],
     pref_aead:        u8[..16]   = [],
     signer_uid:       u8[..256]  = [],
-    embedded:         u8[..1400] = [], // an embedded signature (a back-signature) packet body
+    embedded:         u8[..4096] = [], // an embedded signature (a back-signature) packet body
 }
 
 // A subpacket length: one, two or five octets.
@@ -284,8 +284,9 @@ fn sig_digest(s: const Signature&, data: const u8[:]) -> u8[>..] {
 // What a key signature hashes of a key: 0x99 and a 2-octet length (v4),
 // 0x9B and a 4-octet one (v6), then the public key packet's body.
 fn put_key_hash(out: u8[>..]&, k: const Key&) {
-    if k.version == 6 {
-        out.push(0x9B);
+    if k.version == 6 || k.version == 5 {
+        // v5 (LibrePGP; gpg's Kyber subkeys): 0x9A, the same 4-octet length.
+        out.push(if k.version == 6 { 0x9B } else { 0x9A });
         put32(out, k.body.len);
     } else {
         out.push(0x99);
@@ -338,7 +339,7 @@ struct SigParams {
     primary_uid: bool       = false,
     prefs:       bool       = false,
     signer_uid:  u8[..256]  = [],
-    embedded:    u8[..1400] = [],    // an embedded back-signature body
+    embedded:    u8[..4096] = [],    // an embedded back-signature body
 }
 
 fn now() -> i64 { time_ns() / 1000000000 }
@@ -367,6 +368,8 @@ fn be32_bytes(v: i64) -> u8[4] {
 // P-521 takes one at least as long as the curve (SHA-384, SHA-512), as gpg
 // requires to verify it.
 fn signing_hash(k: const Key&, hash: i64) -> i64 {
+    // RFC 9980 §5.3.1: 256 bits at least for the composite signatures.
+    if k.algo == PK_MLDSA65_ED25519 { return if hash_size(hash) >= 32 { hash } else { HASH_SHA256 }; }
     if k.algo != PK_ECDSA { return hash; }
     let need = if k.curve == CURVE_P384 { 48 } else if k.curve == CURVE_P521 { 64 } else { 32 };
     if hash_size(hash) >= need { return hash; }

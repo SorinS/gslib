@@ -21,6 +21,9 @@ language, written in Goose: a foundation for cryptography.
   encapsulation, constant time.
 - **`bignum.mldsa`**: ML-DSA-44/65/87 (FIPS 204), post-quantum signatures,
   hedged or deterministic, with contexts and external mu; constant time.
+- **`bignum.slhdsa`**: SLH-DSA (FIPS 205), stateless hash-based
+  signatures, all twelve SHA2 and SHAKE sets, hedged or deterministic,
+  with contexts, HashSLH-DSA and the internal interface.
 - **`bignum.hpke`**: HPKE (RFC 9180), all four modes, with DHKEM over
   P-256/384/521 and X25519, ML-KEM and the ML-KEM hybrids (X-Wing among
   them), HKDF and SHAKE KDFs, AES-GCM, ChaCha20-Poly1305 and export-only.
@@ -62,6 +65,8 @@ language, written in Goose: a foundation for cryptography.
 - **`bignum.sha512`**: SHA-512, SHA-384, SHA-512/224 and SHA-512/256.
 - **`bignum.sha1`**: SHA-1, for what still needs it.
 - **`bignum.sha3`**: SHA3-224/256/384/512, SHAKE128/256 and cSHAKE.
+- **`bignum.kmac`**: KMAC128 and KMAC256 (NIST SP 800-185), the keyed MAC
+  over cSHAKE; OpenPGP's post-quantum key combiner uses it.
 - **`bignum.md4`**, **`bignum.ripemd160`**: MD4 and RIPEMD-160, for the
   formats that still carry them.
 - **`bignum.md5`**: MD5, for what still needs it.
@@ -402,6 +407,55 @@ reductions with masked corrections and Decompose is a multiply and shift,
 so the secret side never divides or branches on secret values; the
 rejection loop's restarts are public, as the standard allows.
 
+### SLH-DSA
+
+The set is one of `SLHDSA_SHA2_128S`, `SLHDSA_SHA2_128F`, ... up to
+`SLHDSA_SHAKE_256F` (1 to 12, in the order of their OIDs, .20 to .31);
+`slhdsa_name(set)` gives "SLH-DSA-SHA2-128s" and so on, and
+`slhdsa_set_of_name` reads it back. `slhdsa_keygen(set)` gives the private
+key (SK.seed ‖ SK.prf ‖ PK.seed ‖ PK.root, 4n bytes) and the public key
+(PK.seed ‖ PK.root); `slhdsa_key_from_seed(set, seed)` makes them from the
+3n-byte seed openssl and ACVP take, and `slhdsa_keygen_internal` from its
+three parts. `slhdsa_public_key(set, sk)` is the key's tail, and
+`slhdsa_check_key` recomputes PK.root (as costly as a key generation).
+`slhdsa_sign(set, sk, msg, ctx = "")` is hedged (n fresh random bytes),
+`slhdsa_sign_deterministic` is not, and `slhdsa_sign_with` takes the
+randomness; contexts run to 255 bytes. `slhdsa_verify(set, pk, msg, sig,
+ctx = "")` refuses wrong lengths. HashSLH-DSA is `slhdsa_hash_sign(set, sk,
+msg, ph, ctx = "")` (and `_deterministic`, `_with`) and
+`slhdsa_hash_verify`, with `ph` one of hmac's `HASH_*` numbers for SHA-224
+to SHA-512, SHA-512/224, SHA-512/256 and SHA3-224 to SHA3-512, or
+`SLHDSA_PH_SHAKE128` / `SLHDSA_PH_SHAKE256`. `slhdsa_sign_internal` and
+`slhdsa_verify_internal` take the prepared message M', as ACVP's internal
+interface does.
+
+| Set | n | public key | signature | keygen | sign | verify |
+|---|---|---|---|---|---|---|
+| SHA2-128s | 16 | 32 | 7856 | 0.29 s | 2.3 s | 2 ms |
+| SHA2-128f | 16 | 32 | 17088 | 4 ms | 0.10 s | 6 ms |
+| SHA2-192s | 24 | 48 | 16224 | 0.47 s | 4.7 s | 4 ms |
+| SHA2-192f | 24 | 48 | 35664 | 7 ms | 0.20 s | 11 ms |
+| SHA2-256s | 32 | 64 | 29792 | 0.33 s | 4.3 s | 6 ms |
+| SHA2-256f | 32 | 64 | 49856 | 20 ms | 0.44 s | 12 ms |
+| SHAKE-128s | 16 | 32 | 7856 | 0.33 s | 2.5 s | 3 ms |
+| SHAKE-128f | 16 | 32 | 17088 | 5 ms | 0.12 s | 7 ms |
+| SHAKE-192s | 24 | 48 | 16224 | 0.54 s | 4.8 s | 4 ms |
+| SHAKE-192f | 24 | 48 | 35664 | 8 ms | 0.21 s | 12 ms |
+| SHAKE-256s | 32 | 64 | 29792 | 0.38 s | 4.5 s | 7 ms |
+| SHAKE-256f | 32 | 64 | 49856 | 24 ms | 0.57 s | 14 ms |
+
+(Under the JIT at -O2 on an Apple M-series machine; openssl is several
+times faster.) The "s" sets are slow by design, so the module spends its
+effort on the hashes: each tweakable hash is one compression, with SHA2's
+PK.seed block hashed once per key and its midstate kept, SHAKE's inputs
+absorbed a lane at a time, and Keccak-f and the SHA-256 and SHA-512
+compressions in local variables (unrolled), three to ten times faster than
+the general ones in `sha3`, `sha256` and `sha512`. Each XMSS and FORS tree
+is built once per signature, giving its root, the authentication path and
+the WOTS+ signature together. Secrets (SK.seed, SK.prf) only enter hashes;
+the tree and leaf indices, FORS indices and WOTS+ digits that the code
+branches on or indexes by are all in the signature.
+
 ### HPKE
 
 Algorithms are named by their RFC 9180 and draft-ietf-hpke-pq ids
@@ -692,6 +746,16 @@ tools/govectors.sh > test/vectors/xcrypto.txt   # regenerate it
   reproduced byte for byte (directly and through external mu), hedged
   signatures, and changed ones that must fail, malformed hint encodings
   among them. Go's crypto/mldsa agrees with every line.
+- `slhdsa_vectors`: SLH-DSA, all twelve sets (`scripts/slhdsa_vectors.py`):
+  openssl's keys from seeds and its deterministic signatures under empty,
+  short and 255-byte contexts, with changed and wrong-length ones it
+  refuses; and NIST ACVP's keys and signatures: HashSLH-DSA under each of
+  the twelve pre-hashes, the internal interface, hedged signing with given
+  randomness. The "f" sets are signed here three times (byte for byte),
+  SHA2-128s and SHAKE-128s once, and the other "s" sets' signatures, which
+  take seconds to make, are verified. Then hedged signing, a key check,
+  and refusals: another context, message, pre-hash or set, a context past
+  255 bytes, wrong lengths. About 15 s at -O2 and 45 s with --debug.
 - `hpke_vectors`: RFC 9180's test vectors in all four modes (DHKEM over
   P-256, P-521 and X25519; HKDF-SHA256 and -SHA512; every AEAD and
   export-only) and Go's post-quantum ones (ML-KEM-512/768/1024, the three
@@ -715,6 +779,8 @@ tools/govectors.sh > test/vectors/xcrypto.txt   # regenerate it
   and XTEA blocks and CBC, and AES-XTS; RC2-CBC at 40, 64 and 128
   effective bits from openssl; RFC 2268's RC2 and RFC 2144's CAST-128
   vectors.
+- `kmac_vectors`: KMAC128 and KMAC256 against NIST SP 800-185's samples
+  1 to 6, and lengths the samples lack, from openssl.
 - `ec_vectors`: P-256, P-384 and P-521 multiples of the generator (1, 2, n − 2,
   n − 1 and random ones), ECDH, and ECDSA matching RFC 6979 byte for byte.
   Signatures also go through DER and back. Off-curve points, bad
@@ -793,6 +859,9 @@ In gslib's `examples/bignum/`, run from gslib's top as `goose examples/bignum/<n
 - `ffdh_demo.goose`: finite-field Diffie-Hellman over MODP group 14, bad peer values refused.
 - `mlkem_demo.goose`: ML-KEM-768 encapsulation and decapsulation.
 - `mldsa_demo.goose`: ML-DSA-65 signatures, with contexts and external mu.
+- `slhdsa_demo.goose`: SLH-DSA-SHAKE-128f signatures, hedged and
+  deterministic, with a context and HashSLH-DSA, timed; the sizes of all
+  twelve sets.
 - `hpke_demo.goose`: HPKE base and auth modes, export, and X-Wing.
 - `nacl_demo.goose`: NaCl secretbox, box, sealed boxes, sign and auth.
 - `constant_time.goose`: the `ct` masks, select, swap and compare, Montgomery modexp and inverse.

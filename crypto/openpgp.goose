@@ -16,7 +16,10 @@
 //                       self-signatures checked; unlocking; export
 //   openpgp.message     signing, verifying, encrypting and decrypting
 //                       messages: detached, inline and cleartext
-//   openpgp.keygen      Ed25519 + Curve25519 (and RSA) key generation
+//   openpgp.keygen      Ed25519 + Curve25519 (and RSA) key generation, and
+//                       post-quantum keys: gpg 2.5's Kyber, RFC 9980's
+//   openpgp.pqc         the composite KEMs (RFC 9980's and LibrePGP's),
+//                       gpg-agent's S-expressions and their protection
 //   openpgp.dump        a packet listing, as gpg --list-packets
 //
 // All of it is in namespace openpgp. Every fallible function returns one of
@@ -100,6 +103,20 @@ let PK_X448:    i64 = 26;
 let PK_ED25519: i64 = 27;
 let PK_ED448:   i64 = 28;
 
+// Post-quantum (RFC 9980): composite ML-DSA + EdDSA signatures and
+// ML-KEM + ECDH encryption, on v6 keys (35 on v4 subkeys too).
+let PK_MLDSA65_ED25519: i64 = 30;
+let PK_MLDSA87_ED448:   i64 = 31;
+let PK_SLHDSA_128S:     i64 = 32;
+let PK_SLHDSA_128F:     i64 = 33;
+let PK_SLHDSA_256S:     i64 = 34;
+let PK_MLKEM768_X25519: i64 = 35;
+let PK_MLKEM1024_X448:  i64 = 36;
+// LibrePGP's composite Kyber (ML-KEM) + ECDH, on v5 subkeys: what gpg 2.5
+// makes ("ky768_cv25519"). gpg's own headers give 35 and 36 to Dilithium,
+// so its keys and RFC 9980's do not mix.
+let PK_KYBER: i64 = 8;
+
 // Symmetric ciphers.
 let CIPHER_PLAIN:       i64 = 0;
 let CIPHER_IDEA:        i64 = 1;
@@ -149,6 +166,13 @@ let OID_X25519:  const u8[:] = "\x2b\x06\x01\x04\x01\x97\x55\x01\x05\x01";
 let OID_P256:    const u8[:] = "\x2a\x86\x48\xce\x3d\x03\x01\x07";
 let OID_P384:    const u8[:] = "\x2b\x81\x04\x00\x22";
 let OID_P521:    const u8[:] = "\x2b\x81\x04\x00\x23";
+// RFC 8410's X25519 and X448 (1.3.101.110, .111), which gpg puts in its
+// Kyber keys, and the Brainpool curves of its default PQC key (named only).
+let OID_X25519_RFC8410: const u8[:] = "\x2b\x65\x6e";
+let OID_X448_RFC8410:   const u8[:] = "\x2b\x65\x6f";
+let OID_BP256:          const u8[:] = "\x2b\x24\x03\x03\x02\x08\x01\x01\x07";
+let OID_BP384:          const u8[:] = "\x2b\x24\x03\x03\x02\x08\x01\x01\x0b";
+let OID_BP512:          const u8[:] = "\x2b\x24\x03\x03\x02\x08\x01\x01\x0d";
 
 fn curve_of_oid(oid: const u8[:]) -> i64 {
     if oid == OID_ED25519 { return CURVE_ED25519; }
@@ -282,6 +306,16 @@ fn put_mpi(out: u8[>..]&, v: const u8[:]) {
     if s.len > 0 { bits = 8 * (s.len - 1) + 64 - ::clz(s[0]); }
     put16(out, bits);
     out.append(s);
+}
+
+// gpg's SOS (string of octets in MPI framing): every byte written, the bit
+// count from the first one when it is not zero (8 per byte when it is), as
+// gpg's sos_write does. A fixed-size value keeps its size.
+fn put_sos(out: u8[>..]&, v: const u8[:]) {
+    var bits: i64 = 8 * v.len;
+    if v.len > 0 && v[0] != 0 { bits = 8 * (v.len - 1) + 64 - ::clz(v[0]); }
+    put16(out, bits);
+    out.append(v);
 }
 
 // --- Hashes ----------------------------------------------------------------------

@@ -1,6 +1,7 @@
 // jwx.jws: JSON Web Signatures (RFC 7515), compact and JSON (general and
 // flattened), with detached payloads and RFC 7797's unencoded ones
-// ("b64": false), by every algorithm of RFC 7518 §3 and RFC 8037's EdDSA.
+// ("b64": false), by every algorithm of RFC 7518 §3, RFC 8037's EdDSA and
+// RFC 9964's ML-DSA-44, -65 and -87.
 //
 //   let token, err = jws::sign(payload, jwa::ES256, key);
 //   let payload, err = jws::verify(token, jwa::ES256, public_key);
@@ -22,6 +23,7 @@ import crypto.bignum.rsa;
 import crypto.bignum.ec;
 import crypto.bignum.ed25519;
 import crypto.bignum.hmac;
+import crypto.bignum.mldsa;
 
 // The header parameters RFC 7515 §4.1 and RFC 7797 define. Others, a
 // caller's own, go in `extra` when signing (JSON members, without braces:
@@ -51,7 +53,7 @@ struct Signature {
     protected_len: i64,
     unprotected_at: i64,
     unprotected_len: i64,
-    sig: u8[..1024],
+    sig: u8[..4627],            // up to ML-DSA-87's signature
 }
 
 // A parsed JWS. `payload` is the payload, decoded; `text` holds the parts
@@ -275,6 +277,9 @@ fn sign_bytes(input: const u8[:], alg: i64, key: const jwk::Key&) -> u8[>..], i6
     } else if jwa::is_ecdsa(alg) {
         let c = jwk::curve(key.crv);
         out.append(bignum::ecdsa_sign(c, key.d, input));
+    } else if jwa::is_mldsa(alg) {
+        // Hedged, with the empty context (RFC 9964 §5).
+        out.append(bignum::mldsa_sign(jwa::mldsa_set(alg), key.d, input));
     } else {
         out.append(bignum::ed25519_sign(key.d, input));
     }
@@ -300,6 +305,9 @@ fn verify_bytes(input: const u8[:], sig: const u8[:], alg: i64, key: const jwk::
     } else if jwa::is_ecdsa(alg) {
         let c = jwk::curve(key.crv);
         good = sig.len == 2 * jwa::crv_len(key.crv) && bignum::ecdsa_verify(c, jwk::ec_point(key), input, sig);
+    } else if jwa::is_mldsa(alg) {
+        let set = jwa::mldsa_set(alg);
+        good = sig.len == bignum::mldsa_sig_len(set) && bignum::mldsa_verify(set, key.pub, input, sig);
     } else {
         good = sig.len == 64 && bignum::ed25519_verify(key.x, input, sig);
     }
@@ -414,7 +422,7 @@ fn add_signature(m: Message&, protected_b64: const u8[:], unprotected: const u8[
     s.unprotected_len = unprotected.len;
     m.text.append(unprotected);
     var sig: u8[>..] = [];
-    if !jwx::b64_decode_append(sig, sig_b64) || sig.len > 1024 { return jwx::ERR_MALFORMED; }
+    if !jwx::b64_decode_append(sig, sig_b64) || sig.len > 4627 { return jwx::ERR_MALFORMED; }
     s.sig.append(sig);
     var htext: u8[>..] = [];
     if !jwx::b64_decode_append(htext, protected_b64) { return jwx::ERR_MALFORMED; }

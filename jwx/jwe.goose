@@ -38,12 +38,25 @@ import compress;
 import compress.flate;
 import compress.deflate;
 
-// jwx's limits: the highest PBES2 count accepted when decrypting, and the
-// most a "zip" payload may inflate to.
-let MAX_P2C: i64 = 10000;
+// jwx v4's limits: the PBES2 counts accepted when decrypting, from RFC 7518
+// §4.8.1.2's floor of 1000 to 1000000, and the most a "zip" payload may
+// inflate to.
+let MIN_P2C: i64 = 1000;
+let MAX_P2C: i64 = 1000000;
 let MAX_INFLATE: i64 = 10485760;
-// The PBES2 count used when encrypting, unless one is given.
-let DEFAULT_P2C: i64 = 10000;
+// The PBES2 counts used when encrypting, unless one is given: OWASP 2023's
+// for PBKDF2, as jwx v4 has them (HS384 and HS512 need fewer for their
+// longer output).
+let DEFAULT_P2C_HS256: i64 = 600000;
+let DEFAULT_P2C_HS384: i64 = 210000;
+let DEFAULT_P2C_HS512: i64 = 210000;
+
+// The PBES2 count used when encrypting with alg, unless one is given.
+fn default_p2c(alg: i64) -> i64 {
+    if alg == jwa::PBES2_HS384_A192KW { return DEFAULT_P2C_HS384; }
+    if alg == jwa::PBES2_HS512_A256KW { return DEFAULT_P2C_HS512; }
+    return DEFAULT_P2C_HS256;
+}
 
 // The header parameters of RFC 7516 §4.1 and RFC 7518 §4.6-4.8. Others go
 // in `extra` when encrypting and are read with header_string.
@@ -318,7 +331,7 @@ fn key_encrypt(h: Header&, alg: i64, enc: i64, key: const jwk::Key&, opts: const
     // PBES2: the key's bytes are the password.
     var p2s: u8[>..] = [];
     if opts.p2s.len > 0 { p2s.append(opts.p2s); } else { p2s.append(random(16)); }
-    let p2c = if opts.p2c > 0 { opts.p2c } else { DEFAULT_P2C };
+    let p2c = if opts.p2c > 0 { opts.p2c } else { default_p2c(alg) };
     let kek = pbes2_kek(alg, key.k, p2s, p2c);
     let w, ok = bignum::aes_key_wrap(kek, cek);
     ek.append(w);
@@ -329,7 +342,8 @@ fn key_encrypt(h: Header&, alg: i64, enc: i64, key: const jwk::Key&, opts: const
 }
 
 // The CEK of a recipient whose header is h and encrypted key ek, with key.
-fn key_decrypt(h: const Header&, key: const jwk::Key&, ek: const u8[:], max_p2c: i64) -> u8[>..], i64 {
+fn key_decrypt(h: const Header&, key: const jwk::Key&, ek: const u8[:], max_p2c: i64,
+               min_p2c: i64 = MIN_P2C) -> u8[>..], i64 {
     var cek: u8[>..] = [];
     let alg = h.alg;
     let enc = h.enc;
@@ -392,7 +406,7 @@ fn key_decrypt(h: const Header&, key: const jwk::Key&, ek: const u8[:], max_p2c:
     }
     // PBES2: a salt of 8 bytes or more (§4.8.1.1), a count within limits.
     if h.p2s.len < 8 || h.p2c < 1 { return cek, jwx::ERR_MALFORMED; }
-    if h.p2c > max_p2c { return cek, jwx::ERR_LIMIT; }
+    if h.p2c > max_p2c || h.p2c < min_p2c { return cek, jwx::ERR_LIMIT; }
     let kek = pbes2_kek(alg, key.k, h.p2s, h.p2c);
     let k, ok = bignum::aes_key_unwrap(kek, ek);
     if !ok || k.len != clen { return cek, jwx::ERR_DECRYPT; }
@@ -551,6 +565,11 @@ fn read_header(n: json::Node&, h: Header&, protected: bool) -> i64 {
             let k, e = jwk::from_node(m);
             if e != jwx::OK { return e; }
             if k.private || k.kty == jwa::KTY_OCT { return jwx::ERR_KEY; }
+            // An ephemeral key is an ECDH one: EC or X25519, never, say, an
+            // ML-DSA (AKP) key, which RFC 9964 defines for signatures only.
+            if name == "epk" && k.kty != jwa::KTY_EC && !(k.kty == jwa::KTY_OKP && k.crv == jwa::CRV_X25519) {
+                return jwx::ERR_KEY;
+            }
             if name == "epk" { h.epk = k; h.has_epk = true; } else { h.jwk = k; h.has_jwk = true; }
         }
     }
@@ -958,12 +977,12 @@ fn aad_of(m: const Message&) -> u8[>..] {
 
 // The plaintext of m for recipient i with key, if its alg is `alg`.
 fn decrypt_recipient(m: const Message&, i: i64, alg: i64, key: const jwk::Key&, max_p2c: i64,
-                     max_inflate: i64) -> u8[>..], i64 {
+                     max_inflate: i64, min_p2c: i64) -> u8[>..], i64 {
     var out: u8[>..] = [];
     let h = m.recipients[i].header;
     if h.alg != alg { return out, jwx::ERR_ALG_MISMATCH; }
     if h.crit.len > 0 { return out, jwx::ERR_CRIT; }
-    let cek, e = key_decrypt(h, key, m.recipients[i].ek, max_p2c);
+    let cek, e = key_decrypt(h, key, m.recipients[i].ek, max_p2c, min_p2c);
     if e != jwx::OK { return out, e; }
     let pt, ok = content_decrypt(h.enc, cek, m.iv, aad_of(m), m.ciphertext, m.tag);
     if !ok { return out, jwx::ERR_DECRYPT; }
@@ -985,14 +1004,14 @@ fn worse(a: i64, b: i64) -> i64 {
 // The plaintext of a JWE for `key` by the key management algorithm alg:
 // that of the first recipient whose alg it is and whose key it opens.
 fn decrypt(token: const u8[:], alg: i64, key: const jwk::Key&, max_p2c: i64 = MAX_P2C,
-           max_inflate: i64 = MAX_INFLATE) -> u8[>..], i64 {
+           max_inflate: i64 = MAX_INFLATE, min_p2c: i64 = MIN_P2C) -> u8[>..], i64 {
     var m = Message { .. };
     var out: u8[>..] = [];
     let e = parse(m, token);
     if e != jwx::OK { return out, e; }
     var err = jwx::ERR_ALG_MISMATCH;
     for i in m.recipients.len {
-        let pt, r = decrypt_recipient(m, i, alg, key, max_p2c, max_inflate);
+        let pt, r = decrypt_recipient(m, i, alg, key, max_p2c, max_inflate, min_p2c);
         if r == jwx::OK {
             out.append(pt);
             return out, jwx::OK;
@@ -1006,7 +1025,7 @@ fn decrypt(token: const u8[:], alg: i64, key: const jwk::Key&, max_p2c: i64 = MA
 // recipient's, or every key when the recipient names none. The algorithm
 // is the key's "alg", or with `infer` the recipient's if the key fits it.
 fn decrypt_set(token: const u8[:], keys: const jwk::Key[:], infer: bool = false, max_p2c: i64 = MAX_P2C,
-               max_inflate: i64 = MAX_INFLATE) -> u8[>..], i64 {
+               max_inflate: i64 = MAX_INFLATE, min_p2c: i64 = MIN_P2C) -> u8[>..], i64 {
     var m = Message { .. };
     var out: u8[>..] = [];
     let e = parse(m, token);
@@ -1023,7 +1042,7 @@ fn decrypt_set(token: const u8[:], keys: const jwk::Key[:], infer: bool = false,
                 if !infer || !jwk::fits(k, h.alg) { continue; }
                 alg = h.alg;
             }
-            let pt, r = decrypt_recipient(m, i, alg, k, max_p2c, max_inflate);
+            let pt, r = decrypt_recipient(m, i, alg, k, max_p2c, max_inflate, min_p2c);
             if r == jwx::OK {
                 out.append(pt);
                 return out, jwx::OK;

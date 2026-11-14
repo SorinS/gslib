@@ -1,7 +1,7 @@
-// jwx.jwa: the identifiers of JSON Web Algorithms (RFC 7518, RFC 8037 and
-// RFC 9864's fully specified "Ed25519"): signature, key management and
-// content encryption algorithms, key types and curves, with their names
-// and what each needs.
+// jwx.jwa: the identifiers of JSON Web Algorithms (RFC 7518, RFC 8037,
+// RFC 9864's fully specified "Ed25519" and RFC 9964's ML-DSA): signature,
+// key management and content encryption algorithms, key types and curves,
+// with their names and what each needs.
 
 namespace jwa;
 
@@ -26,6 +26,10 @@ let ES512: i64 = 12;
 let EDDSA: i64 = 13;
 let ED25519: i64 = 14;           // RFC 9864: EdDSA on Ed25519 by name
 let NONE: i64 = 15;
+// RFC 9964: ML-DSA (FIPS 204) with "AKP" keys, the empty context.
+let ML_DSA_44: i64 = 16;
+let ML_DSA_65: i64 = 17;
+let ML_DSA_87: i64 = 18;
 
 // --- Key management algorithms (RFC 7518 §4) ----------------------------------
 
@@ -65,6 +69,7 @@ let KTY_EC: i64 = 1;
 let KTY_RSA: i64 = 2;
 let KTY_OKP: i64 = 3;
 let KTY_OCT: i64 = 4;
+let KTY_AKP: i64 = 5;           // RFC 9964: Algorithm Key Pair, whose "alg" says what it is
 
 let CRV_UNKNOWN: i64 = 0;
 let CRV_P256: i64 = 1;
@@ -75,7 +80,7 @@ let CRV_X25519: i64 = 5;
 
 // Every algorithm, for looking names up.
 let ALL: i64[] = [HS256, HS384, HS512, RS256, RS384, RS512, PS256, PS384, PS512, ES256, ES384, ES512,
-                  EDDSA, ED25519, NONE,
+                  EDDSA, ED25519, NONE, ML_DSA_44, ML_DSA_65, ML_DSA_87,
                   RSA1_5, RSA_OAEP, RSA_OAEP_256, RSA_OAEP_384, RSA_OAEP_512, A128KW, A192KW, A256KW,
                   DIRECT, ECDH_ES, ECDH_ES_A128KW, ECDH_ES_A192KW, ECDH_ES_A256KW,
                   A128GCMKW, A192GCMKW, A256GCMKW, PBES2_HS256_A128KW, PBES2_HS384_A192KW, PBES2_HS512_A256KW,
@@ -97,6 +102,9 @@ fn name(a: i64) -> const u8[:] {
     if a == EDDSA { return "EdDSA"; }
     if a == ED25519 { return "Ed25519"; }
     if a == NONE { return "none"; }
+    if a == ML_DSA_44 { return "ML-DSA-44"; }
+    if a == ML_DSA_65 { return "ML-DSA-65"; }
+    if a == ML_DSA_87 { return "ML-DSA-87"; }
     if a == RSA1_5 { return "RSA1_5"; }
     if a == RSA_OAEP { return "RSA-OAEP"; }
     if a == RSA_OAEP_256 { return "RSA-OAEP-256"; }
@@ -134,7 +142,7 @@ fn lookup(s: const u8[:]) -> i64 {
     return UNKNOWN;
 }
 
-fn is_signature(a: i64) -> bool { a >= HS256 && a <= NONE }
+fn is_signature(a: i64) -> bool { a >= HS256 && a <= ML_DSA_87 }
 fn is_key_management(a: i64) -> bool { a >= RSA1_5 && a <= PBES2_HS512_A256KW }
 fn is_content(a: i64) -> bool { a >= A128CBC_HS256 && a <= A256GCM }
 
@@ -143,6 +151,24 @@ fn is_rsa_pkcs1(a: i64) -> bool { a >= RS256 && a <= RS512 }
 fn is_rsa_pss(a: i64) -> bool { a >= PS256 && a <= PS512 }
 fn is_ecdsa(a: i64) -> bool { a >= ES256 && a <= ES512 }
 fn is_eddsa(a: i64) -> bool { a == EDDSA || a == ED25519 }
+fn is_mldsa(a: i64) -> bool { a >= ML_DSA_44 && a <= ML_DSA_87 }
+
+// The FIPS 204 parameter set of an ML-DSA algorithm (44, 65 or 87), as
+// crypto/bignum's mldsa_* take it; 0 for the others.
+fn mldsa_set(a: i64) -> i64 {
+    if a == ML_DSA_44 { return 44; }
+    if a == ML_DSA_65 { return 65; }
+    if a == ML_DSA_87 { return 87; }
+    return 0;
+}
+
+// The ML-DSA algorithm of a parameter set.
+fn mldsa_alg(set: i64) -> i64 {
+    if set == 44 { return ML_DSA_44; }
+    if set == 65 { return ML_DSA_65; }
+    if set == 87 { return ML_DSA_87; }
+    return UNKNOWN;
+}
 
 fn is_rsa_kw(a: i64) -> bool { a >= RSA1_5 && a <= RSA_OAEP_512 }
 fn is_aes_kw(a: i64) -> bool { a >= A128KW && a <= A256KW }
@@ -202,11 +228,12 @@ fn kty_name(k: i64) -> const u8[:] {
     if k == KTY_RSA { return "RSA"; }
     if k == KTY_OKP { return "OKP"; }
     if k == KTY_OCT { return "oct"; }
+    if k == KTY_AKP { return "AKP"; }
     return "";
 }
 
 fn kty_lookup(s: const u8[:]) -> i64 {
-    for k in [KTY_EC, KTY_RSA, KTY_OKP, KTY_OCT] {
+    for k in [KTY_EC, KTY_RSA, KTY_OKP, KTY_OCT, KTY_AKP] {
         if kty_name(k) == s { return k; }
     }
     return KTY_UNKNOWN;
@@ -246,5 +273,6 @@ fn kty_of(a: i64) -> i64 {
     if is_rsa_pkcs1(a) || is_rsa_pss(a) || is_rsa_kw(a) { return KTY_RSA; }
     if is_ecdsa(a) { return KTY_EC; }
     if is_eddsa(a) { return KTY_OKP; }
+    if is_mldsa(a) { return KTY_AKP; }
     return KTY_UNKNOWN;     // ECDH-ES takes EC or OKP (X25519); none takes none
 }

@@ -13,17 +13,27 @@ and decrypt each other's messages.
     P-384 (ECDH, X9.63 KDF, AES key wrap; openssl's SHA-1 KDF and its
     SHA-256 one), AES-128/256-CBC (EnvelopedData) and AES-128/256-GCM
     (AuthEnvelopedData), several recipients, recipients by key identifier;
-  - sign-then-encrypt both ways.
+  - sign-then-encrypt both ways;
+  - post-quantum, when openssl has ML-DSA and ML-KEM (3.5 or later):
+    signing by ML-DSA-44, -65 and -87 (RFC 9882; openssl's SHAKE256
+    digest and its SHA-512 one), encryption to ML-KEM-512, -768 and -1024
+    certificates (KEMRecipientInfo, RFC 9629 and RFC 9936: HKDF, AES key
+    wrap, a ukm), with classic recipients beside them, sign-then-encrypt.
 
-Skips, and exits 0, when there is no openssl 3+.
+Skips, and exits 0, when there is no openssl 3+ (the post-quantum cases
+alone when it has no ML-DSA or ML-KEM).
 
     python3 scripts/interop_smime.py [--goose PATH] [--openssl PATH] [-k NAME]
     python3 scripts/interop_smime.py --write-vectors
+    python3 scripts/interop_smime.py --write-pq-vectors
 
 --write-vectors makes a new test PKI (test only: example.com and
 example.org addresses, keys made here for the tests and nothing else)
 and the fixed vectors the unit tests read: test/smime/ (certificates,
-keys, messages openssl made) and ../crypto/x509/test/cms_smime/vectors.txt.
+keys, messages openssl made) and ../crypto/x509/test/cms_smime/vectors.txt,
+then the post-quantum ones. --write-pq-vectors makes those alone, leaving
+the others as they are: a PKI of its own (an ML-DSA-65 root) in
+test/smime/pq/ and ../crypto/x509/test/cms_smime/pq_vectors.txt.
 """
 
 import argparse
@@ -54,6 +64,11 @@ PEOPLE = [  # name, address, key options, key usage
     ("dave", "dave@example.org", ["-algorithm", "ED25519"], "digitalSignature"),
     ("eve", "eve@example.com", ["-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:P-256"],
      "digitalSignature,keyAgreement"),   # serverAuth only: not for email
+]
+PQ_PEOPLE = [  # name, address, ML-DSA set (signing certificate), ML-KEM set (encryption certificate, name-kem)
+    ("frank", "frank@example.com", "ML-DSA-65", "ML-KEM-768"),
+    ("grace", "grace@example.org", "ML-DSA-44", "ML-KEM-512"),
+    ("heidi", "heidi@example.com", "ML-DSA-87", "ML-KEM-1024"),
 ]
 ENTITY = (b"Content-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: 7bit\r\n\r\n"
           b"Hello from OpenSSL.\r\nA second line, and a third:\r\n\r\n-- \r\nAlice\r\n")
@@ -149,6 +164,47 @@ def make_pki(d):
             fh.write(open(f(name + ".pem")).read() + open(f("inter.pem")).read())
 
 
+def has_pq():
+    """Whether openssl makes ML-DSA and ML-KEM keys."""
+    for alg in ("ML-DSA-44", "ML-KEM-512"):
+        if ossl("genpkey", "-algorithm", alg, check=False).returncode != 0:
+            return False
+    return True
+
+
+def make_pq_people(d, ca, ca_key, chain, serial):
+    """PQ_PEOPLE's certificates, issued by ca (PEM files in d): name.pem
+    (ML-DSA, for signing) and name-kem.pem (ML-KEM, keyEncipherment; made
+    with -force_pubkey, a KEM key signing no request), their keys, and
+    name-chain.pem with the certificates of chain (file names) after it."""
+    f = lambda n: os.path.join(d, n)
+    for i, (name, addr, dsa, kem) in enumerate(PQ_PEOPLE):
+        common = (f"basicConstraints=CA:FALSE\nextendedKeyUsage=emailProtection\nsubjectAltName=email:{addr}\n"
+                  "subjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid\n")
+        for suffix, alg, ku in (("", dsa, "digitalSignature"), ("-kem", kem, "keyEncipherment")):
+            n = name + suffix
+            ossl("genpkey", "-algorithm", alg, "-out", f(n + ".raw"))
+            with open(f(n + ".raw")) as src, open(f(n + ".key"), "w") as dst:
+                dst.write(KEY_NOTE + src.read())
+            os.remove(f(n + ".raw"))
+            with open(f(n + ".ext"), "w") as fh:
+                fh.write(f"keyUsage=critical,{ku}\n" + common)
+            subj = f"/O=Example Test/CN={name.capitalize()} ({'encryption, ' if suffix else ''}test)"
+            if suffix:
+                ossl("pkey", "-in", f(n + ".key"), "-pubout", "-out", f(n + ".pub"))
+                ossl("x509", "-new", "-force_pubkey", f(n + ".pub"), "-subj", subj, "-CA", f(ca), "-CAkey", f(ca_key),
+                     "-set_serial", str(serial + 2 * i + 1), "-days", "36500", "-extfile", f(n + ".ext"), "-out", f(n + ".pem"))
+                os.remove(f(n + ".pub"))
+            else:
+                ossl("req", "-new", "-key", f(n + ".key"), "-subj", subj, "-out", f(n + ".csr"))
+                ossl("x509", "-req", "-in", f(n + ".csr"), "-CA", f(ca), "-CAkey", f(ca_key),
+                     "-set_serial", str(serial + 2 * i), "-days", "36500", "-extfile", f(n + ".ext"), "-out", f(n + ".pem"))
+                os.remove(f(n + ".csr"))
+            os.remove(f(n + ".ext"))
+        with open(f(name + "-chain.pem"), "w") as fh:
+            fh.write(open(f(name + ".pem")).read() + "".join(open(f(c)).read() for c in chain))
+
+
 def der(d, name):
     return ossl("x509", "-in", os.path.join(d, name + ".pem"), "-outform", "DER").stdout
 
@@ -242,6 +298,93 @@ def write_vectors():
     with open(os.path.join(X509_VECTORS, "vectors.txt"), "w") as fh:
         fh.write("\n".join(lines) + "\n")
     print(f"wrote {os.path.normpath(X509_VECTORS)}/vectors.txt: {len(lines)} lines")
+    if has_pq():
+        write_pq_vectors()
+
+
+def write_pq_vectors():
+    """The post-quantum vectors alone: test/smime/pq/ and pq_vectors.txt."""
+    d = os.path.join(ROOT, "test", "smime", "pq")
+    if os.path.isdir(d):
+        shutil.rmtree(d)
+    os.makedirs(d)
+    f = lambda n: os.path.join(d, n)
+    ossl("genpkey", "-algorithm", "ML-DSA-65", "-out", f("root.key"))
+    ossl("req", "-x509", "-new", "-key", f("root.key"), "-subj", "/O=Example Test/CN=S-MIME PQ Test Root CA",
+         "-days", "36500", "-set_serial", "1", "-addext", "basicConstraints=critical,CA:TRUE",
+         "-addext", "keyUsage=critical,keyCertSign,cRLSign", "-addext", "subjectKeyIdentifier=hash",
+         "-out", f("root.pem"))
+    make_pq_people(d, "root.pem", "root.key", [], 0x2000)
+    os.remove(f("root.key"))
+    with open(f("entity.txt"), "wb") as fh:
+        fh.write(ENTITY)
+    hdr = ["-from", "Frank <frank@example.com>", "-to", "grace@example.org", "-subject", "From OpenSSL"]
+
+    def sign(out, who, *extra):
+        ossl("cms", "-sign", "-in", f("entity.txt"), "-signer", f(who + ".pem"), "-inkey", f(who + ".key"),
+             *hdr, "-out", f(out), *extra)
+
+    def enc(out, *extra, src="entity.txt"):
+        ossl("cms", "-encrypt", "-in", f(src), *hdr, "-out", f(out), *extra)
+
+    sign("ossl-signed-mldsa65.eml", "frank")
+    sign("ossl-signed-mldsa44-opaque.eml", "grace", "-nodetach")
+    sign("ossl-signed-mldsa87-sha512.eml", "heidi", "-md", "sha512")
+    enc("ossl-enc-mlkem768.eml", f("frank-kem.pem"))
+    enc("ossl-enc-mlkem512-gcm.eml", "-aes-128-gcm", f("grace-kem.pem"))
+    enc("ossl-enc-mlkem1024-keyid.eml", "-keyid", f("heidi-kem.pem"))
+    enc("ossl-enc-mlkem-ukm.eml", "-recip", f("frank-kem.pem"), "-recip_ukm", "0123456789abcdef",
+        "-recip_kdf", "HKDF-SHA384", "-recip", f("grace-kem.pem"))
+    ossl("cms", "-sign", "-in", f("entity.txt"), "-signer", f("frank.pem"), "-inkey", f("frank.key"),
+         "-out", f("signed.tmp"))
+    enc("ossl-sign-encrypt.eml", "-aes-256-gcm", f("grace-kem.pem"), src="signed.tmp")
+    os.remove(f("signed.tmp"))
+    print(f"wrote {d}")
+
+    # crypto/x509's, as vectors.txt: the keys, their other PKCS #8 forms,
+    # and CMS openssl made.
+    lines = []
+    for name, _, _, _ in PQ_PEOPLE:
+        for n in (name, name + "-kem"):
+            lines.append(f"key {n} {der(d, n).hex()} {pkcs8(d, n).hex()}")
+        for form in ("seed-only", "priv-only"):
+            for n, alg in ((name, "ml-dsa"), (name + "-kem", "ml-kem")):
+                if alg == "ml-dsa" and form == "priv-only":
+                    continue                           # refused, as Go refuses it
+                k = ossl("pkey", "-in", f(n + ".key"), "-provparam", f"{alg}.output_formats={form}",
+                         "-outform", "DER").stdout
+                lines.append(f"keyform {n} {form} {k.hex()}")
+    lines.append(f"content {ENTITY.hex()}")
+
+    def sv(label, who, detached, *extra):
+        out = ossl("cms", "-sign", "-binary", "-outform", "DER", "-in", f("entity.txt"), "-signer", f(who + ".pem"),
+                   "-inkey", f(who + ".key"), *([] if detached else ["-nodetach"]), *extra).stdout
+        lines.append(f"signed {label} {who} {1 if detached else 0} {out.hex()}")
+
+    def ev(label, who, *extra):
+        out = ossl("cms", "-encrypt", "-binary", "-outform", "DER", "-in", f("entity.txt"), *extra).stdout
+        lines.append(f"enveloped {label} {who} {out.hex()}")
+
+    sv("mldsa65-shake256", "frank", True)
+    sv("mldsa65-sha512-opaque", "frank", False, "-md", "sha512")
+    sv("mldsa44-sha256", "grace", True, "-md", "sha256")
+    sv("mldsa44-noattr", "grace", False, "-noattr")
+    sv("mldsa87-keyid", "heidi", True, "-keyid")
+    sv("mldsa87-ber", "heidi", False, "-stream")
+    ev("mlkem768", "frank-kem", f("frank-kem.pem"))
+    ev("mlkem512-aes128", "grace-kem", "-aes-128-cbc", f("grace-kem.pem"))
+    ev("mlkem1024-keyid", "heidi-kem", "-keyid", f("heidi-kem.pem"))
+    ev("mlkem768-gcm", "frank-kem", "-aes-256-gcm", f("frank-kem.pem"))
+    ev("mlkem512-gcm128", "grace-kem", "-aes-128-gcm", f("grace-kem.pem"))
+    ev("mlkem-ukm-hkdf384", "frank-kem", "-recip", f("frank-kem.pem"), "-recip_ukm", "00112233445566778899",
+       "-recip_kdf", "HKDF-SHA384")
+    ev("mlkem-hkdf512-aes192", "heidi-kem", "-aes-192-cbc", "-recip", f("heidi-kem.pem"), "-recip_kdf", "HKDF-SHA512")
+    ev("mlkem-multi", "frank-kem,grace-kem,heidi-kem", f("frank-kem.pem"), f("grace-kem.pem"), f("heidi-kem.pem"))
+    ev("mlkem-ber", "grace-kem", "-stream", f("grace-kem.pem"))
+    os.makedirs(X509_VECTORS, exist_ok=True)
+    with open(os.path.join(X509_VECTORS, "pq_vectors.txt"), "w") as fh:
+        fh.write("\n".join(lines) + "\n")
+    print(f"wrote {os.path.normpath(X509_VECTORS)}/pq_vectors.txt: {len(lines)} lines")
 
 
 # --- Interop ------------------------------------------------------------------------------
@@ -405,6 +548,138 @@ def run_interop(d):
                         f("theirs.eml"), f("out.eml"))
         got = open(f("out.eml"), "rb").read() if os.path.exists(f("out.eml")) else b""
         report(name, rc == 0 and "encrypted" in text and "signer ok" in text and got.endswith(ENTITY), text)
+    run_pq_interop(d)
+
+
+def run_pq_interop(d):
+    """The post-quantum cases: PQ_PEOPLE issued by run_interop's intermediate."""
+    f = lambda n: os.path.join(d, n)
+    if not has_pq():
+        skipped.append("post-quantum S/MIME interop: this openssl has no ML-DSA or ML-KEM")
+        return
+    make_pq_people(d, "inter.pem", "inter.key", ["inter.pem"], 0x3000)
+    with open(f("pqmsg.eml"), "wb") as fh:
+        fh.write(b"Date: Mon, 01 Jan 2030 00:00:00 +0000\r\nFrom: Frank <frank@example.com>\r\n"
+                 b"To: Grace <grace@example.org>\r\nSubject: Interop\r\nMessage-ID: <pq-interop@example.com>\r\n"
+                 b"MIME-Version: 1.0\r\n" + ENTITY)
+    body = b"Hello from OpenSSL."
+    addr = dict((p[0], p[1]) for p in PQ_PEOPLE)
+    signers = [("ml-dsa-65", "frank"), ("ml-dsa-44", "grace"), ("ml-dsa-87", "heidi")]
+
+    # Ours, checked by openssl.
+    for label, who in signers:
+        for opaque in (False, True):
+            name = f"sign {label}{' opaque' if opaque else ''}: ours -> openssl"
+            if not wanted(name):
+                continue
+            rc, text = tool("sign", *(["--opaque"] if opaque else []), *(["--keyid"] if who == "heidi" else []),
+                            f(who + "-chain.pem"), f(who + ".key"), f("pqmsg.eml"), f("ours.eml"))
+            if rc != 0:
+                report(name, False, text)
+                continue
+            p = ossl("cms", "-verify", "-in", f("ours.eml"), "-CAfile", f("root.pem"), "-purpose", "smimesign", check=False)
+            report(name, p.returncode == 0 and crlf(p.stdout) == ENTITY, p.stderr.decode())
+            if not opaque:
+                data = open(f("ours.eml"), "rb").read()
+                i = data.find(b"Hello from")
+                with open(f("bad.eml"), "wb") as fh:
+                    fh.write(data[:i] + b"J" + data[i + 1:])
+                p = ossl("cms", "-verify", "-in", f("bad.eml"), "-CAfile", f("root.pem"), check=False)
+                report(name + ", changed: refused", p.returncode != 0)
+
+    # Theirs, checked by ours: SHAKE256 (openssl's default) and SHA-512.
+    for label, who in signers:
+        for mode, extra in (("", []), (" opaque", ["-nodetach"]), (" BER", ["-stream"]), (" sha512", ["-md", "sha512"])):
+            name = f"sign {label}{mode}: openssl -> ours"
+            if not wanted(name):
+                continue
+            ossl("cms", "-sign", "-in", f("entity.txt"), "-signer", f(who + ".pem"), "-inkey", f(who + ".key"),
+                 "-certfile", f("inter.pem"), "-from", addr[who], "-subject", "Interop", *extra, "-out", f("theirs.eml"))
+            rc, text = tool("verify", "--roots", f("root.pem"), "--now", NOW, f("theirs.eml"), f("out.eml"))
+            got = open(f("out.eml"), "rb").read() if os.path.exists(f("out.eml")) else b""
+            report(name, rc == 0 and "signer ok" in text and body in got, text)
+            if os.path.exists(f("out.eml")):
+                os.remove(f("out.eml"))
+    name = "sign ml-dsa-65: openssl -> ours, changed: refused"
+    if wanted(name):
+        ossl("cms", "-sign", "-in", f("entity.txt"), "-signer", f("frank.pem"), "-inkey", f("frank.key"),
+             "-from", addr["frank"], "-out", f("theirs.eml"))
+        data = open(f("theirs.eml"), "rb").read()
+        i = data.find(b"Hello from")
+        open(f("theirs.eml"), "wb").write(data[:i] + b"J" + data[i + 1:])
+        rc, text = tool("verify", f("theirs.eml"))
+        report(name, rc != 0 and "signature does not verify" in text, text)
+
+    # Encryption, ours -> openssl.
+    encs = [  # label, goose-mail options, recipients
+        ("ml-kem-768", [], ["frank-kem"]),
+        ("ml-kem-512 aes128-gcm", ["--cipher", "aes128-gcm"], ["grace-kem"]),
+        ("ml-kem-1024 keyid", ["--keyid"], ["heidi-kem"]),
+        ("ml-kem with rsa and ec", ["--cipher", "aes256-gcm"], ["frank-kem", "alice", "bob", "heidi-kem"]),
+    ]
+    for label, opts, rcpts in encs:
+        name = f"encrypt {label}: ours -> openssl"
+        if not wanted(name):
+            continue
+        rc, text = tool("encrypt", *opts, f("pqmsg.eml"), f("ours.eml"), *[f(r + ".pem") for r in rcpts])
+        if rc != 0:
+            report(name, False, text)
+            continue
+        for r in rcpts:
+            p = ossl("cms", "-decrypt", "-in", f("ours.eml"), "-recip", f(r + ".pem"), "-inkey", f(r + ".key"),
+                     check=False)
+            report(f"{name} ({r})", p.returncode == 0 and crlf(p.stdout) == ENTITY, p.stderr.decode())
+
+    # Encryption, openssl -> ours.
+    hdr = ["-from", "Frank <frank@example.com>", "-to", "grace@example.org", "-subject", "Interop"]
+    theirs = [  # label, openssl arguments (recipients included), who decrypts
+        ("ml-kem-768", [f("frank-kem.pem")], "frank-kem"),
+        ("ml-kem-512 aes-128-gcm", ["-aes-128-gcm", f("grace-kem.pem")], "grace-kem"),
+        ("ml-kem-1024 aes-192-cbc keyid", ["-aes-192-cbc", "-keyid", f("heidi-kem.pem")], "heidi-kem"),
+        ("ml-kem ukm hkdf-sha384", ["-recip", f("frank-kem.pem"), "-recip_ukm", "a1b2c3d4e5f6",
+                                    "-recip_kdf", "HKDF-SHA384"], "frank-kem"),
+        ("ml-kem hkdf-sha512", ["-recip", f("grace-kem.pem"), "-recip_kdf", "HKDF-SHA512"], "grace-kem"),
+        ("ml-kem with rsa and ec", [f("alice.pem"), f("bob.pem"), f("heidi-kem.pem")], "heidi-kem"),
+        ("ml-kem BER", ["-stream", f("frank-kem.pem")], "frank-kem"),
+    ]
+    for label, args, who in theirs:
+        name = f"encrypt {label}: openssl -> ours"
+        if not wanted(name):
+            continue
+        ossl("cms", "-encrypt", "-in", f("entity.txt"), *hdr, "-out", f("theirs.eml"), *args)
+        rc, text = tool("decrypt", f(who + ".pem"), f(who + ".key"), f("theirs.eml"), f("out.eml"))
+        got = open(f("out.eml"), "rb").read() if os.path.exists(f("out.eml")) else b""
+        report(name, rc == 0 and "encrypted" in text and got.endswith(ENTITY), text)
+        if os.path.exists(f("out.eml")):
+            os.remove(f("out.eml"))
+    name = "encrypt ml-kem: openssl -> ours, not a recipient: refused"
+    if wanted(name):
+        ossl("cms", "-encrypt", "-in", f("entity.txt"), "-out", f("theirs.eml"), f("frank-kem.pem"))
+        rc, text = tool("decrypt", f("grace-kem.pem"), f("grace-kem.key"), f("theirs.eml"))
+        report(name, rc != 0 and "does not decrypt" in text, text)
+
+    # Sign, then encrypt.
+    name = "sign-encrypt ml-dsa, ml-kem: ours -> openssl"
+    if wanted(name):
+        rc, text = tool("sign-encrypt", f("frank-chain.pem"), f("frank.key"), f("pqmsg.eml"), f("ours.eml"),
+                        f("grace-kem.pem"), f("frank-kem.pem"))
+        ok = rc == 0
+        if ok:
+            p = ossl("cms", "-decrypt", "-in", f("ours.eml"), "-recip", f("grace-kem.pem"), "-inkey", f("grace-kem.key"),
+                     check=False)
+            q = ossl("cms", "-verify", "-CAfile", f("root.pem"), input=p.stdout, check=False)
+            ok = p.returncode == 0 and q.returncode == 0 and crlf(q.stdout) == ENTITY
+            text = p.stderr.decode() + q.stderr.decode()
+        report(name, ok, text)
+    name = "sign-encrypt ml-dsa, ml-kem: openssl -> ours"
+    if wanted(name):
+        ossl("cms", "-sign", "-in", f("entity.txt"), "-signer", f("frank.pem"), "-inkey", f("frank.key"),
+             "-certfile", f("inter.pem"), "-out", f("signed.tmp"))
+        ossl("cms", "-encrypt", "-in", f("signed.tmp"), *hdr, "-aes-256-gcm", "-out", f("theirs.eml"), f("grace-kem.pem"))
+        rc, text = tool("decrypt", "--roots", f("root.pem"), "--now", NOW, f("grace-kem.pem"), f("grace-kem.key"),
+                        f("theirs.eml"), f("out.eml"))
+        got = open(f("out.eml"), "rb").read() if os.path.exists(f("out.eml")) else b""
+        report(name, rc == 0 and "encrypted" in text and "signer ok" in text and got.endswith(ENTITY), text)
 
 
 def main():
@@ -414,6 +689,7 @@ def main():
     ap.add_argument("--openssl")
     ap.add_argument("-k", help="only cases whose name contains this")
     ap.add_argument("--write-vectors", action="store_true", help="remake the test PKI and the fixed vectors")
+    ap.add_argument("--write-pq-vectors", action="store_true", help="remake the post-quantum fixed vectors alone")
     args = ap.parse_args()
     only = args.k
     OPENSSL = find_openssl(args.openssl)
@@ -422,6 +698,12 @@ def main():
         return 0
     if args.write_vectors:
         write_vectors()
+        return 0
+    if args.write_pq_vectors:
+        if not has_pq():
+            print("skip  post-quantum vectors: this openssl has no ML-DSA or ML-KEM")
+            return 0
+        write_pq_vectors()
         return 0
     goose = find_goose(args.goose)
     with tempfile.TemporaryDirectory() as tmp:

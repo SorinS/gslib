@@ -10,7 +10,13 @@
 //   goose-pgp export [--secret] [-k KEYS]... WHO OUT
 //   goose-pgp armor message|signature|public|private IN OUT
 //   goose-pgp dearmor IN OUT
-//   goose-pgp genkey [--pass-file F] "Name <email>" SECRET_OUT [PUBLIC_OUT]
+//   goose-pgp genkey [--pass-file F] [--type T] "Name <email>" SECRET_OUT [PUBLIC_OUT]
+//
+// genkey's --type: ed25519 (the default: Ed25519 + Curve25519, as gpg's
+// default), rsa (RSA-3072), pqc (gpg 2.5's post-quantum key: Ed25519 with a
+// v5 ML-KEM-768+X25519 Kyber subkey, which gpg encrypts to) or rfc9980 (v6
+// ML-DSA-65+Ed25519 with an ML-KEM-768+X25519 subkey, which gpg does not
+// read).
 //
 // --pass-file FILE gives the passphrase that unlocks the keys and opens
 // (or, with --symmetric, makes) a passphrase-encrypted message; it is read
@@ -69,6 +75,7 @@ root struct Opts {
     do_sign:           bool                  = false,
     secret:            bool                  = false,
     allow_unprotected: bool                  = false,
+    key_type:          u8[>..]               = [],
     w:                 openpgp::WriteOptions = openpgp::WriteOptions { .. },
     rest:              i64[>..]              = [], // the indices of the arguments that are not options
 }
@@ -98,6 +105,7 @@ fn parse_opts(a, o: Opts&) {
             if f == "-k" { add_name(o.keys, v); }
             else if f == "-u" { o.signer.clear(); o.signer.append(v); }
             else if f == "-r" { add_name(o.recipients, v); }
+            else if f == "--type" { o.key_type.clear(); o.key_type.append(v); }
             else if f == "--pass-file" {
                 var p = slurp(v);
                 while p.len > 0 && (p[p.len - 1] == '\n' || p[p.len - 1] == '\r') { p.resize(p.len - 1); }
@@ -308,7 +316,13 @@ fn main() {
     } else if cmd == "genkey" {
         if o.rest.len < 2 || o.rest.len > 3 { usage(); }
         let pass = if o.has_pass { o.pass[..] } else { "" };
-        let e = openpgp::generate_key(kr, a[o.rest[0]], o.w.created);
+        let t = o.key_type[..];
+        var e = openpgp::OK;
+        if t.len == 0 || t == "ed25519" { e = openpgp::generate_key(kr, a[o.rest[0]], o.w.created); }
+        else if t == "rsa" { e = openpgp::generate_rsa_key(kr, a[o.rest[0]], 3072, o.w.created); }
+        else if t == "pqc" { e = openpgp::generate_pqc_key(kr, a[o.rest[0]], o.w.created); }
+        else if t == "rfc9980" { e = openpgp::generate_rfc9980_key(kr, a[o.rest[0]], o.w.created); }
+        else { usage(); }
         if e != openpgp::OK { fail("genkey", e); }
         var sec: u8[>..] = [];
         let es = openpgp::export_secret(kr, 0, sec, o.w.armored, pass);

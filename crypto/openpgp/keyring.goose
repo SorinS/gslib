@@ -27,6 +27,7 @@ import crypto.openpgp;
 import crypto.openpgp.armor;
 import crypto.openpgp.packet;
 import crypto.openpgp.key;
+import crypto.openpgp.pqc;
 import crypto.openpgp.sig;
 
 struct Uid {
@@ -104,6 +105,9 @@ fn handle_signature(kr: Keyring&, st: ReadState&, body: const u8[:]) {
     // On a subkey.
     if t != SIG_SUBKEY_BINDING && t != SIG_SUBKEY_REVOCATION { return; }
     let sk = kr.keys[st.sub];
+    // RFC 9980 §7.2: a post-quantum subkey's binding is not by SHA-1 or
+    // RIPEMD-160.
+    if (is_pq_kem(sk.algo) || is_pq_sig(sk.algo)) && (s.hash == HASH_SHA1 || s.hash == HASH_RIPEMD160) { return; }
     put_key_hash(data, sk);
     if verify_signature(pk, s, data) != OK { return; }
     if t == SIG_SUBKEY_REVOCATION { kr.keys[st.sub].revoked = true; return; }

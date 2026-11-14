@@ -174,25 +174,45 @@ fn check_signatures(kr: const Keyring&, m: Message&, now: i64) {
 struct Session { cipher: i64 = 0, key: u8[..32] = [], from_pass: bool = false, by: i64 = -1 }
 
 // The session key of a PKESK, if a secret key of the keyring opens it.
+// v3: key ID, algorithm, fields; v6 (RFC 9580 §5.1.2): the length of the
+// key version and fingerprint that follow (0: anyone's), the algorithm,
+// fields, and no cipher: SEIPD v2 names it.
 fn open_pkesk(kr: const Keyring&, body: const u8[:], ss: Session[>..]&) -> i64 {
     if body.len < 10 { return ERR_MALFORMED; }
-    if body[0] != 3 { return ERR_UNSUPPORTED; }
-    let keyid = body[1..9];
-    let algo: i64 = body[9];
-    let mat = body[10..];
-    let wildcard = keyid == "\x00\x00\x00\x00\x00\x00\x00\x00";
+    if body[0] != 3 && body[0] != 6 { return ERR_UNSUPPORTED; }
+    let v6 = body[0] == 6;
+    var at = 9;
+    var id = body[1..9];
+    if v6 {
+        let n: i64 = body[1];
+        if n != 0 && n != 21 && n != 33 { return ERR_MALFORMED; }
+        if 2 + n >= body.len { return ERR_MALFORMED; }
+        id = body[3..2 + n];
+        at = 2 + n;
+        if n == 0 { id = body[..0]; }
+    }
+    let algo: i64 = body[at];
+    let mat = body[at + 1..];
+    let wildcard = id.len == 0 || id == "\x00\x00\x00\x00\x00\x00\x00\x00";
     var result = ERR_NO_KEY;
     for i in kr.keys.len {
         let k = kr.keys[i];
         if !k.has_secret || k.stub { continue; }
-        if !wildcard && k.keyid[..] != keyid { continue; }
+        if !wildcard && (if id.len == 8 { k.keyid[..] != id } else { k.fpr[..] != id || k.version != body[2] }) { continue; }
         if k.algo != algo && !(is_rsa(k.algo) && is_rsa(algo)) { continue; }
         if k.locked { result = ERR_PASSPHRASE; continue; }
         var m: u8[>..] = [];
-        let e = decrypt_session(k, mat, m);
+        let e = decrypt_session(k, mat, m, v6);
         if e != OK { if result == ERR_NO_KEY { result = e; } continue; }
-        var key: u8[>..] = [];
-        let cipher, e2 = decode_session(m, key, algo != PK_X25519);
+        var key:    u8[>..] = [];
+        var cipher: i64     = 0;
+        var e2 = OK;
+        if v6 { e2 = decode_session_v6(m, key, !session_no_checksum(algo)); }
+        else {
+            let c, ec = decode_session(m, key, !session_no_checksum(algo));
+            cipher = c;
+            e2 = ec;
+        }
         if e2 != OK { if result == ERR_NO_KEY { result = e2; } continue; }
         var s = Session { cipher: cipher, by: i };
         s.key.append(key);

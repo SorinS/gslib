@@ -1,4 +1,5 @@
-// differential: gslib's jwx against Go's lestrrat-go/jwx (v3), both ways.
+// differential: gslib's jwx against Go's lestrrat-go/jwx (v4, whose ML-DSA
+// needs Go 1.27's crypto/mldsa), both ways.
 //
 //	go run . gen [-n N] > ../../test/vectors/go_jwx.txt
 //	    tokens made by Go's jwx, for test/go_jwx.goose to verify and decrypt
@@ -16,6 +17,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
+	"crypto/mldsa"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
@@ -24,14 +26,14 @@ import (
 	"os"
 	"strings"
 
-	"github.com/lestrrat-go/jwx/v3/jwa"
-	"github.com/lestrrat-go/jwx/v3/jwe"
-	"github.com/lestrrat-go/jwx/v3/jwk"
-	"github.com/lestrrat-go/jwx/v3/jws"
+	"github.com/lestrrat-go/jwx/v4/jwa"
+	"github.com/lestrrat-go/jwx/v4/jwe"
+	"github.com/lestrrat-go/jwx/v4/jwk"
+	"github.com/lestrrat-go/jwx/v4/jws"
 )
 
 var sigAlgs = []string{"HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "PS256", "PS384", "PS512",
-	"ES256", "ES384", "ES512", "EdDSA"}
+	"ES256", "ES384", "ES512", "EdDSA", "ML-DSA-44", "ML-DSA-65", "ML-DSA-87"}
 
 var keyAlgs = []string{"RSA1_5", "RSA-OAEP", "RSA-OAEP-256", "RSA-OAEP-384", "RSA-OAEP-512",
 	"A128KW", "A192KW", "A256KW", "dir", "ECDH-ES", "ECDH-ES+A128KW", "ECDH-ES+A192KW", "ECDH-ES+A256KW",
@@ -70,6 +72,12 @@ func sigKey(alg string) any {
 		return must(ecdsa.GenerateKey(elliptic.P384(), rand.Reader))
 	case alg == "ES512":
 		return must(ecdsa.GenerateKey(elliptic.P521(), rand.Reader))
+	case alg == "ML-DSA-44":
+		return must(mldsa.GenerateKey(mldsa.MLDSA44()))
+	case alg == "ML-DSA-65":
+		return must(mldsa.GenerateKey(mldsa.MLDSA65()))
+	case alg == "ML-DSA-87":
+		return must(mldsa.GenerateKey(mldsa.MLDSA87()))
 	default:
 		_, k := must2(ed25519.GenerateKey(rand.Reader))
 		return k
@@ -125,10 +133,12 @@ func line(kind, alg, enc string, zip bool, key jwk.Key, pl string, msg []byte) {
 }
 
 func gen(n int) {
+	// PBES2 at v4's own counts (OWASP 2023's: 600000 for PBES2-HS256+A128KW,
+	// 210000 for the others), which gslib's jwx encrypts with and accepts too.
 	for r := 0; r < n; r++ {
 		for i, name := range sigAlgs {
 			alg := must1(jwa.LookupSignatureAlgorithm(name))
-			key := must(jwk.Import(sigKey(name)))
+			key := must(jwk.Import[jwk.Key](sigKey(name)))
 			pl := payload(r*100 + i)
 			line("jws", name, "-", false, key, pl, must(jws.Sign([]byte(pl), jws.WithKey(alg, key))))
 			line("jws-json", name, "-", false, key, pl, must(jws.Sign([]byte(pl), jws.WithKey(alg, key), jws.WithJSON())))
@@ -137,7 +147,7 @@ func gen(n int) {
 			alg := must1(jwa.LookupKeyEncryptionAlgorithm(name))
 			for j, encName := range encs {
 				enc := must1(jwa.LookupContentEncryptionAlgorithm(encName))
-				key := must(jwk.Import(encKey(name, encName, i+j+r)))
+				key := must(jwk.Import[jwk.Key](encKey(name, encName, i+j+r)))
 				pub := key
 				if !strings.HasPrefix(name, "A") && name != "dir" && !strings.HasPrefix(name, "PBES2") {
 					pub = must(jwk.PublicKeyOf(key))

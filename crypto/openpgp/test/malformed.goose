@@ -20,7 +20,9 @@ import tv;
 let V = "vectors/";
 let FILES = ["ed.pub", "ed.sec", "prot.sec", "rsa.pub", "enc_ed.gpg", "enc_rsa.asc", "enc_signed.gpg", "enc_bzip2.gpg",
              "sym.gpg", "sym_aes128_zlib.asc", "sig_inline.gpg", "sig_inline_rsa.asc", "det.sig", "det_rsa.asc",
-             "clear.asc", "rfc9580_a3_cert.asc", "rfc9580_a4_secret.asc", "rfc9580_a7_inline.asc", "rfc9580_a6_cleartext.asc"];
+             "clear.asc", "rfc9580_a3_cert.asc", "rfc9580_a4_secret.asc", "rfc9580_a7_inline.asc", "rfc9580_a6_cleartext.asc",
+             "pqc.sec", "pqc_prot.sec", "enc_pqc.gpg", "enc_pqc_signed.gpg", "rfc9980_a1_cert.asc", "rfc9980_a1_msg.asc",
+             "rfc9980_a2_msg_seipd1.asc", "rfc9980_a3_sig.asc"];
 
 var calls = 0;
 
@@ -48,6 +50,10 @@ fn all_readers(kr: const openpgp::Keyring&, data: const u8[:], msg: const u8[:],
 fn main() {
     var kr = openpgp::Keyring { .. };
     let ek = openpgp::add_keys(kr, tv::read(str(V, "ed.sec")));
+    // Post-quantum: gpg's Kyber key, RFC 9980's A.1 and A.2 keys and A.3's ML-DSA certificate.
+    for f in ["pqc.sec", "rfc9980_a1_secret.asc", "rfc9980_a2_secret.asc", "rfc9980_a3_cert.asc"] {
+        let ep = openpgp::add_keys(kr, tv::read(str(V, f)));
+    }
     var pass = tv::read(str(V, "passphrase.txt"));
     pass.resize(pass.len - 1);
     let msg = tv::read(str(V, "msg.txt"));
@@ -79,7 +85,7 @@ fn main() {
                 o.passphrase.append(pass);
                 let e = openpgp::read_message(kr, bad, m, o);
                 if e == openpgp::OK && openpgp::signature_status(m) == openpgp::OK && form == 1 {
-                    tv::check(str(f, " changed at ", at, " still verifies"), m.data[..] == msg[..] || f == "rfc9580_a7_inline.asc");
+                    tv::check(str(f, " changed at ", at, " still verifies"), m.data[..] == msg[..] || m.data[..] == "Testing\n" || f == "rfc9580_a7_inline.asc");
                 }
                 bad[at] = was;
             }

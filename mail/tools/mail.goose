@@ -77,7 +77,9 @@
 //
 // S/MIME: certificates and keys are PEM files (a certificate file may hold
 // a chain: the first is the signer's or recipient's, the others are sent
-// with a signature). Messages are RFC 5322 files, CRLF or LF.
+// with a signature). Messages are RFC 5322 files, CRLF or LF. RSA, EC,
+// Ed25519 and ML-DSA keys sign; RSA, EC and ML-KEM certificates are
+// encrypted to.
 //   goose-mail smime sign [options] CERT KEY IN OUT            multipart/signed (--opaque: pkcs7-mime)
 //   goose-mail smime encrypt [options] IN OUT RCERT...         enveloped (--cipher *-gcm: authEnveloped)
 //   goose-mail smime sign-encrypt [options] CERT KEY IN OUT RCERT...
@@ -86,7 +88,7 @@
 // Options:
 //   --opaque            sign as application/pkcs7-mime; smime-type=signed-data
 //   --pss               RSA keys sign with RSASSA-PSS
-//   --hash N            256 (default), 384 or 512
+//   --hash N            256 (default), 384 or 512 (Ed25519, ML-DSA: always 512)
 //   --keyid             signer and recipients by subject key identifier
 //   --time T            signingTime, seconds since 1970 (default now; -1: none)
 //   --boundary B        multipart/signed's boundary (default random)

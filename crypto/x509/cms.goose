@@ -24,8 +24,11 @@
 // For S/MIME (RFC 8551), cms_sign_with also signs id-data (SignedData
 // version 1), detached (eContent absent) or not, with the signingTime and
 // smimeCapabilities attributes when asked, the signer named by key
-// identifier when asked (version 3), and by Ed25519 too (RFC 8419: the
-// digest SHA-512, the signature over the attributes themselves).
+// identifier when asked (version 3), by Ed25519 too (RFC 8419: the
+// digest SHA-512, the signature over the attributes themselves), and by
+// ML-DSA (RFC 9882: pure ML-DSA-44, -65 or -87 with the empty context over
+// the attributes, or the content without them; the digest SHA-512 when
+// made, and SHA-256, -384, -512, SHAKE128 or SHAKE256 when read).
 // cms_verify_detached checks a signature over content sent beside it;
 // over id-data the signed attributes may be absent, the signature then
 // over the content. cms_der reads BER (indefinite lengths, constructed
@@ -40,6 +43,7 @@ import crypto.x509.keys;
 import encoding.asn1;
 import crypto.bignum;
 import crypto.bignum.hmac;
+import crypto.bignum.sha3;
 
 let OID_CMS_DATA: const u8[:] = "1.2.840.113549.1.7.1";
 let OID_CMS_SIGNED_DATA: const u8[:] = "1.2.840.113549.1.7.2";
@@ -49,6 +53,14 @@ let OID_RSA_ENCRYPTION: const u8[:] = "1.2.840.113549.1.1.1";
 let OID_CMS_SIGNING_TIME: const u8[:] = "1.2.840.113549.1.9.5";
 let OID_SMIME_CAPABILITIES: const u8[:] = "1.2.840.113549.1.9.15";
 let OID_ED25519: const u8[:] = "1.3.101.112";
+let OID_SHAKE128: const u8[:] = "2.16.840.1.101.3.4.2.11";
+let OID_SHAKE256: const u8[:] = "2.16.840.1.101.3.4.2.12";
+
+// Digests beyond SHA-1 and SHA-2 (160, 256, 384, 512): SHAKE128 with a
+// 32-byte output and SHAKE256 with a 64-byte one (RFC 8702), which ML-DSA
+// signers may use (RFC 9882; openssl's default for them is SHAKE256).
+let CMS_SHAKE128: i64 = 4128;
+let CMS_SHAKE256: i64 = 4256;
 
 // What cms_sign_with does beyond cms_sign.
 struct CmsSignOptions {
@@ -117,17 +129,28 @@ fn cms_less(a: const u8[:], b: const u8[:]) -> bool {
 
 fn cms_digest_alg_id(out: u8[>..]&, h: i64) {
     var body: u8[>..] = [];
-    asn1::put_oid(body, if h == 160 { "1.3.14.3.2.26" } else { hash_oid(h) });
+    asn1::put_oid(body, if h == 160 { "1.3.14.3.2.26" } else if h == CMS_SHAKE128 { OID_SHAKE128 }
+                        else if h == CMS_SHAKE256 { OID_SHAKE256 } else { hash_oid(h) });
     asn1::put(out, asn1::SEQUENCE, body);
 }
 
-// The hash (160, 256, 384, 512) a digest AlgorithmIdentifier names
-// (parameters absent or NULL), or 0.
+// The hash (160, 256, 384, 512, CMS_SHAKE128, CMS_SHAKE256) a digest
+// AlgorithmIdentifier names (parameters absent or NULL; absent for SHAKE),
+// or 0.
 fn cms_digest_of(der: const u8[:], t: asn1::Tlv) -> i64 {
     let p, ok = asn1::children_of(der, t, asn1::SEQUENCE);
     if !ok || p.len < 1 || p.len > 2 || (p.len == 2 && !asn1::read_null(der, p[1])) { return 0; }
     if asn1::oid_is(der, p[0], "1.3.14.3.2.26") { return 160; }
+    if asn1::oid_is(der, p[0], OID_SHAKE128) && p.len == 1 { return CMS_SHAKE128; }
+    if asn1::oid_is(der, p[0], OID_SHAKE256) && p.len == 1 { return CMS_SHAKE256; }
     return hash_of_oid(der, p[0]);
+}
+
+// The digest of data by h (a hash cms_digest_of gives).
+fn cms_hash(h: i64, data: const u8[:]) -> u8[>..] {
+    if h == CMS_SHAKE128 { return bignum::shake(128, data, 32); }
+    if h == CMS_SHAKE256 { return bignum::shake(256, data, 64); }
+    return bignum::hash_bits(h, data);
 }
 
 fn cms_encap(out: u8[>..]&, content_type: const u8[:], content: const u8[:]) {
@@ -212,20 +235,25 @@ fn cms_sign(content_type: const u8[:], content: const u8[:], key: const PrivateK
 }
 
 // cms_sign with options: detached, signingTime, smimeCapabilities, the
-// signer by key identifier; and SIG_ED25519 too (h is then ignored: the
-// digest is SHA-512). The SignedData is version 1 over id-data with the
-// signer by issuer and serial, else 3. False if signing fails or the
+// signer by key identifier; SIG_ED25519 too (h is then ignored: the
+// digest is SHA-512), and SIG_MLDSA (RFC 9882: pure ML-DSA of the key's
+// set over the signed attributes, the empty context; h the digest, 256,
+// 384, 512 or CMS_SHAKE256, 0 for SHA-512, which every set takes). The
+// SignedData is version 1 over id-data with the signer by issuer and
+// serial, else 3. False if signing fails, the key is not for alg, or the
 // signer's certificate has no key identifier to name it by.
 fn cms_sign_with(content_type: const u8[:], content: const u8[:], key: const PrivateKey&, signer: const Cert&,
                  others: const u8[:], alg: i64, h: i64, o: const CmsSignOptions&) -> u8[>..], bool {
-    assert(alg == SIG_RSA_PKCS1 || alg == SIG_RSA_PSS || alg == SIG_ECDSA || alg == SIG_ED25519);
+    assert(alg == SIG_RSA_PKCS1 || alg == SIG_RSA_PSS || alg == SIG_ECDSA || alg == SIG_ED25519 || alg == SIG_MLDSA);
     var none: u8[>..] = [];
     let ed = alg == SIG_ED25519;
-    let dh = if ed { 512 } else { h };               // the digest's hash
-    let sh = if ed { 0 } else { h };                 // the signature's
+    let ml = alg == SIG_MLDSA;
+    if ml && (!is_mldsa(key.kind) || (h != 0 && h != 256 && h != 384 && h != 512 && h != CMS_SHAKE256)) { return none, false; }
+    let dh = if ed || (ml && h == 0) { 512 } else { h };            // the digest's hash
+    let sh = if ed { 0 } else if ml { mldsa_set(key.kind) } else { h };   // the signature's (ML-DSA: the set)
     let d = signer.der[..];
     if o.by_key_id && signer.ski.end == signer.ski.start { return none, false; }
-    let attrs = cms_signed_attrs_with(content_type, bignum::hash_bits(dh, content), o);
+    let attrs = cms_signed_attrs_with(content_type, cms_hash(dh, content), o);
     let sig, ok = sign(key, alg, sh, attrs);
     if !ok { return none, false; }
     var si: u8[>..] = [];
@@ -444,7 +472,7 @@ fn cms_verify_over(sd: const SignedData&, content: const u8[:], allow_sha1: bool
                     seen_ct = true;
                 } else if asn1::oid_is(d, av[0], OID_CMS_MESSAGE_DIGEST) {
                     if seen_md || v.tag != asn1::OCTET_STRING { return empty_cert(), ERR_MALFORMED; }
-                    if d[v.off..v.end] != bignum::hash_bits(h, content)[..] {
+                    if d[v.off..v.end] != cms_hash(h, content)[..] {
                         return empty_cert(), ERR_BAD_SIGNATURE;
                     }
                     seen_md = true;
@@ -475,6 +503,11 @@ fn cms_verify_over(sd: const SignedData&, content: const u8[:], allow_sha1: bool
     } else if sp.len == 1 && asn1::oid_is(d, sp[0], OID_ED25519) {
         if h != 512 { return empty_cert(), ERR_UNSUPPORTED_ALGORITHM; }
         alg = SIG_ED25519;
+    } else if sp.len == 1 && mldsa_set_of_oid(d, sp[0]) != 0 {
+        // Pure ML-DSA (RFC 9882), parameters absent; any digest but SHA-1.
+        if h == 160 { return empty_cert(), ERR_UNSUPPORTED_ALGORITHM; }
+        alg = SIG_MLDSA;
+        salt = mldsa_set_of_oid(d, sp[0]);       // the set, for verify_with
     } else {
         let a, sh, sl = sig_alg_of(d, salg);
         if a == SIG_UNKNOWN || sh != h { return empty_cert(), ERR_UNSUPPORTED_ALGORITHM; }
@@ -502,6 +535,7 @@ fn cms_verify_over(sd: const SignedData&, content: const u8[:], allow_sha1: bool
             signed.append(content);
         }
         if alg == SIG_ED25519 { return c, verify_with(c, SIG_ED25519, 0, 0, signed, sig); }
+        if alg == SIG_MLDSA { return c, verify_with(c, SIG_MLDSA, salt, 0, signed, sig); }
         let digest = bignum::hash_bits(h, signed);
         let ev = verify_digest(c, alg, h, salt, digest, sig);
         return c, ev;

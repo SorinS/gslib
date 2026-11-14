@@ -1,11 +1,13 @@
 // jwx.jwk: JSON Web Keys (RFC 7517) and key sets: RSA, EC (P-256, P-384,
-// P-521), OKP (Ed25519 and X25519, RFC 8037) and symmetric ("oct") keys,
-// read from and written to JSON, checked for consistency, their RFC 7638
-// thumbprints, the public half of a private key, and new keys. jwx.pem
-// turns PEM keys and certificates into JWKs.
+// P-521), OKP (Ed25519 and X25519, RFC 8037), AKP (ML-DSA-44, -65 and -87,
+// RFC 9964) and symmetric ("oct") keys, read from and written to JSON,
+// checked for consistency, their RFC 7638 thumbprints, the public half of
+// a private key, and new keys. jwx.pem turns PEM keys and certificates
+// into JWKs.
 //
 // A Key is a fixed-size value, so a set is a plain Key[>..]. The members
-// RFC 7517 and RFC 7518 define are kept; others, and "x5c", are not.
+// RFC 7517, RFC 7518 and RFC 9964 define are kept; others, and "x5c", are
+// not.
 
 namespace jwk;
 
@@ -18,6 +20,7 @@ import crypto.bignum.rsa;
 import crypto.bignum.ec;
 import crypto.bignum.ed25519;
 import crypto.bignum.x25519;
+import crypto.bignum.mldsa;
 import crypto.bignum.hmac;
 import crypto.bignum.sha256;
 import crypto.bignum.sha512;
@@ -46,7 +49,9 @@ let OP_NAMES: const u8[:][] = ["sign", "verify", "encrypt", "decrypt", "wrapKey"
 
 // A key. EC keys hold x, y and d (d empty in a public key) at the curve's
 // length; OKP keys x and d at 32 bytes; oct keys k; RSA keys n and e, and
-// d, p, q and the CRT values when private, in `rsa`.
+// d, p, q and the CRT values when private, in `rsa`. AKP keys (RFC 9964)
+// hold "pub" in pub and "priv", the 32-byte ML-DSA seed, in d; their
+// "alg" is required and says which ML-DSA they are.
 struct Key {
     kty: i64,
     crv: i64,
@@ -61,12 +66,13 @@ struct Key {
     y: u8[..66],
     d: u8[..66],
     k: u8[..512],
+    pub: u8[..2592],            // AKP "pub": an ML-DSA public key, up to ML-DSA-87's
     rsa: bignum::RsaPrivateKey,
 }
 
 fn empty() -> Key {
     Key { kty: jwa::KTY_UNKNOWN, crv: jwa::CRV_UNKNOWN, private: false, alg: jwa::UNKNOWN,
-          key_use: USE_NONE, key_ops: 0, kid: [], x5t: [], x5t256: [], x: [], y: [], d: [], k: [],
+          key_use: USE_NONE, key_ops: 0, kid: [], x5t: [], x5t256: [], x: [], y: [], d: [], k: [], pub: [],
           rsa: bignum::RsaPrivateKey { n: [], e: [], d: [], p: [], q: [], dp: [], dq: [], qinv: [] } }
 }
 
@@ -155,6 +161,28 @@ fn generate_okp(crv: i64) -> Key {
     return k;
 }
 
+// An ML-DSA key (kty "AKP") for alg (jwa::ML_DSA_44, _65 or _87) from its
+// 32-byte seed, the private key RFC 9964 §4 has in "priv".
+fn akp_from_seed(alg: i64, seed: const u8[:]) -> Key {
+    assert(jwa::is_mldsa(alg) && seed.len == 32);
+    var k = empty();
+    k.kty = jwa::KTY_AKP;
+    k.alg = alg;
+    k.private = true;
+    k.d.append(seed);
+    k.pub.append(bignum::mldsa_public_key(jwa::mldsa_set(alg), seed));
+    return k;
+}
+
+// A new ML-DSA key for alg.
+fn generate_akp(alg: i64) -> Key {
+    assert(jwa::is_mldsa(alg));
+    var seed: u8[>..] = [];
+    seed.resize(32, 0);
+    bignum::random_bytes(seed);
+    return akp_from_seed(alg, seed);
+}
+
 // A symmetric key of the given bytes (at most MAX_OCT).
 fn from_oct(secret: const u8[:]) -> Key {
     assert(secret.len <= MAX_OCT);
@@ -213,6 +241,18 @@ fn validate(k: const Key&) -> i64 {
     if k.kty == jwa::KTY_OCT {
         return if k.k.len > 0 { jwx::OK } else { jwx::ERR_KEY };
     }
+    if k.kty == jwa::KTY_AKP {
+        // RFC 9964 §3 and §7.3: "alg" names the algorithm, "pub" is its
+        // length, "priv" is a 32-byte seed whose public key is "pub".
+        if !jwa::is_mldsa(k.alg) { return jwx::ERR_UNSUPPORTED; }
+        let set = jwa::mldsa_set(k.alg);
+        if k.pub.len != bignum::mldsa_pk_len(set) { return jwx::ERR_KEY; }
+        if k.private {
+            if k.d.len != 32 { return jwx::ERR_KEY; }
+            if bignum::mldsa_public_key(set, k.d)[..] != k.pub[..] { return jwx::ERR_KEY; }
+        }
+        return jwx::OK;
+    }
     return jwx::ERR_UNSUPPORTED;
 }
 
@@ -227,6 +267,8 @@ fn fits(k: const Key&, alg: i64) -> bool {
     if k.alg != jwa::UNKNOWN && k.alg != alg && !(alg == jwa::DIRECT && jwa::is_content(k.alg)) { return false; }
     if jwa::is_ecdsa(alg) { return k.kty == jwa::KTY_EC && k.crv == jwa::curve_of(alg); }
     if jwa::is_eddsa(alg) { return k.kty == jwa::KTY_OKP && k.crv == jwa::CRV_ED25519; }
+    // An AKP key's "alg" is always set, and was checked above.
+    if jwa::is_mldsa(alg) { return k.kty == jwa::KTY_AKP && k.alg == alg; }
     if jwa::is_ecdh(alg) {
         return (k.kty == jwa::KTY_EC && jwa::is_nist(k.crv)) || (k.kty == jwa::KTY_OKP && k.crv == jwa::CRV_X25519);
     }
@@ -305,6 +347,13 @@ fn from_node(n: json::Node&) -> Key, i64 {
     let alg_s, has_alg, e2 = string_member(n, "alg");
     if e2 != jwx::OK { return k, e2; }
     if has_alg { k.alg = jwa::lookup(alg_s); }
+    // An AKP key must say its algorithm (RFC 9964 §3); one this package
+    // does not know (or no ML-DSA) is a key it does not do.
+    if k.kty == jwa::KTY_AKP {
+        if !has_alg { return k, jwx::ERR_MALFORMED; }
+        if k.alg == jwa::UNKNOWN { return k, jwx::ERR_UNSUPPORTED; }
+        if !jwa::is_mldsa(k.alg) { return k, jwx::ERR_KEY; }
+    }
     let use_s, has_use, e3 = string_member(n, "use");
     if e3 != jwx::OK { return k, e3; }
     if has_use { k.key_use = if use_s == "sig" { USE_SIG } else if use_s == "enc" { USE_ENC } else { USE_NONE }; }
@@ -351,6 +400,20 @@ fn from_node(n: json::Node&) -> Key, i64 {
         k.k.append(b);
         k.private = true;
         return k, jwx::OK;
+    }
+    if k.kty == jwa::KTY_AKP {
+        let set = jwa::mldsa_set(k.alg);
+        var pb: u8[>..] = [];
+        let has_pub, ep = fixed_member(n, "pub", bignum::mldsa_pk_len(set), 2592, pb);
+        if ep != jwx::OK { return k, ep; }
+        if !has_pub { return k, jwx::ERR_MALFORMED; }
+        k.pub.append(pb);
+        var sb: u8[>..] = [];
+        let has_priv, es = fixed_member(n, "priv", 32, 32, sb);
+        if es != jwx::OK { return k, es; }
+        if has_priv { k.d.append(sb); k.private = true; }
+        let ev = validate(k);
+        return k, ev;
     }
     if k.kty == jwa::KTY_EC || k.kty == jwa::KTY_OKP {
         let crv_s, has_crv, e5 = string_member(n, "crv");
@@ -525,6 +588,10 @@ fn marshal_to(out: u8[>..]&, k: const Key&, private: bool = true) {
     }
     if k.kid.len > 0 { put_string(out, "kid", k.kid); }
     put_string(out, "kty", jwa::kty_name(k.kty));
+    if k.kty == jwa::KTY_AKP {
+        if priv { put_bytes(out, "priv", k.d); }
+        put_bytes(out, "pub", k.pub);
+    }
     if k.kty == jwa::KTY_RSA {
         put_bytes(out, "n", uint_bytes(k.rsa.n));
         if priv {
@@ -576,6 +643,11 @@ fn thumbprint_input(k: const Key&) -> u8[>..] {
         put_string(out, "crv", jwa::crv_name(k.crv));
         put_string(out, "kty", "OKP");
         put_bytes(out, "x", k.x);
+    } else if k.kty == jwa::KTY_AKP {
+        // RFC 9964 §6: alg, kty and pub.
+        put_string(out, "alg", jwa::name(k.alg));
+        put_string(out, "kty", "AKP");
+        put_bytes(out, "pub", k.pub);
     } else if k.kty == jwa::KTY_RSA {
         put_bytes(out, "e", uint_bytes(k.rsa.e));
         put_string(out, "kty", "RSA");

@@ -11,7 +11,12 @@
 //     messages that are not PGP/MIME, refused;
 //   - messages gpg made (pgp/gpg-*.eml): multipart/signed, multipart/
 //     encrypted, signed and encrypted in one message (RFC 3156 §6.2) and
-//     multipart/signed inside multipart/encrypted (§6.1).
+//     multipart/signed inside multipart/encrypted (§6.1);
+//   - post-quantum recipients, with no change to the API: a key of gpg
+//     2.5's kind (Ed25519 with a v5 ML-KEM-768+X25519 Kyber subkey) and an
+//     RFC 9980 one (ML-DSA-65+Ed25519 with ML-KEM-768+X25519), made here,
+//     encrypted to (alone and with Bob), signed by Alice or by the RFC
+//     9980 key itself, opened by each recipient.
 import std;
 import gslib from "../..";
 import gslib.crypto.openpgp;
@@ -196,6 +201,45 @@ fn from_gpg(kr: const openpgp::Keyring&, alice: i64) {
     }
 }
 
+fn pqc(kr: const openpgp::Keyring&, alice: i64, bob: i64) {
+    for kind in 2 {
+        let what = if kind == 0 { "kyber" } else { "rfc9980" };
+        var pk = openpgp::Keyring { .. };
+        let eg = openpgp::add_keys(pk, KEYS_SEC);
+        let carol = pk.keys.len;
+        let e = if kind == 0 { openpgp::generate_pqc_key(pk, "Carol <carol@example.com>", TIME - 1000000) }
+                else { openpgp::generate_rfc9980_key(pk, "Carol <carol@example.com>", TIME - 1000000) };
+        check(str(what, " key"), e == openpgp::OK && pk.keys[carol].valid);
+        let pa = openpgp::find_key(pk, "alice@example.com");
+        let pb = openpgp::find_key(pk, "bob@example.com");
+        // The RFC 9980 key signs too (ML-DSA-65+Ed25519).
+        let signer = if kind == 0 { pa } else { carol };
+        var m = mail::Msg { .. };
+        message(m);
+        var out: u8[>..] = [];
+        check_rc(str(what, " encrypt"), pgp::encrypt(m, pk, [carol], opts(), out), mail::OK);
+        var r = pgp::Opened { .. };
+        check_rc(str(what, " open"), pgp::open(out, pk, "", r), mail::OK);
+        check(str(what, " entity"), r.encrypted && !r.signed && contains(r.entity, "Hello Bob,"));
+        var out2: u8[>..] = [];
+        check_rc(str(what, " sign and encrypt, with bob"), pgp::sign_encrypt(m, pk, signer, [carol, pb], opts(), out2), mail::OK);
+        var r2 = pgp::Opened { .. };
+        check_rc(str(what, " open signed"), pgp::open(out2, pk, "", r2), mail::OK);
+        check(str(what, " signed"), r2.encrypted && r2.signed && pk.keys[r2.signer].primary == signer);
+        // Bob alone (the keyring without Carol's secret) opens it too.
+        var r3 = pgp::Opened { .. };
+        check_rc(str(what, " bob opens it"), pgp::open(out2, kr, "", r3), if kind == 0 { mail::OK } else { mail::ERR_KEY });
+        // The multipart/signed form, by the RFC 9980 key.
+        if kind == 1 {
+            var out3: u8[>..] = [];
+            check_rc("rfc9980 sign", pgp::sign(m, pk, carol, opts(), out3), mail::OK);
+            var r4 = pgp::Opened { .. };
+            check_rc("rfc9980 verify", pgp::verify(out3, pk, r4), mail::OK);
+            check("rfc9980 micalg", contains(out3, "micalg=pgp-sha256"));
+        }
+    }
+}
+
 fn main() {
     var kr = openpgp::Keyring { .. };
     check_rc("keys", openpgp::add_keys(kr, KEYS_SEC), openpgp::OK);
@@ -205,6 +249,7 @@ fn main() {
     signing(kr, alice, bob);
     encryption(kr, alice, bob);
     from_gpg(kr, alice);
+    pqc(kr, alice, bob);
     print("pgp: ", checks - failures, "/", checks, " checks passed");
     if failures > 0 { exit(1); }
 }

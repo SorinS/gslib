@@ -22,7 +22,10 @@ fn dump_key(out: u8[>..]&, tag: i64, body: const u8[:]) {
     if k.algo == PK_ECDH { out.append(str("\tkdf: hash ", k.kdf_hash, ", cipher ", k.kdf_cipher, "\n")); }
     if k.has_secret {
         if k.stub { out.append("\tsecret: gnu-dummy (none here)\n"); }
-        else if k.locked {
+        else if k.sexp {
+            out.append(if k.locked { "\tsecret: gnu-mode1003 (gpg-agent's S-expression), protected\n" }
+                       else { "\tsecret: gnu-mode1003 (gpg-agent's S-expression), unprotected\n" });
+        } else if k.locked {
             let s2k, iv_at, e = protection_of(k);
             out.append(str("\tsecret: protected, usage ", k.sec_raw[0], ", S2K ", s2k.kind, ", hash ", s2k.hash,
                            ", count ", s2k.count, "\n"));

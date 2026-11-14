@@ -6,7 +6,9 @@
 // leaf outside the name constraints, a CSR, a CRL from
 // each CA (the intermediate's revokes the Ed25519 leaf), an ML-DSA-65
 // root with ML-DSA-44, ML-DSA-87 and DSA leaves, an ML-DSA CSR and CRL, a
-// DSA root with a leaf, and every leaf's private key in PKCS #8.
+// DSA root with a leaf, an SLH-DSA-SHAKE-128f root with an
+// SLH-DSA-SHA2-128f leaf, an SLH-DSA CSR and CRL, and every leaf's private
+// key in PKCS #8.
 //
 //   goose tools/make_pki.goose -- <dir> <intermediate-key.der>
 import std;
@@ -153,5 +155,28 @@ fn main() {
     let pq_crl, epc = x509::create_crl(pq_root, pq_key, empty, now - 600, now + 86400, 1);
     assert(epc == x509::OK);
     save(dir, "crl_pq.pem", "X509 CRL", pq_crl);
+    // SLH-DSA: a SHAKE-128f root, a leaf on a SHA2-128f key, a CSR and a CRL.
+    let slh_key = x509::generate_key(x509::KEY_SLHDSA_SHAKE_128F);
+    var st, okst = x509::template("CN=Goose Made SLH-DSA Root,O=Goose", now - 3600, now + 10 * year);
+    st.is_ca = true;
+    st.key_usage = x509::KU_KEY_CERT_SIGN | x509::KU_CRL_SIGN;
+    let slh_root, esr = x509::create_certificate(st, x509::marshal_public_key(slh_key), "", slh_key);
+    assert(esr == x509::OK);
+    save(dir, "slh_root.pem", "CERTIFICATE", slh_root);
+    let slh_leaf_key = x509::generate_key(x509::KEY_SLHDSA_SHA2_128F);
+    var slt, okslt = x509::template("CN=www.example.com,O=Goose", now - 3600, now + year);
+    slt.key_usage = x509::KU_DIGITAL_SIGNATURE;
+    slt.ext_key_usage = x509::EKU_SERVER_AUTH;
+    x509::add_dns(slt.san, "www.example.com");
+    let slh_leaf, esl = x509::create_certificate(slt, x509::marshal_public_key(slh_leaf_key), slh_root, slh_key);
+    assert(esl == x509::OK);
+    save(dir, "leaf_slhdsa.pem", "CERTIFICATE", slh_leaf);
+    save(dir, "leaf_slhdsa.key", "PRIVATE KEY", x509::marshal_pkcs8(slh_leaf_key));
+    let csr_slh, ecsr_slh = x509::create_csr(subj, san, slh_leaf_key);
+    assert(ecsr_slh == x509::OK);
+    save(dir, "csr_slhdsa.pem", "CERTIFICATE REQUEST", csr_slh);
+    let slh_crl, escrl = x509::create_crl(slh_root, slh_key, empty, now - 600, now + 86400, 1);
+    assert(escrl == x509::OK);
+    save(dir, "crl_slhdsa.pem", "X509 CRL", slh_crl);
     print("ok");
 }

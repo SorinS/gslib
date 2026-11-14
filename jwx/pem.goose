@@ -1,9 +1,10 @@
 // jwx.pem: JWKs from and to PEM and DER, through crypto/x509: private keys
 // (PKCS #8, SEC 1, PKCS #1), public keys (SubjectPublicKeyInfo) and
 // certificates, as jwx's jwk.ParseKey(..., WithPEM(true)) and
-// jwk.FromRaw read them. RSA, EC (P-256, P-384, P-521) and Ed25519; other
-// key types are ERR_UNSUPPORTED. A separate module so that jwk alone does
-// not bring in x509.
+// jwk.FromRaw read them. RSA, EC (P-256, P-384, P-521), Ed25519 and
+// ML-DSA (RFC 9881's keys as RFC 9964's AKP JWKs; a PKCS #8 key must hold
+// its seed); other key types are ERR_UNSUPPORTED. A separate module so
+// that jwk alone does not bring in x509.
 
 namespace jwk;
 
@@ -17,6 +18,7 @@ import encoding.asn1;
 import crypto.bignum;
 import crypto.bignum.ec;
 import crypto.bignum.ed25519;
+import crypto.bignum.mldsa;
 import crypto.bignum.sha1;
 import crypto.bignum.sha256;
 
@@ -48,6 +50,10 @@ fn from_private(pk: const x509::PrivateKey&) -> Key, i64 {
         k.d.append(pk.seed);
         k.x.append(bignum::ed25519_public(pk.seed));
         return k, jwx::OK;
+    }
+    if x509::is_mldsa(pk.kind) {
+        let k2 = akp_from_seed(jwa::mldsa_alg(x509::mldsa_set(pk.kind)), pk.seed);
+        return k2, jwx::OK;
     }
     let crv = crv_of_kind(pk.kind);
     if crv == jwa::CRV_UNKNOWN { return k, jwx::ERR_UNSUPPORTED; }
@@ -82,6 +88,13 @@ fn from_spki_tlv(der: const u8[:], t: asn1::Tlv) -> Key, i64 {
         k.kty = jwa::KTY_OKP;
         k.crv = jwa::CRV_ED25519;
         k.x.append(kb);
+        return k, jwx::OK;
+    }
+    if x509::is_mldsa(kind) {
+        k.kty = jwa::KTY_AKP;
+        k.alg = jwa::mldsa_alg(x509::mldsa_set(kind));
+        if kb.len != bignum::mldsa_pk_len(x509::mldsa_set(kind)) { return k, jwx::ERR_KEY; }
+        k.pub.append(kb);
         return k, jwx::OK;
     }
     let crv = crv_of_kind(kind);
@@ -157,6 +170,10 @@ fn to_private(k: const Key&) -> x509::PrivateKey, i64 {
     } else if k.kty == jwa::KTY_EC {
         pk.kind = kind_of_crv(k.crv);
         pk.ec_sk.append(k.d);
+    } else if k.kty == jwa::KTY_AKP && jwa::is_mldsa(k.alg) && k.d.len == 32 {
+        // PKCS #8 with the seed alone (RFC 9881's seed form).
+        pk.kind = x509::mldsa_kind(jwa::mldsa_set(k.alg));
+        for i in 32 { pk.seed[i] = k.d[i]; }
     } else {
         return pk, jwx::ERR_UNSUPPORTED;
     }
@@ -182,6 +199,10 @@ fn marshal_spki(k: const Key&) -> u8[>..], i64 {
     } else if k.kty == jwa::KTY_OKP && k.crv == jwa::CRV_ED25519 {
         asn1::put_oid(alg, "1.3.101.112");
         key.append(k.x);
+    } else if k.kty == jwa::KTY_AKP && jwa::is_mldsa(k.alg) {
+        // No parameters (RFC 9881 §2).
+        asn1::put_oid(alg, x509::mldsa_oid(jwa::mldsa_set(k.alg)));
+        key.append(k.pub);
     } else {
         return out, jwx::ERR_UNSUPPORTED;
     }

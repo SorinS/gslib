@@ -11,6 +11,17 @@
 // (every signer, every cipher, every way of naming a recipient) must read
 // back here, and refuse changed bytes and wrong keys. (The interop script
 // has openssl read what is made here.)
+//
+// Post-quantum, against cms_smime/pq_vectors.txt (interop_smime.py
+// --write-pq-vectors): ML-DSA-44, -65 and -87 and ML-KEM-512, -768 and
+// -1024 keys in each PKCS #8 form openssl writes (seed, expanded, both);
+// SignedData by ML-DSA (RFC 9882) over SHAKE256, SHA-512 and SHA-256,
+// without signed attributes, by key identifier, in BER; EnvelopedData and
+// AuthEnvelopedData to ML-KEM certificates (KEMRecipientInfo, RFC 9629 and
+// RFC 9936) with HKDF-SHA256, -384 and -512, a ukm, AES-128, -192 and
+// -256, by key identifier, several recipients, BER. Then signing by
+// ML-DSA and encrypting to ML-KEM (with an RSA recipient beside them)
+// here, read back, and refused when changed or with the wrong key.
 import std;
 import gslib from "../../..";
 import gslib.crypto.x509;
@@ -40,10 +51,16 @@ fn unhex(s: const u8[:]) -> u8[>..] {
 }
 
 let VECTORS = embed_file("cms_smime/vectors.txt");
+let PQ = embed_file("cms_smime/pq_vectors.txt");
 
 // The certificate (DER) and private key (PKCS #8) of a key line.
 fn key_of(name: const u8[:]) -> u8[>..], u8[>..] {
-    for line in split(VECTORS, '\n') {
+    let c, k = key_in(VECTORS, name);
+    return c, k;
+}
+
+fn key_in(text: const u8[:], name: const u8[:]) -> u8[>..], u8[>..] {
+    for line in split(text, '\n') {
         let w = words(line);
         if w.len == 4 && w[0] == "key" && w[1] == name { return unhex(w[2]), unhex(w[3]); }
     }
@@ -66,8 +83,8 @@ fn has_name(list: const u8[:], name: const u8[:]) -> bool {
     return false;
 }
 
-fn signed_vector(label: const u8[:], who: const u8[:], detached: bool, der: const u8[:], data: const u8[:]) {
-    let cd, kd = key_of(who);
+fn signed_vector(text: const u8[:], label: const u8[:], who: const u8[:], detached: bool, der: const u8[:], data: const u8[:]) {
+    let cd, kd = key_in(text, who);
     let sd, ep = x509::cms_parse_signed_ber(der);
     check(label, ep == x509::OK && sd.has_content != detached);
     if ep != x509::OK { return; }
@@ -98,9 +115,10 @@ fn signed_vector(label: const u8[:], who: const u8[:], detached: bool, der: cons
     check(label, okt != noattr && (noattr || t > 1700000000));
 }
 
-fn enveloped_vector(label: const u8[:], whos: const u8[:], der: const u8[:], data: const u8[:]) {
-    for who in ["alice", "bob", "carol", "dave"] {
-        let cd, kd = key_of(who);
+fn enveloped_vector(text: const u8[:], label: const u8[:], whos: const u8[:], der: const u8[:], data: const u8[:]) {
+    let pq = text.len == PQ.len;
+    for who in (if pq { ["frank-kem", "grace-kem", "heidi-kem", "frank"] } else { ["alice", "bob", "carol", "dave"] }) {
+        let cd, kd = key_in(text, who);
         let c, e = x509::parse(cd);
         let k, ok = x509::parse_private_key(kd);
         let pt, ct, ed = x509::cms_decrypt(der, k, c);
@@ -117,7 +135,11 @@ fn enveloped_vector(label: const u8[:], whos: const u8[:], der: const u8[:], dat
 
 // Signs with a key each way it can, verifies, refuses changes.
 fn sign_round_trip(who: const u8[:]) {
-    let cd, kd = key_of(who);
+    sign_round_trip_in(VECTORS, who);
+}
+
+fn sign_round_trip_in(text: const u8[:], who: const u8[:]) {
+    let cd, kd = key_in(text, who);
     let c, e = x509::parse(cd);
     let k, ok = x509::parse_private_key(kd);
     let data = "Content-Type: text/plain\r\n\r\nsigned here\r\n";
@@ -125,6 +147,7 @@ fn sign_round_trip(who: const u8[:]) {
     var hs:   i64[>..] = [];
     if k.kind == x509::KEY_RSA { algs.push(x509::SIG_RSA_PKCS1); hs.push(256); algs.push(x509::SIG_RSA_PSS); hs.push(384); }
     else if k.kind == x509::KEY_ED25519 { algs.push(x509::SIG_ED25519); hs.push(0); }
+    else if x509::is_mldsa(k.kind) { algs.push(x509::SIG_MLDSA); hs.push(0); algs.push(x509::SIG_MLDSA); hs.push(x509::CMS_SHAKE256); }
     else { algs.push(x509::SIG_ECDSA); hs.push(256); algs.push(x509::SIG_ECDSA); hs.push(512); }
     for i in algs.len {
         for detached in [true, false] {
@@ -246,6 +269,130 @@ fn encrypt_round_trip() {
     check("no recipient", e2 == x509::ERR_MALFORMED);
 }
 
+// A private key in another PKCS #8 form (openssl's seed-only or
+// priv-only): the same key as the key line's, written back as it was (the
+// seed alone, or for ML-KEM without its seed the expanded key).
+fn key_form(who: const u8[:], form: const u8[:], der: const u8[:]) {
+    let label = str("keyform ", who, " ", form);
+    let cd, kd = key_in(PQ, who);
+    let c, e = x509::parse(cd);
+    let k0, ok0 = x509::parse_private_key(kd);
+    let k, ok = x509::parse_private_key(der);
+    check(label, e == x509::OK && ok0 && ok && k.kind == c.key_type && k0.kind == k.kind);
+    if !ok { return; }
+    let kb, okb = x509::key_bytes(c.der, c.key);
+    check(label, okb && x509::public_key_bytes(k) == kb && x509::public_key_bytes(k0) == kb);
+    check(label, x509::marshal_pkcs8(k) == der);
+    // openssl's default (both) is written back as the seed alone.
+    if form == "seed-only" { check(label, x509::marshal_pkcs8(k0) == der); }
+}
+
+// ML-KEM keys: made here, written and read back; inconsistent forms refused.
+fn pq_keys() {
+    for kind in [x509::KEY_MLKEM512, x509::KEY_MLKEM768, x509::KEY_MLKEM1024] {
+        let k = x509::generate_key(kind);
+        let p8 = x509::marshal_pkcs8(k);
+        let k2, ok = x509::parse_private_key(p8);
+        check("mlkem generate", ok && k2.kind == kind && x509::public_key_bytes(k2) == x509::public_key_bytes(k));
+        let spki = x509::marshal_public_key(k);
+        check("mlkem spki", spki.len > 800);
+    }
+    // openssl's both form with a seed byte changed: refused.
+    let cd, kd = key_in(PQ, "frank-kem");
+    var bad: u8[>..] = [];
+    bad.append(kd);
+    let at = find(bad, "\x04\x40");                  // the seed's OCTET STRING, 64 bytes
+    check("mlkem both", at > 0);
+    bad[at + 10] ^= 1;
+    let k3, ok3 = x509::parse_private_key(bad);
+    check("mlkem both, seed changed", !ok3);
+    // The expanded key alone with its hash of ek changed: refused.
+    for line in split(PQ, '\n') {
+        let w = words(line);
+        if w.len == 4 && w[0] == "keyform" && w[1] == "grace-kem" && w[2] == "priv-only" {
+            var dk = unhex(w[3]);
+            dk[dk.len - 40] ^= 1;                       // inside H(ek)
+            let k4, ok4 = x509::parse_private_key(dk);
+            check("mlkem expanded, hash changed", !ok4);
+        }
+    }
+}
+
+// Encrypts to every ML-KEM set (and RSA beside them), decrypts for each,
+// refuses the rest.
+fn pq_encrypt_round_trip() {
+    let data = content();
+    var rs: u8[>..] = [];
+    for n in ["frank-kem", "grace-kem", "heidi-kem"] {
+        let cd, kd = key_in(PQ, n);
+        rs.append(cd);
+    }
+    let ad, ak = key_of("alice");
+    rs.append(ad);
+    var i = 0;
+    for cipher in [x509::CMS_AES256_CBC, x509::CMS_AES128_GCM, x509::CMS_AES128_CBC, x509::CMS_AES256_GCM] {
+        var o = x509::CmsEncryptOptions { cipher: cipher, by_key_id: i % 2 == 1, .. };
+        if i >= 2 { o.kem_ukm.append("user keying material"); }
+        let der, e = x509::cms_encrypt(x509::OID_CMS_DATA, data, rs, o);
+        check("pq encrypt", e == x509::OK);
+        let gcm = cipher == x509::CMS_AES128_GCM || cipher == x509::CMS_AES256_GCM;
+        // EnvelopedData version 3 (an OtherRecipientInfo); AuthEnvelopedData 0.
+        let top, okp = asn1::parse(der);
+        let ci, okc = asn1::children(der, top);
+        let inner, oki = asn1::explicit(der, ci[1]);
+        let f, okf = asn1::children(der, inner);
+        let v, okv = asn1::read_i64(der, f[0]);
+        check("pq encrypt version", okv && v == (if gcm { 0 } else { 3 }));
+        for who in ["frank-kem", "grace-kem", "heidi-kem"] {
+            let cd, kd = key_in(PQ, who);
+            let c, ec = x509::parse(cd);
+            let k, ok = x509::parse_private_key(kd);
+            let pt, ct, ed = x509::cms_decrypt(der, k, c);
+            check(str("pq decrypt ", who), ed == x509::OK && pt == data);
+            if ed != x509::OK { print("  ", who, " cipher ", cipher, ": ", x509::cms_error_text(ed)); }
+        }
+        if i == 0 {
+            let ac, eac = x509::parse(ad);
+            let akey, oka = x509::parse_private_key(ak);
+            let pt, ct, ed = x509::cms_decrypt(der, akey, ac);
+            check("pq: rsa beside", ed == x509::OK && pt == data);
+        }
+        // Frank's encryption certificate with another ML-KEM-768 key: the
+        // implicit rejection's key does not unwrap.
+        let fd, fk = key_in(PQ, "frank-kem");
+        let fc, efc = x509::parse(fd);
+        let other = x509::generate_key(x509::KEY_MLKEM768);
+        let p1, c1, e1 = x509::cms_decrypt(der, other, fc);
+        check("pq wrong key", e1 == x509::ERR_CMS_DECRYPT);
+        // Grace's key for Frank's certificate: not even the same set.
+        let gd, gk = key_in(PQ, "grace-kem");
+        let gkey, okg = x509::parse_private_key(gk);
+        let p2, c2, e2 = x509::cms_decrypt(der, gkey, fc);
+        check("pq wrong set", e2 == x509::ERR_CMS_DECRYPT);
+        // Frank's signing certificate is not a recipient.
+        let sd, sk = key_in(PQ, "frank");
+        let sc, esc = x509::parse(sd);
+        let skey, oks = x509::parse_private_key(sk);
+        let p3, c3, e3 = x509::cms_decrypt(der, skey, sc);
+        check("pq not a recipient", e3 == x509::ERR_CMS_NOT_RECIPIENT);
+        // A byte of the first KEM ciphertext changed: implicit rejection, no unwrap.
+        var bad: u8[>..] = [];
+        bad.append(der);
+        let at = find(bad, "\x04\x82\x04\x40");    // ML-KEM-768's 1088-byte ciphertext
+        check("pq kemct found", at > 0);
+        bad[at + 100] ^= 1;
+        let fkey, okf2 = x509::parse_private_key(fk);
+        let p4, c4, e4 = x509::cms_decrypt(bad, fkey, fc);
+        check("pq changed kemct", e4 == x509::ERR_CMS_DECRYPT);
+        i++;
+    }
+    // An ML-DSA certificate cannot be encrypted to.
+    let sd, sk = key_in(PQ, "heidi");
+    let o = x509::CmsEncryptOptions { .. };
+    let d1, e1 = x509::cms_encrypt(x509::OID_CMS_DATA, data, sd, o);
+    check("ml-dsa recipient", e1 == x509::ERR_UNSUPPORTED_ALGORITHM);
+}
+
 // BER: indefinite lengths, a constructed OCTET STRING, long-form lengths.
 fn ber() {
     // SEQUENCE (indefinite) { OID 1.2.3, [0] (indefinite) { OCTET STRING (constructed) { "ab", "cd" } } }
@@ -271,14 +418,32 @@ fn main() {
     for line in split(VECTORS, '\n') {
         let w = words(line);
         if w.len == 5 && w[0] == "signed" {
-            signed_vector(w[1], w[2], w[3] == "1", unhex(w[4]), data);
+            signed_vector(VECTORS, w[1], w[2], w[3] == "1", unhex(w[4]), data);
             nsigned++;
         } else if w.len == 4 && w[0] == "enveloped" {
-            enveloped_vector(w[1], w[2], unhex(w[3]), data);
+            enveloped_vector(VECTORS, w[1], w[2], unhex(w[3]), data);
             nenv++;
         }
     }
     check("vectors read", nsigned == 9 && nenv == 12);
+    var npq = 0;
+    for line in split(PQ, '\n') {
+        let w = words(line);
+        if w.len == 5 && w[0] == "signed" {
+            signed_vector(PQ, w[1], w[2], w[3] == "1", unhex(w[4]), data);
+            npq++;
+        } else if w.len == 4 && w[0] == "enveloped" {
+            enveloped_vector(PQ, w[1], w[2], unhex(w[3]), data);
+            npq++;
+        } else if w.len == 4 && w[0] == "keyform" {
+            key_form(w[1], w[2], unhex(w[3]));
+            npq++;
+        }
+    }
+    check("pq vectors read", npq == 6 + 9 + 9);
+    pq_keys();
+    for who in ["frank", "grace", "heidi"] { sign_round_trip_in(PQ, who); }
+    pq_encrypt_round_trip();
     for who in ["alice", "bob", "carol", "dave"] { sign_round_trip(who); }
     encrypt_round_trip();
     ber();

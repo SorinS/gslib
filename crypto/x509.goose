@@ -17,6 +17,7 @@ import crypto.bignum.ec;
 import crypto.bignum.ed25519;
 import crypto.bignum.hmac;
 import crypto.bignum.mldsa;
+import crypto.bignum.slhdsa;
 import crypto.bignum.dsa;
 
 // Errors, from parsing or validation; OK is 0.
@@ -77,6 +78,7 @@ let SIG_ECDSA: i64 = 3;              // with sig_hash
 let SIG_ED25519: i64 = 4;
 let SIG_MLDSA: i64 = 5;              // sig_hash holds the parameter set: 44, 65 or 87
 let SIG_DSA: i64 = 6;                // with sig_hash (224, 256, 384, 512)
+let SIG_SLHDSA: i64 = 7;             // sig_hash holds the bignum::SLHDSA_* set, 1 to 12
 
 // Public key types.
 let KEY_UNKNOWN: i64 = 0;
@@ -90,6 +92,22 @@ let KEY_MLDSA44: i64 = 7;
 let KEY_MLDSA65: i64 = 8;
 let KEY_MLDSA87: i64 = 9;
 let KEY_DSA: i64 = 10;
+// SLH-DSA (RFC 9909): the set plus 19, as the OIDs' last arcs.
+let KEY_SLHDSA_SHA2_128S: i64 = 20;
+let KEY_SLHDSA_SHA2_128F: i64 = 21;
+let KEY_SLHDSA_SHA2_192S: i64 = 22;
+let KEY_SLHDSA_SHA2_192F: i64 = 23;
+let KEY_SLHDSA_SHA2_256S: i64 = 24;
+let KEY_SLHDSA_SHA2_256F: i64 = 25;
+let KEY_SLHDSA_SHAKE_128S: i64 = 26;
+let KEY_SLHDSA_SHAKE_128F: i64 = 27;
+let KEY_SLHDSA_SHAKE_192S: i64 = 28;
+let KEY_SLHDSA_SHAKE_192F: i64 = 29;
+let KEY_SLHDSA_SHAKE_256S: i64 = 30;
+let KEY_SLHDSA_SHAKE_256F: i64 = 31;
+let KEY_MLKEM512: i64 = 40;          // ML-KEM (RFC 9935): encryption only (CMS, cms_env)
+let KEY_MLKEM768: i64 = 41;
+let KEY_MLKEM1024: i64 = 42;
 
 // Key usage bits (RFC 5280 §4.2.1.3), as KU_* masks of Cert.key_usage.
 let KU_DIGITAL_SIGNATURE: u32 = 1;
@@ -224,6 +242,8 @@ fn sig_alg_of(der: const u8[:], t: asn1::Tlv) -> i64, i64, i64 {
         if asn1::oid_is(der, oid, "1.3.101.112") { return SIG_ED25519, 0, 0; }
         let set = mldsa_set_of_oid(der, oid);
         if set != 0 { return SIG_MLDSA, set, 0; }
+        let slh = slhdsa_set_of_oid(der, oid);
+        if slh != 0 { return SIG_SLHDSA, slh, 0; }
         if asn1::oid_is(der, oid, "2.16.840.1.101.3.4.3.1") { return SIG_DSA, 224, 0; }
         if asn1::oid_is(der, oid, "2.16.840.1.101.3.4.3.2") { return SIG_DSA, 256, 0; }
         if asn1::oid_is(der, oid, "2.16.840.1.101.3.4.3.3") { return SIG_DSA, 384, 0; }
@@ -259,6 +279,39 @@ fn is_mldsa(kind: i64) -> bool { kind == KEY_MLDSA44 || kind == KEY_MLDSA65 || k
 fn mldsa_set(kind: i64) -> i64 { if kind == KEY_MLDSA44 { 44 } else if kind == KEY_MLDSA65 { 65 } else { 87 } }
 fn mldsa_kind(set: i64) -> i64 { if set == 44 { KEY_MLDSA44 } else if set == 65 { KEY_MLDSA65 } else { KEY_MLDSA87 } }
 
+// The SLH-DSA set (bignum::SLHDSA_*, 1 to 12) of an id-slh-dsa-* OID
+// (2.16.840.1.101.3.4.3.20 to .31), or 0; its OID; the key type of a set,
+// and back.
+fn slhdsa_oid(set: i64) -> const u8[:] {
+    let oids = ["2.16.840.1.101.3.4.3.20", "2.16.840.1.101.3.4.3.21", "2.16.840.1.101.3.4.3.22",
+                "2.16.840.1.101.3.4.3.23", "2.16.840.1.101.3.4.3.24", "2.16.840.1.101.3.4.3.25",
+                "2.16.840.1.101.3.4.3.26", "2.16.840.1.101.3.4.3.27", "2.16.840.1.101.3.4.3.28",
+                "2.16.840.1.101.3.4.3.29", "2.16.840.1.101.3.4.3.30", "2.16.840.1.101.3.4.3.31"];
+    return oids[set - 1];
+}
+fn slhdsa_set_of_oid(der: const u8[:], o: asn1::Tlv) -> i64 {
+    for set in 1..13 { if asn1::oid_is(der, o, slhdsa_oid(set)) { return set; } }
+    return 0;
+}
+fn is_slhdsa(kind: i64) -> bool { kind >= KEY_SLHDSA_SHA2_128S && kind <= KEY_SLHDSA_SHAKE_256F }
+fn slhdsa_set(kind: i64) -> i64 { kind - 19 }
+fn slhdsa_kind(set: i64) -> i64 { set + 19 }
+
+// The ML-KEM k (2, 3, 4: ML-KEM-512, -768, -1024) of an id-alg-ml-kem-*
+// OID (RFC 9935), or 0; the key types of each k, and back.
+fn mlkem_k_of_oid(der: const u8[:], o: asn1::Tlv) -> i64 {
+    if asn1::oid_is(der, o, "2.16.840.1.101.3.4.4.1") { return 2; }
+    if asn1::oid_is(der, o, "2.16.840.1.101.3.4.4.2") { return 3; }
+    if asn1::oid_is(der, o, "2.16.840.1.101.3.4.4.3") { return 4; }
+    return 0;
+}
+fn is_mlkem(kind: i64) -> bool { kind == KEY_MLKEM512 || kind == KEY_MLKEM768 || kind == KEY_MLKEM1024 }
+fn mlkem_k(kind: i64) -> i64 { if kind == KEY_MLKEM512 { 2 } else if kind == KEY_MLKEM768 { 3 } else { 4 } }
+fn mlkem_kind(k: i64) -> i64 { if k == 2 { KEY_MLKEM512 } else if k == 3 { KEY_MLKEM768 } else { KEY_MLKEM1024 } }
+fn mlkem_oid(k: i64) -> const u8[:] {
+    if k == 2 { "2.16.840.1.101.3.4.4.1" } else if k == 3 { "2.16.840.1.101.3.4.4.2" } else { "2.16.840.1.101.3.4.4.3" }
+}
+
 fn is_ec(kind: i64) -> bool {
     kind == KEY_EC_P256 || kind == KEY_EC_P384 || kind == KEY_EC_P521 || kind == KEY_EC_P224
 }
@@ -287,6 +340,10 @@ fn spki_of(der: const u8[:], t: asn1::Tlv) -> i64, asn1::Tlv, bool {
         kind = KEY_ED25519;
     } else if mldsa_set_of_oid(der, alg[0]) != 0 && alg.len == 1 {
         kind = mldsa_kind(mldsa_set_of_oid(der, alg[0]));
+    } else if slhdsa_set_of_oid(der, alg[0]) != 0 && alg.len == 1 {
+        kind = slhdsa_kind(slhdsa_set_of_oid(der, alg[0]));
+    } else if mlkem_k_of_oid(der, alg[0]) != 0 && alg.len == 1 {
+        kind = mlkem_kind(mlkem_k_of_oid(der, alg[0]));
     } else if asn1::oid_is(der, alg[0], "1.2.840.10040.4.1") && alg.len == 2 {
         // Parameters inherited from the issuer (absent) are not supported.
         kind = KEY_DSA;
@@ -864,12 +921,18 @@ fn verify_with(key_cert: const Cert&, alg: i64, h: i64, salt: i64, msg: const u8
         if kb.len != bignum::mldsa_pk_len(h) { return ERR_MALFORMED; }
         return if bignum::mldsa_verify(h, kb, msg, sig) { OK } else { ERR_BAD_SIGNATURE };
     }
+    if alg == SIG_SLHDSA {
+        // Pure SLH-DSA with the empty context (RFC 9909); the set must be the key's.
+        if !is_slhdsa(key_cert.key_type) || slhdsa_set(key_cert.key_type) != h { return ERR_BAD_SIGNATURE; }
+        if kb.len != bignum::slhdsa_pk_len(h) { return ERR_MALFORMED; }
+        return if bignum::slhdsa_verify(h, kb, msg, sig) { OK } else { ERR_BAD_SIGNATURE };
+    }
     if alg != SIG_RSA_PKCS1 && alg != SIG_RSA_PSS && alg != SIG_ECDSA && alg != SIG_DSA { return ERR_UNSUPPORTED_ALGORITHM; }
     return verify_digest(key_cert, alg, h, salt, bignum::hash_bits(h, msg), sig);
 }
 
 // The same over a digest made by the hash h: RSA, ECDSA and DSA;
-// ERR_UNSUPPORTED_ALGORITHM for Ed25519 and ML-DSA, which sign messages,
+// ERR_UNSUPPORTED_ALGORITHM for Ed25519, ML-DSA and SLH-DSA, which sign messages,
 // and ERR_BAD_SIGNATURE for a digest of another length.
 fn verify_digest(key_cert: const Cert&, alg: i64, h: i64, salt: i64, digest: const u8[:], sig: const u8[:]) -> i64 {
     if alg != SIG_RSA_PKCS1 && alg != SIG_RSA_PSS && alg != SIG_ECDSA && alg != SIG_DSA { return ERR_UNSUPPORTED_ALGORITHM; }

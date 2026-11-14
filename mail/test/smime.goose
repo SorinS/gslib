@@ -13,7 +13,14 @@
 //     recipient, a wrong key, a changed ciphertext refused; 8bit bodies
 //     refused for multipart/signed; messages that are not S/MIME;
 //   - messages openssl made (smime/ossl-*.eml): signed every way, BER,
-//     encrypted every way, signed then encrypted.
+//     encrypted every way, signed then encrypted;
+//   - post-quantum, with the PKI of smime/pq/ (an ML-DSA-65 root; Frank,
+//     Grace and Heidi each with an ML-DSA signing certificate, -65, -44
+//     and -87, and an ML-KEM encryption one, -768, -512 and -1024; made by
+//     scripts/interop_smime.py --write-pq-vectors): signed by each ML-DSA
+//     key (micalg sha-512) and checked to the root, opaque; encrypted to
+//     every ML-KEM set with a classic recipient beside them; signed then
+//     encrypted; and the messages openssl made (smime/pq/ossl-*.eml).
 import std;
 import gslib from "../..";
 import gslib.encoding.asn1;
@@ -61,6 +68,19 @@ let CAROL_KEY = embed_file("smime/carol.key");
 let DAVE_PEM = embed_file("smime/dave.pem");
 let DAVE_KEY = embed_file("smime/dave.key");
 let ENTITY = embed_file("smime/entity.txt");
+let PQ_ROOT_PEM = embed_file("smime/pq/root.pem");
+let FRANK_PEM = embed_file("smime/pq/frank.pem");
+let FRANK_KEY = embed_file("smime/pq/frank.key");
+let FRANK_KEM_PEM = embed_file("smime/pq/frank-kem.pem");
+let FRANK_KEM_KEY = embed_file("smime/pq/frank-kem.key");
+let GRACE_PEM = embed_file("smime/pq/grace.pem");
+let GRACE_KEY = embed_file("smime/pq/grace.key");
+let GRACE_KEM_PEM = embed_file("smime/pq/grace-kem.pem");
+let GRACE_KEM_KEY = embed_file("smime/pq/grace-kem.key");
+let HEIDI_PEM = embed_file("smime/pq/heidi.pem");
+let HEIDI_KEY = embed_file("smime/pq/heidi.key");
+let HEIDI_KEM_PEM = embed_file("smime/pq/heidi-kem.pem");
+let HEIDI_KEM_KEY = embed_file("smime/pq/heidi-kem.key");
 
 fn cert(pem: const u8[:]) -> x509::Cert {
     let c, e = x509::parse_pem(pem);
@@ -392,6 +412,161 @@ fn openssl() {
     check("openssl sign-encrypt", r.signed && r.encrypted && r.signer.der == alice.der && r.entity == ENTITY);
 }
 
+// --- Post-quantum ------------------------------------------------------------------
+
+fn pq_roots() -> x509::CertPool {
+    var p = x509::new_pool();
+    assert(x509::pool_append_pem(p, PQ_ROOT_PEM) == 1);
+    return p;
+}
+
+fn pq_build(m: mail::Msg&, from: const u8[:]) {
+    assert(mail::set_from(m, from) == mail::OK);
+    assert(mail::add_to(m, "Grace <grace@example.org>") == mail::OK);
+    assert(mail::set_subject(m, "Post-quantum figures") == mail::OK);
+    mail::set_date(m, 1790000000);
+    assert(mail::set_message_id(m, "smime-pq@example.com") == mail::OK);
+    assert(mail::set_boundary(m, "test") == mail::OK);
+    assert(mail::set_body(m, mail::TEXT_PLAIN, "The figures are attached.\nSigned by a lattice.\n") == mail::OK);
+    assert(mail::attach(m, "figures.csv", "q,amount\n1,100\n2,103\n") == mail::OK);
+}
+
+fn pq_signing() {
+    let frank_key = key(FRANK_KEY);
+    let frank = cert(FRANK_PEM);
+    let frank_kem_key = key(FRANK_KEM_KEY);
+    let frank_kem = cert(FRANK_KEM_PEM);
+    let pool = pq_roots();
+    for i in 3 {
+        let pem = if i == 0 { FRANK_PEM } else if i == 1 { GRACE_PEM } else { HEIDI_PEM };
+        let kpem = if i == 0 { FRANK_KEY } else if i == 1 { GRACE_KEY } else { HEIDI_KEY };
+        let from = if i == 0 { "Frank <frank@example.com>" } else if i == 1 { "grace@example.org" } else { "Heidi <heidi@example.com>" };
+        let what = if i == 0 { "sign ml-dsa-65" } else if i == 1 { "sign ml-dsa-44" } else { "sign ml-dsa-87" };
+        let c = cert(pem);
+        let k = key(kpem);
+        check(what, x509::is_mldsa(k.kind) && k.kind == c.key_type);
+        var m = mail::Msg { .. };
+        pq_build(m, from);
+        let inner = inner_of(m);
+        // Options.hash is not ML-DSA's: SHA-512 whatever it says.
+        var o = smime::Options { hash: 256, signing_time: TIME, by_key_id: i == 2, .. };
+        o.boundary.append("signed-boundary");
+        var out: u8[>..] = [];
+        check_rc(what, smime::sign(m, k, c, "", o, out), mail::OK);
+        check(what, contains(out, "micalg=sha-512"));
+        var r = smime::Opened { .. };
+        check_rc(what, smime::verify(out, r), mail::OK);
+        check(what, r.signed && r.signer.der == c.der && r.entity == inner && r.signing_time == TIME);
+        check_rc(what, smime::check_signer(r, pool, NOW, smime::from_address(out)), mail::OK);
+        check_rc(what, smime::check_signer(r, pool, NOW, "alice@example.com"), mail::ERR_CERT);
+        var r2 = smime::Opened { .. };
+        check_rc(what, smime::verify(changed(out, "figures are"), r2), mail::ERR_SIGNATURE);
+        // Opaque.
+        var op: u8[>..] = [];
+        check_rc(what, smime::sign_opaque(m, k, c, "", o, op), mail::OK);
+        check_rc(what, smime::verify(op, r2), mail::OK);
+        check(what, r2.signed && r2.entity == inner && smime::check_path(r2, pool, NOW) == x509::OK);
+        // The ML-DSA root does not know the classic chain, nor the other way.
+        let classic = roots();
+        check_rc(what, smime::check_signer(r, classic, NOW, ""), mail::ERR_CERT);
+    }
+    // An ML-KEM key cannot sign; nor an ML-DSA key with an ML-KEM certificate.
+    var m = mail::Msg { .. };
+    pq_build(m, "frank@example.com");
+    var out: u8[>..] = [];
+    let o = smime::Options { .. };
+    check_rc("ml-kem signs", smime::sign(m, frank_kem_key, frank_kem, "", o, out), mail::ERR_KEY);
+    check_rc("ml-dsa key, ml-kem cert", smime::sign(m, frank_key, frank_kem, "", o, out), mail::ERR_KEY);
+}
+
+fn pq_encryption() {
+    let frank_key = key(FRANK_KEY);
+    let frank = cert(FRANK_PEM);
+    let frank_kem = cert(FRANK_KEM_PEM);
+    let grace_kem_key = key(GRACE_KEM_KEY);
+    let grace_kem = cert(GRACE_KEM_PEM);
+    var rs: u8[>..] = [];
+    rs.append(der(FRANK_KEM_PEM));
+    rs.append(der(GRACE_KEM_PEM));
+    rs.append(der(HEIDI_KEM_PEM));
+    rs.append(der(BOB_PEM));
+    var m = mail::Msg { .. };
+    pq_build(m, "frank@example.com");
+    let inner = inner_of(m);
+    var n = 0;
+    for cipher in [x509::CMS_AES256_CBC, x509::CMS_AES256_GCM] {
+        let o = smime::Options { cipher: cipher, by_key_id: n == 1, .. };
+        var out: u8[>..] = [];
+        check_rc("pq encrypt", smime::encrypt(m, rs, o, out), mail::OK);
+        var r = smime::Opened { .. };
+        for i in 4 {
+            let c = cert(if i == 0 { FRANK_KEM_PEM } else if i == 1 { GRACE_KEM_PEM } else if i == 2 { HEIDI_KEM_PEM } else { BOB_PEM });
+            let k = key(if i == 0 { FRANK_KEM_KEY } else if i == 1 { GRACE_KEM_KEY } else if i == 2 { HEIDI_KEM_KEY } else { BOB_KEY });
+            let rc = smime::open(out, k, c, r);
+            check_rc(str("pq decrypt ", i), rc, mail::OK);
+            check(str("pq decrypt ", i), r.encrypted && r.entity == inner);
+        }
+        check_rc("pq wrong key", smime::open(out, grace_kem_key, frank_kem, r), mail::ERR_DECRYPT);
+        check_rc("pq signing cert", smime::open(out, frank_key, frank, r), mail::ERR_DECRYPT);
+        check("pq signing cert", r.cms_error == x509::ERR_CMS_NOT_RECIPIENT);
+        n++;
+    }
+    var out: u8[>..] = [];
+    let o = smime::Options { .. };
+    check_rc("ml-dsa recipient", smime::encrypt(m, der(FRANK_PEM), o, out), mail::ERR_CERT);
+    // Signed by ML-DSA, encrypted to ML-KEM.
+    let so = smime::Options { signing_time: TIME, cipher: x509::CMS_AES128_GCM, .. };
+    var se: u8[>..] = [];
+    check_rc("pq sign-encrypt", smime::sign_encrypt(m, frank_key, frank, "", der(GRACE_KEM_PEM), so, se), mail::OK);
+    var r = smime::Opened { .. };
+    check_rc("pq sign-encrypt", smime::open(se, grace_kem_key, grace_kem, r), mail::OK);
+    check("pq sign-encrypt", r.signed && r.encrypted && r.signer.der == cert(FRANK_PEM).der && r.entity == inner);
+    let pool = pq_roots();
+    check_rc("pq sign-encrypt", smime::check_signer(r, pool, NOW, smime::from_address(se)), mail::OK);
+}
+
+// Post-quantum messages openssl made.
+fn pq_openssl() {
+    let frank_kem_key = key(FRANK_KEM_KEY);
+    let frank_kem = cert(FRANK_KEM_PEM);
+    let grace_kem_key = key(GRACE_KEM_KEY);
+    let grace_kem = cert(GRACE_KEM_PEM);
+    let heidi_kem_key = key(HEIDI_KEM_KEY);
+    let heidi_kem = cert(HEIDI_KEM_PEM);
+    let pool = pq_roots();
+    var r = smime::Opened { .. };
+    for i in 3 {
+        let msg = if i == 0 { embed_file("smime/pq/ossl-signed-mldsa65.eml") }
+                  else if i == 1 { embed_file("smime/pq/ossl-signed-mldsa44-opaque.eml") }
+                  else { embed_file("smime/pq/ossl-signed-mldsa87-sha512.eml") };
+        let signer = if i == 0 { FRANK_PEM } else if i == 1 { GRACE_PEM } else { HEIDI_PEM };
+        let rc = smime::verify(msg, r);
+        check_rc(str("openssl pq signed ", i), rc, mail::OK);
+        check(str("openssl pq signed ", i), r.signed && r.signer.der == cert(signer).der && r.entity == ENTITY);
+        check(str("openssl pq signed ", i), smime::check_path(r, pool, NOW) == x509::OK);
+        // From is Frank's: only his passes.
+        check_rc(str("openssl pq signed ", i), smime::check_signer(r, pool, NOW, smime::from_address(msg)),
+                 if i == 0 { mail::OK } else { mail::ERR_CERT });
+    }
+    check_rc("openssl pq signed, changed", smime::verify(changed(embed_file("smime/pq/ossl-signed-mldsa65.eml"), "Hello from"), r),
+             mail::ERR_SIGNATURE);
+    check_rc("openssl mlkem768", smime::open(embed_file("smime/pq/ossl-enc-mlkem768.eml"), frank_kem_key, frank_kem, r), mail::OK);
+    check("openssl mlkem768", r.encrypted && r.entity == ENTITY && contains(r.message, "Subject: From OpenSSL"));
+    check_rc("openssl mlkem512 gcm", smime::open(embed_file("smime/pq/ossl-enc-mlkem512-gcm.eml"), grace_kem_key, grace_kem, r), mail::OK);
+    check("openssl mlkem512 gcm", r.entity == ENTITY);
+    check_rc("openssl mlkem1024 keyid", smime::open(embed_file("smime/pq/ossl-enc-mlkem1024-keyid.eml"), heidi_kem_key, heidi_kem, r), mail::OK);
+    check("openssl mlkem1024 keyid", r.entity == ENTITY);
+    let ukm = embed_file("smime/pq/ossl-enc-mlkem-ukm.eml");
+    check_rc("openssl mlkem ukm", smime::open(ukm, frank_kem_key, frank_kem, r), mail::OK);
+    check("openssl mlkem ukm", r.entity == ENTITY);
+    check_rc("openssl mlkem ukm, grace", smime::open(ukm, grace_kem_key, grace_kem, r), mail::OK);
+    check_rc("openssl mlkem not for heidi", smime::open(ukm, heidi_kem_key, heidi_kem, r), mail::ERR_DECRYPT);
+    let se = embed_file("smime/pq/ossl-sign-encrypt.eml");
+    check_rc("openssl pq sign-encrypt", smime::open(se, grace_kem_key, grace_kem, r), mail::OK);
+    check("openssl pq sign-encrypt", r.signed && r.encrypted && r.signer.der == cert(FRANK_PEM).der && r.entity == ENTITY);
+    check_rc("openssl pq sign-encrypt", smime::check_signer(r, pool, NOW, smime::from_address(se)), mail::OK);
+}
+
 fn main() {
     signing();
     signer_checks();
@@ -400,6 +575,9 @@ fn main() {
     sign_then_encrypt();
     not_smime();
     openssl();
+    pq_signing();
+    pq_encryption();
+    pq_openssl();
     print("smime: ", checks, " checks, ", failures, " failed");
     assert(failures == 0);
 }

@@ -19,7 +19,7 @@ their own I/O over gslib's `net` sockets and its TLS, and a tool,
 | `mail.imap` | an IMAP client (namespace `imap`), IMAP4rev2 and IMAP4rev1 servers: CAPABILITY, STARTTLS or TLS on 993, LOGIN, AUTHENTICATE (SASL-IR), ID, ENABLE, SELECT/EXAMINE, LIST/LSUB (modified UTF-7 decoded), CREATE, DELETE, RENAME, SUBSCRIBE, STATUS, FETCH (ENVELOPE and BODYSTRUCTURE parsed), SEARCH/ESEARCH, STORE, COPY, MOVE, EXPUNGE, UID EXPUNGE, APPEND (LITERAL+), NOOP, IDLE, CLOSE, UNSELECT, LOGOUT; a response parser with literals |
 | `mail.dkim` | DKIM (namespace `dkim`, RFC 6376): signing and verifying with RSA-SHA256 and Ed25519-SHA256 (RFC 8463), rsa-sha1 verified only on request and RSA keys under 1024 bits refused (RFC 8301); simple and relaxed canonicalization, l=, i=, t=, x=, From over-signed; `sign`, `signature`, `sign_msg`, `verify` with a key-lookup block, `verify_record`, `verify_dns` (dns.client), `parse_key`, `key_record` |
 | `mail.pgp` | PGP/MIME (RFC 3156), namespace `pgp`, over crypto.openpgp: `sign` (multipart/signed, micalg=pgp-sha256), `encrypt` (multipart/encrypted), `sign_encrypt` (one OpenPGP message, §6.2), each over a `mail::Msg` or a written message; `open`, `verify`, `decrypt` read every layer back, §6.1 nesting too |
-| `mail.smime` | S/MIME 4.0 (RFC 8551), namespace `smime`: `sign` (multipart/signed), `sign_opaque`, `encrypt` (enveloped-data, or authEnveloped-data with GCM), `sign_encrypt`, each over a `mail::Msg` or a written message; `open` and `verify` read every layer back; `check_signer`, `check_path`, `has_address`, `from_address` |
+| `mail.smime` | S/MIME 4.0 (RFC 8551), namespace `smime`: `sign` (multipart/signed), `sign_opaque`, `encrypt` (enveloped-data, or authEnveloped-data with GCM), `sign_encrypt`, each over a `mail::Msg` or a written message; `open` and `verify` read every layer back; `check_signer`, `check_path`, `has_address`, `from_address`; ML-DSA signers and ML-KEM recipients too |
 
 ## Using it
 
@@ -168,15 +168,23 @@ Message-ID, ...) stay outside; the entity (the Content-* fields and the
 body) is what is signed or encrypted. multipart/signed signs the entity
 exactly as it is sent, so it must be 7bit: a `Msg` with `ENC_8BIT` is
 refused. RSA keys sign with PKCS #1 v1.5 (`pss` for PSS), EC keys with
-ECDSA, Ed25519 keys with Ed25519 (RFC 8419). Recipients are certificates,
-DER laid end to end: RSA ones by RSAES-OAEP with SHA-256 (`rsa_pkcs1` for
-v1.5), EC ones (P-256, P-384, P-521) by ECDH with the X9.63 KDF and AES
-key wrap; the content by AES-CBC (EnvelopedData) or AES-GCM
-(AuthEnvelopedData). The sender reads their own message only if their
+ECDSA, Ed25519 keys with Ed25519 (RFC 8419), ML-DSA-44, -65 and -87 keys
+with pure ML-DSA (RFC 9882; Ed25519 and ML-DSA digest by SHA-512 and say
+micalg=sha-512 whatever `hash` is). Recipients are certificates, DER laid
+end to end: RSA ones by RSAES-OAEP with SHA-256 (`rsa_pkcs1` for v1.5),
+EC ones (P-256, P-384, P-521) by ECDH with the X9.63 KDF and AES key
+wrap, ML-KEM-512, -768 and -1024 ones (RFC 9935 certificates) by
+KEMRecipientInfo (RFC 9629, RFC 9936: HKDF-SHA256 and AES key wrap), any
+mix of them in one message; the content by AES-CBC (EnvelopedData) or
+AES-GCM (AuthEnvelopedData). A post-quantum correspondent has two
+certificates, an ML-DSA one to sign with and an ML-KEM one to be
+encrypted to: `sign_encrypt` takes the first's key and certificate and
+the second as a recipient. The sender reads their own message only if their
 certificate is among the recipients. `open` reads what openssl, and BER
 CMS, send: OAEP with SHA-1 too, RSA PKCS #1 v1.5 without a padding oracle
 (a bad block gives a random key, then ERR_DECRYPT), the SHA-1 ECDH KDF
-openssl uses by default. Whether to trust the signer is the caller's:
+openssl uses by default, its SHAKE256 digest for ML-DSA, and ML-KEM with
+HKDF-SHA384 or -512 and a ukm. Whether to trust the signer is the caller's:
 `check_signer` checks the path to the roots given (for email protection,
 with a key usage that signs) and that one of the certificate's rfc822Name
 addresses is From's. The CMS underneath is crypto/x509's `x509.cms` and
@@ -202,6 +210,14 @@ one OpenPGP message that is signed and encrypted (RFC 3156 §6.2); `open`
 also reads the §6.1 nesting (multipart/signed inside multipart/encrypted).
 Whether the signing key belongs to From is the caller's to decide. The
 OpenPGP underneath is crypto/openpgp (its README has the formats).
+
+Post-quantum recipients need nothing new: a recipient whose encryption
+key is gpg 2.5's Kyber subkey (LibrePGP's ML-KEM-768+X25519,
+`openpgp::generate_pqc_key` or gpg's `ky768_cv25519`) or RFC 9980's
+ML-KEM-768+X25519 gets a post-quantum PKESK from the same `encrypt` and
+`sign_encrypt`, and `open` reads them; an RFC 9980 ML-DSA-65+Ed25519 key
+signs (micalg=pgp-sha256) like any other. gpg 2.5 reads the Kyber kind
+only.
 
 ## Tools
 
@@ -272,6 +288,15 @@ print `encrypted`, `signed by SUBJECT`, the signing time, and with
 - `smime_sign.goose`: a message signed as multipart/signed with an
   embedded test key, then verified and its signer checked against From;
   deterministic.
+- `smime_pq.goose`: post-quantum S/MIME with keys made on the spot: a
+  message signed by ML-DSA-65 and encrypted to an ML-KEM-768 certificate,
+  then opened by its recipient, the signer checked against the CA and
+  From; refused for a key that is not a recipient's.
+- `pgp_pq.goose`: post-quantum PGP/MIME with keys made on the spot: a
+  message with an attachment signed by Alice (Ed25519) and encrypted to
+  Bob's key of gpg 2.5's post-quantum kind (a Kyber subkey, ML-KEM-768+
+  X25519), opened by Bob, the signature checked; refused for another
+  post-quantum key.
 
 ## Tests
 
@@ -311,11 +336,21 @@ python3 mail/scripts/check_message.py
   refused; sign-then-encrypt; 8bit refused for multipart/signed; and 14
   messages openssl made (`test/smime/`, from `scripts/interop_smime.py
   --write-vectors`, test keys only; `.gitattributes` keeps their bytes).
+  Post-quantum, with the PKI of `test/smime/pq/` (an ML-DSA-65 root;
+  Frank, Grace and Heidi each with an ML-DSA-65/44/87 signing certificate
+  and an ML-KEM-768/512/1024 encryption one; from `scripts/interop_smime.py
+  --write-pq-vectors`): signed by each ML-DSA key, detached and opaque,
+  checked to the root; encrypted to every ML-KEM set with an EC recipient
+  beside them; signed then encrypted; a wrong key, a signing certificate
+  as recipient, an ML-KEM key signing refused; and 8 messages openssl
+  made, a ukm with HKDF-SHA384 among them (311 checks in all).
 - `test/pgp.goose`: a Msg signed by Ed25519 and RSA keys and read back,
   LF input, a changed byte refused, encryption signed and not, not for
   us, 8bit refused, and 4 messages gpg made (`test/pgp/`, from
   `scripts/interop_pgp.py --write-vectors`, test keys only;
-  `.gitattributes` keeps their bytes).
+  `.gitattributes` keeps their bytes); post-quantum recipients of both
+  kinds (gpg 2.5's Kyber and RFC 9980's, made in the test), signed by
+  Alice or by an ML-DSA-65+Ed25519 key, opened by each recipient.
 - `test/address.goose`: 80 addresses and 10 lists with Go 1.27's
   net/mail's answers, and round trips.
 - `test/message.goose`: four messages byte for byte against
@@ -369,13 +404,20 @@ python3 mail/scripts/check_message.py
   then the keys looked up through dns.client in goose-dnsd on 127.0.0.1 (a
   record in two strings, a missing selector, a revoked key).
 - `scripts/interop_smime.py`: goose-mail's smime and `openssl cms` (3 or
-  later) both ways, 57 cases: signing detached, opaque and BER by every
+  later) both ways, 96 cases: signing detached, opaque and BER by every
   key, checked to the test root; encryption by RSA-OAEP, RSA v1.5, P-256
   and P-384 (openssl's SHA-1 and SHA-256 KDFs), AES-CBC and AES-GCM,
-  several recipients, key identifiers; sign-then-encrypt; refusals.
-- `scripts/interop_pgp.py`: mail.pgp and gpg both ways (11 cases): gpg
+  several recipients, key identifiers; sign-then-encrypt; refusals. With
+  an openssl that has ML-DSA and ML-KEM (3.5 or later), 39 of them
+  post-quantum: ML-DSA-44/65/87 signing both ways (openssl's SHAKE256 and
+  SHA-512 digests, opaque, BER), ML-KEM-512/768/1024 encryption both ways
+  (GCM, key identifiers, a ukm, HKDF-SHA384/512, beside RSA and EC
+  recipients, BER), sign-then-encrypt both ways.
+- `scripts/interop_pgp.py`: mail.pgp and gpg both ways (15 cases): gpg
   verifies and decrypts our parts; we open gpg's signed, encrypted,
-  combined and nested messages, and refuse a changed body.
+  combined and nested messages, and refuse a changed body; both ways to
+  a post-quantum key of gpg's (Ed25519 with ky768_cv25519), signed and
+  not.
 
 ## Departures from go-mail
 

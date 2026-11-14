@@ -1,9 +1,9 @@
-// Messages made by Go's lestrrat-go/jwx v3 (test/vectors/go_jwx.txt, from
-// scripts/differential: go run . gen): every signature algorithm, compact
-// and JSON, and every key management algorithm with every content
-// algorithm, some compressed, some as JSON, each verified or decrypted
-// here with its key, and refused with a byte of the signature or tag
-// changed. tools/tokens.goose and `go run . check` go the other way.
+// Messages made by Go's lestrrat-go/jwx v4 (test/vectors/go_jwx.txt, from
+// scripts/differential: go run . gen): every signature algorithm (ML-DSA
+// with AKP keys too), compact and JSON, and every key management
+// algorithm with every content algorithm, some compressed, some as JSON,
+// each verified or decrypted here with its key, and refused with a byte
+// of the signature or tag changed. tools/tokens.goose and `go run . check` go the other way.
 import std;
 import os;
 import gslib from "../..";

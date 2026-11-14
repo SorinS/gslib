@@ -1,0 +1,8 @@
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 7bit
+
+Hello from OpenSSL.
+A second line, and a third:
+
+-- 
+Alice

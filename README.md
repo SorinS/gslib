@@ -8,9 +8,9 @@ later.
 
 | Library | What | |
 |---|---|---|
-| `crypto/bignum` | Integers of any size, constant-time arithmetic, and cryptography: AES, Camellia, ChaCha20, the SHA-1/2/3 and BLAKE2 hashes, HMAC, CMAC, AES Key Wrap (RFC 3394 and 5649, used by jwx), HKDF, PBKDF2, scrypt, Argon2, bcrypt, RSA, DSA, ECDH and ECDSA (P-224 to P-521), X25519, Ed25519, ML-KEM, ML-DSA, HPKE, NaCl, the legacy ciphers | [README](crypto/bignum/README.md) |
+| `crypto/bignum` | Integers of any size, constant-time arithmetic, and cryptography: AES, Camellia, ChaCha20, the SHA-1/2/3 and BLAKE2 hashes, HMAC, CMAC, AES Key Wrap (RFC 3394 and 5649, used by jwx), HKDF, PBKDF2, scrypt, Argon2, bcrypt, RSA, DSA, ECDH and ECDSA (P-224 to P-521), X25519, Ed25519, ML-KEM, ML-DSA, SLH-DSA, HPKE, NaCl, the legacy ciphers | [README](crypto/bignum/README.md) |
 | `encoding/asn1` | DER and BER reading and writing, PEM | [README](encoding/asn1/README.md) |
-| `crypto/x509` | Certificates: parsing, path building and verification, name constraints, policies, system roots, creating certificates, CSRs and CRLs, OCSP, PKCS #12 | [README](crypto/x509/README.md) |
+| `crypto/x509` | Certificates: parsing, path building and verification, name constraints, policies, system roots, creating certificates, CSRs and CRLs, OCSP, PKCS #12; post-quantum ML-DSA and SLH-DSA keys and signatures, ML-KEM keys, CMS with ML-DSA signers and ML-KEM recipients | [README](crypto/x509/README.md) |
 | `crypto/tls` | TLS 1.3 and 1.2, client and server, without I/O: resumption, client certificates, ECH, post-quantum key exchange | [README](crypto/tls/README.md) |
 | `crypto/ssh` | SSH (RFC 4251-4254) without I/O, client and server, SFTP; goose-ssh, goose-sshd, goose-scp, goose-sftp-server, goose-ssh-keygen | [README](crypto/ssh/README.md) |
 | `net/ldap` | LDAP (RFC 4511): messages, filters, DNs, LDIF, URLs, connections; ldapsearch-style tools | [README](net/ldap/README.md) |
@@ -18,11 +18,11 @@ later.
 | `compress` | Compression and archives, as Go's compress/* and archive/*, plus xz: DEFLATE, gzip, zlib, LZW, bzip2, xz and LZMA, zip, tar; reading and writing | [README](compress/README.md) |
 | `mime` | MIME, as Go's mime, mime/quotedprintable and mime/multipart, and net/textproto's header sections: media types, RFC 2047 encoded-words, file extensions' types, quoted-printable, multipart bodies and forms | [README](mime/README.md) |
 | `krb5` | Kerberos V5 (RFC 4120) as go-krb5 has it: TGTs and service tickets (password, keytab, cross-realm, referrals, FAST armoring), the acceptor, GSS-API (RFC 4121), SPNEGO and HTTP Negotiate, Microsoft's PAC, keytabs and credential caches; goose-krb5 (kinit, kvno, klist) and goose-gss | [README](krb5/README.md) |
-| `jwx` | JOSE, as Go's lestrrat-go/jwx: JSON Web Keys (and key sets, thumbprints, PEM), Signatures (compact and JSON, every RFC 7518 algorithm and EdDSA), Encryption (every key management and content algorithm, zip, several recipients) and Tokens (claims, validation, nested) | [README](jwx/README.md) |
+| `jwx` | JOSE, as Go's lestrrat-go/jwx: JSON Web Keys (and key sets, thumbprints, PEM), Signatures (compact and JSON, every RFC 7518 algorithm, EdDSA and post-quantum ML-DSA (RFC 9964)), Encryption (every key management and content algorithm, zip, several recipients) and Tokens (claims, validation, nested) | [README](jwx/README.md) |
 | `pkcs11` | PKCS#11 (Cryptoki), as Go's miekg/pkcs11: modules (HSMs, tokens, SoftHSM) loaded at run time, every C_* function, templates, mechanisms and their parameters, all the OASIS constants; and miekg's p11 layer (Module, Slot, Session, Object, keys) | [README](pkcs11/README.md) |
 | `dns` | The DNS, as Go's miekg/dns: messages and the 79 record types it implements, in wire form (with compression) and text, zone files (`$ORIGIN`, `$TTL`, `$INCLUDE`, `$GENERATE`), EDNS0, DNSSEC (signing, verifying, DS, NSEC3, keys), TSIG and SIG(0), dynamic updates, zone transfers, a client and a server; goose-dig and goose-dnsd | [README](dns/README.md) |
-| `crypto/openpgp` | OpenPGP (RFC 9580, RFC 4880 as gpg writes it): keys (Ed25519/Curve25519, RSA, ECDSA/ECDH on NIST curves, v6 read), protected secret keys, signatures (inline, detached, cleartext), encryption to keys and passphrases (SEIPD v1, gpg's OCB packet and SEIPD v2 read), compression, key generation; goose-pgp | [README](crypto/openpgp/README.md) |
-| `mail` | Email, as Go's go-mail for sending: messages built and written as MIME (addresses, text and HTML, attachments, inline parts), an SMTP client (STARTTLS or TLS, AUTH with PLAIN, LOGIN, CRAM-MD5, SCRAM-SHA-1/256, XOAUTH2, SMTPUTF8, DSN), a POP3 client (STLS, APOP, SASL, UIDL, TOP) and an IMAP client (IMAP4rev2 and rev1: mailboxes, FETCH with ENVELOPE and BODYSTRUCTURE, SEARCH, STORE, MOVE, APPEND, IDLE); DKIM signing and verifying (RSA, Ed25519); S/MIME and PGP/MIME signing and encryption; goose-mail | [README](mail/README.md) |
+| `crypto/openpgp` | OpenPGP (RFC 9580, RFC 4880 as gpg writes it): keys (Ed25519/Curve25519, RSA, ECDSA/ECDH on NIST curves, v6 read), protected secret keys, signatures (inline, detached, cleartext), encryption to keys and passphrases (SEIPD v1, gpg's OCB packet and SEIPD v2 read), compression, key generation; post-quantum ML-KEM-768+X25519 (gpg 2.5's and RFC 9980's) and ML-DSA-65+Ed25519 (RFC 9980); goose-pgp | [README](crypto/openpgp/README.md) |
+| `mail` | Email, as Go's go-mail for sending: messages built and written as MIME (addresses, text and HTML, attachments, inline parts), an SMTP client (STARTTLS or TLS, AUTH with PLAIN, LOGIN, CRAM-MD5, SCRAM-SHA-1/256, XOAUTH2, SMTPUTF8, DSN), a POP3 client (STLS, APOP, SASL, UIDL, TOP) and an IMAP client (IMAP4rev2 and rev1: mailboxes, FETCH with ENVELOPE and BODYSTRUCTURE, SEARCH, STORE, MOVE, APPEND, IDLE); DKIM signing and verifying (RSA, Ed25519); S/MIME (ML-DSA and ML-KEM too) and PGP/MIME signing and encryption; goose-mail | [README](mail/README.md) |
 | `net/http` | HTTP/1.1 and HTTP/2, server and client: a client with Go's policy (redirects, cookies, credentials, proxies, gzip, TLS session resumption, streaming uploads, several responses at once), URLs, cookies, HPACK; goose-http and goose-httpd | [README](net/http/README.md) |
 | `net` | TCP client sockets, as the client half of Go's net: `net::dial` with a deadline, `net::read` and `net::write` with timeouts, `net::readable`, `net::close`; what http, dns, krb5 and the examples connect with (POSIX and Winsock) | [net.goose](net.goose) |
 
@@ -127,14 +127,16 @@ them, so modules that write a GCM IV back later are not supported.
 [README](jwx/README.md) has the API and the design.
 
 - **`jwx`**: error codes and strict base64url (no padding, no stray bits).
-- **`jwx.jwa`**: every algorithm, key type and curve of RFC 7518, RFC 8037
-  and RFC 9864, with what each needs.
+- **`jwx.jwa`**: every algorithm, key type and curve of RFC 7518, RFC 8037,
+  RFC 9864 and RFC 9964, with what each needs.
 - **`jwx.jwk`**: keys and key sets (RSA, EC P-256/384/521, OKP Ed25519 and
-  X25519, oct), checked for consistency; RFC 7638 thumbprints; generation.
+  X25519, oct, AKP ML-DSA-44/65/87), checked for consistency; RFC 7638 thumbprints; generation.
 - **`jwx.pem`**: keys from and to PEM and DER: PKCS #8, SEC 1, PKCS #1,
-  SubjectPublicKeyInfo, and certificates (with `x5t` and `x5t#S256`).
+  SubjectPublicKeyInfo, and certificates (with `x5t` and `x5t#S256`);
+  ML-DSA keys as RFC 9881 has them.
 - **`jwx.jws`**: signatures, compact and JSON (general and flattened),
-  detached and unencoded (RFC 7797) payloads; HS, RS, PS, ES and EdDSA.
+  detached and unencoded (RFC 7797) payloads; HS, RS, PS, ES, EdDSA and
+  ML-DSA.
 - **`jwx.jwe`**: encryption, compact and JSON, several recipients,
   additional authenticated data, `zip`; RSA1_5, RSA-OAEP(-256/384/512),
   A*KW, dir, ECDH-ES(+A*KW) on the NIST curves and X25519, A*GCMKW, PBES2;
@@ -146,20 +148,34 @@ Verifying and decrypting take the algorithm the caller expects, so a token
 cannot choose its own (no alg confusion, no `none` unless asked for by
 name). Key unwrap and decryption failures are uniform, RSA1_5 continues
 with a random key on bad padding, and ECDH-ES ephemeral keys are checked
-to be on their curve. As jwx, PBES2 counts are capped (10000) and `zip`
+to be on their curve. As jwx v4, PBES2 encrypts with OWASP 2023's counts
+(600000, 210000) and decrypting accepts 1000 to 1000000, and `zip`
 payloads may inflate to 10 MB, both adjustable.
 
 Departures from jwx: keys keep only the members RFC 7517 and RFC 7518
 define (no private members, no `x5c`), as Goose's fixed-size structs
 cannot hold them; and a JWE header parameter may appear in two headers
-only with the same value (Go's jwx repeats `alg`, which RFC 7516 §7.2.1
-forbids). Not supported: Ed448, X448, ES256K, multi-prime RSA keys.
+only with the same value (Go's jwx v3 repeats `alg`, which RFC 7516 §7.2.1
+forbids). Not supported: Ed448, X448, ES256K, multi-prime RSA keys,
+HashML-DSA, ML-DSA contexts, expanded ML-DSA private keys in JWKs.
 
 Tested against RFC 7520's examples (the JOSE cookbook), with 10
 ciphertexts and 8 encrypted keys remade byte for byte; RFC 7515, 7517,
-7518 Appendix C, 7519, 7638, 7797 and 8037; keys made by OpenSSL; 168
-messages made by Go's jwx v3; and a differential both ways with Go's jwx
+7518 Appendix C, 7519, 7638, 7797, 8037 and 9964 (its ML-DSA signatures
+remade byte for byte); keys made by OpenSSL, ML-DSA too; 174 messages made
+by Go's jwx v4; and a differential both ways with Go's jwx v4.6.0
 (`make differential-jwx`).
+
+**Post-quantum JOSE.** jwx signs and verifies with ML-DSA-44, ML-DSA-65 and
+ML-DSA-87 as RFC 9964 defines them for JOSE. Keys are the new `AKP` type
+(`{"kty":"AKP","alg":"ML-DSA-65","pub":…,"priv":…}`, the private part
+being FIPS 204's 32-byte seed), thumbprints cover `alg`, `kty` and `pub`,
+and signatures are pure ML-DSA with the empty context, from crypto/bignum's
+ML-DSA. `jwk::generate_akp(jwa::ML_DSA_65)` makes a key; `jws` and `jwt`
+take the new algorithms as they take any other; `jwx.pem` reads and writes
+ML-DSA keys (OpenSSL's PEM files included). An AKP key only ever fits the
+one algorithm it names, and is never a JWE key. Go's lestrrat-go/jwx v4 and
+gslib verify each other's ML-DSA tokens.
 
 ### mail: messages, SMTP, POP3, IMAP, DKIM, S/MIME and PGP/MIME
 
@@ -191,11 +207,13 @@ has the API.
   RSA-SHA256 and Ed25519-SHA256 (RFC 8463), simple and relaxed
   canonicalization, From over-signed, keys from DNS through dns.client or
   handed in; rsa-sha1 and small RSA keys refused (RFC 8301).
-- **`mail.smime`**: S/MIME 4.0 signing (multipart/signed and opaque) and
-  encryption (RSA-OAEP, RSA PKCS #1 v1.5 and ECDH recipients, AES-CBC
-  and AES-GCM), and reading both back with the signer checked against
-  From; over x509's CMS, which grew detached signatures, EnvelopedData and
-  AuthEnvelopedData for it.
+- **`mail.smime`**: S/MIME 4.0 signing (multipart/signed and opaque; RSA,
+  ECDSA, Ed25519 and post-quantum ML-DSA signers) and encryption (RSA-OAEP,
+  RSA PKCS #1 v1.5, ECDH and post-quantum ML-KEM recipients, AES-CBC and
+  AES-GCM), and reading both back with the signer checked against From;
+  over x509's CMS, which grew detached signatures, EnvelopedData and
+  AuthEnvelopedData for it, ML-DSA SignedData (RFC 9882) and ML-KEM
+  recipients (KEMRecipientInfo, RFC 9629, as openssl 4.1 writes them).
 - **`mail.pgp`**: PGP/MIME (RFC 3156) signing and encryption over
   crypto/openpgp.
 - **goose-mail** sends a file or a built message, reads a POP3 or IMAP
@@ -215,7 +233,9 @@ the server's way and misbehave on purpose, mailpit (SMTP, then POP3
 reading what was sent) and dovecot 2.4 (POP3 and IMAP with STARTTLS,
 APOP and SASL, and IMAP's mailbox commands) (`make interop-mail`). DKIM
 is checked against RFC 8463's examples and dkimpy both ways, S/MIME
-against `openssl cms` both ways, PGP/MIME against gpg.
+against `openssl cms` both ways (ML-DSA and ML-KEM included, all three
+parameter sets each), PGP/MIME against gpg. `examples/mail/smime_pq.goose`
+and `examples/x509/cms_pq.goose` show the post-quantum side.
 
 ### openpgp: OpenPGP
 
@@ -228,6 +248,54 @@ in crypto/openpgp/ocb.goose, checked against RFC 7253), and writes SEIPD v1
 with the MDC, which every implementation reads. mail.pgp builds PGP/MIME
 (RFC 3156) on it. Tested against RFC 9580's samples, fixtures gpg made,
 tampering and fuzzed input, and gpg both ways (`make interop-openpgp`).
+
+The OpenPGP library now does post-quantum encryption and signatures. gpg
+2.5's ky768_cv25519 keys (LibrePGP's ML-KEM-768+X25519 on v5 subkeys) work
+both ways with gpg: keys generated here are imported by gpg, secret parts
+included, and messages go in both directions. RFC 9980's ML-KEM-768+X25519
+and ML-DSA-65+Ed25519 (v6 keys) match the RFC's Appendix A vectors. PGP/MIME
+in mail.pgp encrypts to either kind with no API change. The two cannot meet:
+gpg 2.5 gives RFC 9980's algorithm numbers to its own Dilithium and does not
+read v6 keys.
+
+## Post-quantum cryptography
+
+The NIST post-quantum standards are in crypto/bignum, and the protocols
+use them:
+
+- **ML-KEM** (FIPS 203) and **ML-DSA** (FIPS 204), all three parameter sets
+  each, constant time.
+- **SLH-DSA** (FIPS 205), described below.
+- **TLS 1.3**: the X25519MLKEM768 hybrid by default, SecP256r1MLKEM768,
+  SecP384r1MLKEM1024 and MLKEM1024 alone, and ML-DSA certificates.
+- **SSH**: mlkem768x25519-sha256, first in the default list.
+- **HPKE**: ML-KEM and its hybrids, X-Wing among them.
+- **x509**: ML-DSA (RFC 9881), SLH-DSA (RFC 9909) and ML-KEM keys, and
+  certificates, CSRs and CRLs signed with ML-DSA or SLH-DSA.
+- **CMS and S/MIME**: ML-DSA signers (RFC 9882) and ML-KEM recipients
+  (KEMRecipientInfo, RFC 9629), checked against `openssl cms` both ways.
+- **JOSE**: ML-DSA in JWS, JWK and JWT (RFC 9964), checked against Go's jwx
+  v4 both ways.
+- **OpenPGP and PGP/MIME**: gpg 2.5's ML-KEM-768+X25519 keys, both ways
+  with gpg, and RFC 9980's ML-KEM-768+X25519 and ML-DSA-65+Ed25519, against
+  the RFC's vectors; KMAC (SP 800-185) in crypto/bignum for them.
+
+**Stateless hash-based signatures.** crypto/bignum has SLH-DSA (FIPS 205)
+in all twelve parameter sets (SHA2 and SHAKE at 128, 192 and 256 bits,
+small or fast), with hedged and deterministic signing, context strings,
+HashSLH-DSA over every pre-hash the standard names, and the internal
+interface. Its security rests on the hash function alone. Keys and
+signatures match openssl's byte for byte and NIST's ACVP vectors. The fast
+sets sign in about 0.1–0.6 s and the small ones in 2–5 s; verifying takes
+milliseconds. crypto/x509 carries SLH-DSA keys in PKCS #8 and
+SubjectPublicKeyInfo and signs certificates, CSRs and CRLs with them (RFC
+9909), and openssl verifies what it writes.
+
+Examples: `examples/bignum/mlkem_demo.goose`, `mldsa_demo.goose` and
+`slhdsa_demo.goose`; `examples/x509/slhdsa_cert.goose` and `cms_pq.goose`;
+`examples/mail/smime_pq.goose` and `pgp_pq.goose`;
+`examples/openpgp/pqc.goose`; `examples/jwx/mldsa_tokens.goose`;
+`examples/tls/post_quantum.goose`.
 
 ## Using it
 

@@ -3,7 +3,9 @@
 // give the same JWK (by RFC 7638 thumbprint), the certificate's x5t and
 // x5t#S256 are OpenSSL's fingerprints, PKCS #1 and SEC 1 read as PKCS #8
 // does, a private key signs what its PEM public key verifies, and every
-// key written to PEM reads back the same.
+// key written to PEM reads back the same. ML-DSA keys (RFC 9881) become
+// AKP JWKs (RFC 9964), from OpenSSL's seed-and-expanded PKCS #8 and its
+// seed-only one, which is also what this package writes.
 import std;
 import os;
 import gslib from "../..";
@@ -34,8 +36,9 @@ fn hex(b: const u8[:]) -> u8[>..] {
 }
 
 fn main() {
-    let names = ["rsa", "p256", "p384", "p521", "ed25519"];
-    let algs = [jwa::RS256, jwa::ES256, jwa::ES384, jwa::ES512, jwa::EDDSA];
+    let names = ["rsa", "p256", "p384", "p521", "ed25519", "mldsa44", "mldsa65", "mldsa87"];
+    let algs = [jwa::RS256, jwa::ES256, jwa::ES384, jwa::ES512, jwa::EDDSA, jwa::ML_DSA_44, jwa::ML_DSA_65,
+                jwa::ML_DSA_87];
     for i in names.len {
         let n = names[i];
         let priv = key(str(n, ".key"));
@@ -70,6 +73,13 @@ fn main() {
     let ec1 = key("p256-sec1.key");
     let ec8 = key("p256.key");
     tv::check_eq("SEC 1 reads as PKCS #8", jwk::marshal(ec1), jwk::marshal(ec8));
+    let ml_both = key("mldsa65.key");
+    let ml_seed = key("mldsa65-seed.key");
+    tv::check("ML-DSA key is AKP with its alg", ml_both.kty == jwa::KTY_AKP && ml_both.alg == jwa::ML_DSA_65);
+    tv::check_eq("ML-DSA seed-only reads as seed and expanded", jwk::marshal(ml_seed), jwk::marshal(ml_both));
+    let ml_pem, eml = jwk::to_pem(ml_both);
+    tv::check_int("ML-DSA private PEM", eml, jwx::OK);
+    tv::check_eq("ML-DSA private PEM is OpenSSL's seed-only", ml_pem, load("mldsa65-seed.key"));
     let oct = jwk::from_oct("secret");
     let none, en = jwk::to_pem(oct);
     tv::check_int("oct has no PEM", en, jwx::ERR_KEY);

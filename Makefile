@@ -242,7 +242,7 @@ differential-compress: ## compress against Go's compress/* and archive/*, zlib, 
 	done
 
 .PHONY: differential-jwx
-differential-jwx: ## jwx against Go's lestrrat-go/jwx v3, both ways (needs Go)
+differential-jwx: ## jwx against Go's lestrrat-go/jwx v4.6.0, both ways (needs Go 1.27)
 	$(call echo,"jwx against Go's jwx")
 	cd $(ROOT)/jwx && $(PYTHON) scripts/differential.py -n 3
 

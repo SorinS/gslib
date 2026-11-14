@@ -28,11 +28,13 @@
 // with signingTime and smimeCapabilities, is application/pkcs7-signature
 // (smime.p7s) in base64. RSA signs with PKCS #1 v1.5 (or PSS when asked),
 // EC keys with ECDSA, Ed25519 keys with Ed25519 (RFC 8419, micalg
-// sha-512). sign_opaque makes application/pkcs7-mime; smime-type=
+// sha-512), ML-DSA keys with pure ML-DSA (RFC 9882, micalg sha-512; the
+// digest is SHA-512 whatever Options.hash says). sign_opaque makes application/pkcs7-mime; smime-type=
 // signed-data instead, the entity inside the SignedData. encrypt makes
 // application/pkcs7-mime; smime-type=enveloped-data (AES-CBC), or
 // authEnveloped-data for AES-GCM (RFC 8551 §3.3, §3.4), to the
-// recipients' certificates; the sender reads it later only if their own
+// recipients' certificates: RSA, EC or ML-KEM (RFC 9936, through x509's
+// cms_env); the sender reads it later only if their own
 // certificate is among them. sign_encrypt signs, then encrypts that.
 //
 // Reading, open goes through the layers as it finds them, decrypting
@@ -72,7 +74,7 @@ import mail.message;
 
 // How the functions here sign and encrypt; Options { .. } is the default.
 struct Options {
-    hash:         i64      = 256,                   // the digest: 256, 384 or 512 (Ed25519: always 512)
+    hash:         i64      = 256,                   // the digest: 256, 384 or 512 (Ed25519, ML-DSA: always 512)
     pss:          bool     = false,                 // RSA keys sign with PSS, not PKCS #1 v1.5
     signing_time: i64      = 0,                     // signingTime, seconds since 1970: 0 now, -1 none
     cipher:       i64      = x509::CMS_AES256_CBC,  // or CMS_AES128_CBC, CMS_AES128_GCM, CMS_AES256_GCM
@@ -261,6 +263,7 @@ fn sig_alg(key: const x509::PrivateKey&, o: const Options&) -> i64, i64, i64 {
         return x509::SIG_ECDSA, o.hash, mail::OK;
     }
     if key.kind == x509::KEY_ED25519 { return x509::SIG_ED25519, 512, mail::OK; }
+    if x509::is_mldsa(key.kind) { return x509::SIG_MLDSA, 512, mail::OK; }     // RFC 9882: SHA-512
     return 0, 0, mail::ERR_KEY;
 }
 
@@ -396,7 +399,7 @@ fn encrypt_entity(entity: const u8[:], recipients: const u8[:], o: const Options
        c != x509::CMS_AES256_GCM { return mail::ERR_ARG; }
     var e: u8[>..] = [];
     crlf(e, entity);
-    let eo = x509::CmsEncryptOptions { cipher: c, rsa_pkcs1: o.rsa_pkcs1, by_key_id: o.by_key_id };
+    let eo = x509::CmsEncryptOptions { cipher: c, rsa_pkcs1: o.rsa_pkcs1, by_key_id: o.by_key_id, .. };
     let der, xe = x509::cms_encrypt(x509::OID_CMS_DATA, e, recipients, eo);
     if xe != x509::OK { return mail::ERR_CERT; }
     put_pkcs7_mime(out, if x509::cms_cipher_gcm(c) { "authEnveloped-data" } else { "enveloped-data" }, der);

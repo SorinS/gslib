@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""jwx against Go's lestrrat-go/jwx v3, both ways, with fresh keys:
+"""jwx against Go's lestrrat-go/jwx v4, both ways, with fresh keys:
 
-1. Go makes N rounds of messages (every signature algorithm, compact and
-   JSON; every key management algorithm with every content algorithm, some
-   compressed, some JSON), which test/go_jwx.goose verifies and decrypts;
+1. Go makes N rounds of messages (every signature algorithm, ML-DSA too,
+   compact and JSON; every key management algorithm with every content
+   algorithm, some compressed, some JSON), which test/go_jwx.goose
+   verifies and decrypts;
 2. tools/tokens.goose makes as many, which Go verifies and decrypts.
 
     python3 scripts/differential.py [-n ROUNDS] [--goose PATH] [--update]
 
 --update also rewrites test/vectors/go_jwx.txt, the Go messages the unit
-tests keep. Needs Go; the module is in scripts/differential.
+tests keep. Needs Go 1.27 or later (crypto/mldsa); the module is in
+scripts/differential.
 """
 
 import argparse

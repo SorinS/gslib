@@ -189,6 +189,10 @@ fn round_trips() {
                 jwa::ECDH_ES_A192KW, jwa::ECDH_ES_A256KW, jwa::A128GCMKW, jwa::A192GCMKW, jwa::A256GCMKW,
                 jwa::PBES2_HS256_A128KW, jwa::PBES2_HS384_A192KW, jwa::PBES2_HS512_A256KW];
     let curves = [jwa::CRV_P256, jwa::CRV_P384, jwa::CRV_P521, jwa::CRV_X25519];
+    // PBES2 at its default counts takes seconds a message; here it runs at
+    // the lowest count accepted, and limits() checks the defaults.
+    var fast = jwe::Options { .. };
+    fast.p2c = jwe::MIN_P2C;
     var n = 0;
     for alg in algs {
         for enc in encs {
@@ -204,7 +208,21 @@ fn round_trips() {
             let pub = jwk::public_key(key);
             let what = str(jwa::name(alg), "/", jwa::name(enc));
             let zip = n % 3 == 0;
-            let token, err = jwe::encrypt(plaintext, alg, enc, pub, zip);
+            var token: u8[>..] = [];
+            var err = jwx::OK;
+            if jwa::is_pbes2(alg) {
+                var ch = jwe::Header { .. };
+                ch.alg = alg;
+                ch.enc = enc;
+                ch.zip = zip;
+                let t, e = jwe::encrypt_with_options(plaintext, pub, ch, "", fast);
+                token.append(t);
+                err = e;
+            } else {
+                let t, e = jwe::encrypt(plaintext, alg, enc, pub, zip);
+                token.append(t);
+                err = e;
+            }
             tv::check_int(str(what, " encrypted"), err, jwx::OK);
             let pt, e2 = jwe::decrypt(token, alg, key);
             tv::check(str(what, " decrypted ", jwx::error_text(e2)), e2 == jwx::OK && pt == plaintext);
@@ -223,7 +241,7 @@ fn round_trips() {
             h.zip = zip;
             var rs: jwe::Recipient[>..] = [];
             rs.push(jwe::Recipient { alg: alg, key: pub, .. });
-            let j, ej = jwe::encrypt_json(plaintext, h, rs, "extra data", true);
+            let j, ej = jwe::encrypt_json_options(plaintext, h, rs, "extra data", true, fast);
             tv::check_int(str(what, " JSON encrypted"), ej, jwx::OK);
             let pj, epj = jwe::decrypt(j, alg, key);
             tv::check(str(what, " JSON decrypted"), epj == jwx::OK && pj == plaintext);
@@ -270,13 +288,38 @@ fn limits() {
     h.alg = jwa::PBES2_HS256_A128KW;
     h.enc = jwa::A128GCM;
     var o = jwe::Options { .. };
-    o.p2c = 20000;
+    o.p2c = 2000;
     let t, e = jwe::encrypt_with_options("x", pw, h, "", o);
-    tv::check_int("p2c 20000 encrypted", e, jwx::OK);
-    let x, ex = jwe::decrypt(t, jwa::PBES2_HS256_A128KW, pw);
-    tv::check_int("p2c over the limit refused", ex, jwx::ERR_LIMIT);
-    let y, ey = jwe::decrypt(t, jwa::PBES2_HS256_A128KW, pw, 20000);
-    tv::check("p2c within a raised limit", ey == jwx::OK && y == "x");
+    tv::check_int("p2c 2000 encrypted", e, jwx::OK);
+    let x, ex = jwe::decrypt(t, jwa::PBES2_HS256_A128KW, pw, 1500);
+    tv::check_int("p2c over a lowered limit refused", ex, jwx::ERR_LIMIT);
+    let y, ey = jwe::decrypt(t, jwa::PBES2_HS256_A128KW, pw);
+    tv::check("p2c within the default limit", ey == jwx::OK && y == "x");
+
+    // Below RFC 7518's floor of 1000: refused unless the floor is lowered.
+    o.p2c = 999;
+    let lo, elo = jwe::encrypt_with_options("x", pw, h, "", o);
+    tv::check_int("p2c 999 encrypted", elo, jwx::OK);
+    let lx, elx = jwe::decrypt(lo, jwa::PBES2_HS256_A128KW, pw);
+    tv::check_int("p2c under the floor refused", elx, jwx::ERR_LIMIT);
+    let ly, ely = jwe::decrypt(lo, jwa::PBES2_HS256_A128KW, pw, jwe::MAX_P2C, jwe::MAX_INFLATE, 0);
+    tv::check("p2c under a lowered floor", ely == jwx::OK && ly == "x");
+
+    // jwx v4's limits and its OWASP 2023 counts when none is given.
+    tv::check_int("max p2c", jwe::MAX_P2C, 1000000);
+    tv::check_int("min p2c", jwe::MIN_P2C, 1000);
+    tv::check_int("default p2c HS256", jwe::default_p2c(jwa::PBES2_HS256_A128KW), 600000);
+    tv::check_int("default p2c HS384", jwe::default_p2c(jwa::PBES2_HS384_A192KW), 210000);
+    tv::check_int("default p2c HS512", jwe::default_p2c(jwa::PBES2_HS512_A256KW), 210000);
+    // One message at a real default (HS512's, the cheaper one): the count
+    // in its header, and it decrypts within the default limit.
+    let d, ed = jwe::encrypt("x", jwa::PBES2_HS512_A256KW, jwa::A256GCM, pw);
+    tv::check_int("default count encrypted", ed, jwx::OK);
+    var dm = jwe::Message { .. };
+    tv::check_int("default count parsed", jwe::parse(dm, d), jwx::OK);
+    tv::check_int("default count in the header", dm.recipients[0].header.p2c, 210000);
+    let dy, edy = jwe::decrypt(d, jwa::PBES2_HS512_A256KW, pw);
+    tv::check("default count decrypted", edy == jwx::OK && dy == "x");
 
     // A zip bomb: 1 MB of zeros inflates past a 64 KB limit.
     var big: u8[>..] = [];

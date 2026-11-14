@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """OpenPGP interop with gpg, both ways, through tools/pgp.goose (goose-pgp).
 
-gpg makes test keys (Ed25519 + Curve25519, its default, RSA-3072, and
-ECDSA + ECDH on P-521) in a throwaway GNUPGHOME; goose-pgp makes one of its own, which gpg imports.
+gpg makes test keys (Ed25519 + Curve25519, its default, RSA-3072,
+ECDSA + ECDH on P-521, and Ed25519 with a post-quantum ky768_cv25519 subkey:
+LibrePGP's ML-KEM-768+X25519 on a v5 key) in a throwaway GNUPGHOME;
+goose-pgp makes one of each of its own default and post-quantum kinds, which
+gpg imports, secrets and all.
 Then each side reads what the other writes:
 
   goose-pgp -> gpg   detached, inline (each compression) and cleartext
@@ -11,7 +14,9 @@ Then each side reads what the other writes:
                      passphrase; signatures by the key goose-pgp made
   gpg -> goose-pgp   the same from gpg (its OCB packet to its own keys,
                      SEIPD v1 to goose-pgp's key and to a passphrase),
-                     and its protected secret key export
+                     and its protected secret key exports (a Kyber
+                     subkey's in gpg's mode 1003, under its agent's OCB)
+  post-quantum       both ways, to gpg's Kyber key and to goose-pgp's
 
     python3 scripts/interop.py [--goose PATH] [--tool PATH] [-k NAME]
 
@@ -110,12 +115,30 @@ def setup(r):
     r.case("genkey", p.returncode == 0, p.stderr)
     p = r.gpg("--import", r.path("goose.sec"))
     r.case("gpg imports goose-pgp's key", p.returncode == 0 and b"secret keys imported: 1" in p.stderr, p.stderr)
+    # Post-quantum: gpg's Ed25519 + ky768_cv25519 (its default "pqc" key is
+    # Brainpool, which goose-pgp does not do), and goose-pgp's own.
+    g.gpg("--passphrase", "", "--pinentry-mode", "loopback", "--quick-gen-key",
+          "Interop PQC <pqc@example.com>", "ed25519", "cert,sign", "never")
+    fpr = [l.split(":")[9] for l in g.gpg("--with-colons", "--fingerprint", "--list-keys", "pqc@example.com")
+           .stdout.decode().splitlines() if l.startswith("fpr:")][0]
+    g.gpg("--passphrase", "", "--pinentry-mode", "loopback", "--quick-add-key", fpr, "ky768_cv25519", "encr", "never")
+    r.write("pqc.pub", g.gpg("--export", "pqc@example.com").stdout)
+    r.write("pqc.sec", g.gpg("--pinentry-mode", "loopback", "--passphrase", "", "--export-secret-keys",
+                             "pqc@example.com").stdout)
+    p = r.goose("genkey", "--type", "pqc", "--pass-file", r.pf, "Interop Goose PQC <gpq@example.com>", "gpq.sec", "gpq.pub")
+    r.case("genkey --type pqc", p.returncode == 0, p.stderr)
+    p = r.gpg("--import", r.path("gpq.sec"))
+    r.case("gpg imports goose-pgp's PQC key", p.returncode == 0 and b"secret keys imported: 1" in p.stderr, p.stderr)
+    p = r.gpg("--with-colons", "--list-keys", "gpq@example.com")
+    r.case("gpg lists goose-pgp's PQC key as ky768_cv25519", p.returncode == 0 and b"ky768_cv25519" in p.stdout,
+           p.stdout + p.stderr)
     r.write("text.txt", TEXT)
     r.write("bin.dat", bytes((i * 37 + (i >> 7)) & 255 for i in range(5000)))
 
 
 def ours_to_gpg(r):
-    keys = ["-k", "ed.sec", "-k", "rsa.sec", "-k", "goose.sec", "-k", "nist.sec", "--pass-file", r.pf]
+    keys = ["-k", "ed.sec", "-k", "rsa.sec", "-k", "goose.sec", "-k", "nist.sec", "-k", "pqc.sec", "-k", "gpq.sec",
+            "--pass-file", r.pf]
     for signer in ("ed", "rsa", "goose", "nist"):
         who = signer + "@example.com"
         for armor in ("armor", "binary"):
@@ -164,6 +187,28 @@ def ours_to_gpg(r):
             p = r.goose("encrypt", *keys, "-r", rcpt + "@example.com", "--cipher", "aes128", "text.txt", "o.asc")
             q = r.gpg("-o", r.path("o.out"), "--decrypt", r.path("o.asc"))
             r.case(name, p.returncode == 0 and q.returncode == 0 and r.read("o.out") == TEXT, p.stderr + q.stderr)
+    # Post-quantum: to gpg's Kyber key and to goose-pgp's (gpg has its secret).
+    for rcpt in ("pqc", "gpq"):
+        for z, armor in (("none", "armor"), ("zlib", "binary")):
+            name = f"gpg decrypts ours to {rcpt} (Kyber) -z {z} {armor}"
+            if r.want(name):
+                extra = [] if armor == "armor" else ["--binary"]
+                p = r.goose("encrypt", *keys, "-r", rcpt + "@example.com", "-z", z, *extra, "bin.dat", "o.gpg")
+                q = r.gpg("-o", r.path("o.out"), "--decrypt", r.path("o.gpg"))
+                ok = q.returncode == 0 and r.read("o.out") == r.read("bin.dat") and b"ky768_cv25519" in q.stderr
+                r.case(name, p.returncode == 0 and ok, p.stderr + q.stderr)
+    name = "gpg decrypts ours to pqc (Kyber) and ed, signed by gpq"
+    if r.want(name):
+        p = r.goose("encrypt", *keys, "-r", "pqc@example.com", "-r", "ed@example.com", "--sign", "-u", "gpq@example.com",
+                    "text.txt", "o.asc")
+        q = r.gpg("-o", r.path("o.out"), "--decrypt", r.path("o.asc"))
+        ok = q.returncode == 0 and b"Good signature" in q.stderr and r.read("o.out") == TEXT
+        r.case(name, p.returncode == 0 and ok, p.stderr + q.stderr)
+    name = "gpg decrypts ours to pqc (Kyber) with AES-128"
+    if r.want(name):
+        p = r.goose("encrypt", *keys, "-r", "pqc@example.com", "--cipher", "aes128", "text.txt", "o.asc")
+        q = r.gpg("-o", r.path("o.out"), "--decrypt", r.path("o.asc"))
+        r.case(name, p.returncode == 0 and q.returncode == 0 and r.read("o.out") == TEXT, p.stderr + q.stderr)
     for cipher in ("aes128", "aes256"):
         name = f"gpg decrypts our passphrase message {cipher}"
         if r.want(name):
@@ -173,8 +218,9 @@ def ours_to_gpg(r):
 
 
 def gpg_to_ours(r):
-    keys = ["-k", "ed.sec", "-k", "rsa.sec", "-k", "goose.sec", "-k", "nist.sec", "--pass-file", r.pf]
-    pubs = ["-k", "ed.pub", "-k", "rsa.pub", "-k", "goose.pub", "-k", "nist.pub"]
+    keys = ["-k", "ed.sec", "-k", "rsa.sec", "-k", "goose.sec", "-k", "nist.sec", "-k", "pqc.sec", "-k", "gpq.sec",
+            "--pass-file", r.pf]
+    pubs = ["-k", "ed.pub", "-k", "rsa.pub", "-k", "goose.pub", "-k", "nist.pub", "-k", "pqc.pub", "-k", "gpq.pub"]
     for signer in ("ed", "rsa", "goose", "nist"):
         who = signer + "@example.com"
         name = f"we verify gpg's detached {signer}"
@@ -233,6 +279,40 @@ def gpg_to_ours(r):
         p = r.goose("sign", "-k", "g.sec", "--pass-file", r.pf, "--detach", "text.txt", "g2.sig")
         v = r.gpg("--verify", r.path("g2.sig"), r.path("text.txt"))
         r.case(name, q.returncode == 0 and p.returncode == 0 and b"Good signature" in v.stderr, q.stderr + p.stderr + v.stderr)
+    # Post-quantum: gpg's OCB packet to its Kyber key, SEIPD v1 to ours.
+    for rcpt in ("pqc", "gpq"):
+        for z, armor in (("0", True), ("2", False)):
+            name = f"we decrypt gpg's to {rcpt} (Kyber) -z algo {z} {'armor' if armor else 'binary'}"
+            if r.want(name):
+                extra = ["-a"] if armor else []
+                q = r.gpg("-r", rcpt + "@example.com", "--compress-algo", z, *extra, "-o", r.path("g.gpg"), "-e",
+                          r.path("bin.dat"))
+                p = r.goose("decrypt", *keys, "g.gpg", "g.out")
+                ok = p.returncode == 0 and r.read("g.out") == r.read("bin.dat")
+                r.case(name, q.returncode == 0 and ok, q.stderr + p.stderr)
+    name = "we decrypt gpg's to pqc and gpq (Kyber), signed by pqc"
+    if r.want(name):
+        q = r.gpg("-r", "pqc@example.com", "-r", "gpq@example.com", "-u", "pqc@example.com",
+                  "-o", r.path("g.gpg"), "-s", "-e", r.path("text.txt"))
+        for k in ("pqc.sec", "gpq.sec"):
+            p = r.goose("decrypt", "-k", k, *pubs, "--pass-file", r.pf, "g.gpg", "g.out")
+            ok = p.returncode == 0 and r.read("g.out") == TEXT and b"good signature" in p.stderr
+            r.case(f"{name} (with {k})", q.returncode == 0 and ok, q.stderr + p.stderr)
+    name = "we read gpg's protected Kyber secret key export"
+    if r.want(name):
+        q = r.gpg("-o", r.path("g.sec"), "--export-secret-keys", "gpq@example.com")
+        e = r.gpg("-r", "gpq@example.com", "-o", r.path("g.gpg"), "-e", r.path("text.txt"))
+        p = r.goose("decrypt", "-k", "g.sec", "--pass-file", r.pf, "g.gpg", "g.out")
+        ok = p.returncode == 0 and r.read("g.out") == TEXT
+        r.case(name, q.returncode == 0 and e.returncode == 0 and ok, q.stderr + e.stderr + p.stderr)
+    name = "we refuse gpg's Kyber message after a changed byte"
+    if r.want(name):
+        q = r.gpg("-r", "pqc@example.com", "-o", r.path("g.gpg"), "-e", r.path("bin.dat"))
+        data = bytearray(r.read("g.gpg"))
+        data[600] ^= 1                   # in the ML-KEM ciphertext
+        r.write("g.bad", bytes(data))
+        p = r.goose("decrypt", *keys, "g.bad", "g.out")
+        r.case(name, q.returncode == 0 and p.returncode != 0, q.stderr + p.stderr)
     name = "we refuse gpg's message after a changed byte"
     if r.want(name):
         q = r.gpg("-r", "ed@example.com", "-o", r.path("g.gpg"), "-e", r.path("bin.dat"))
