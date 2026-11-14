@@ -5,6 +5,7 @@ test/*
 !test/*.goose
 !test/expected/
 !test/vectors/
+!test/cms_smime/
 *.c
 __pycache__/
 __pycache__/

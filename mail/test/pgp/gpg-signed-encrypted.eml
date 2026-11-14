@@ -1,0 +1,42 @@
+Date: Sat, 14 Nov 2026 10:00:00 +0000
+From: Alice <alice@example.com>
+To: Bob <bob@example.com>
+Subject: PGP/MIME test
+Message-ID: <pgp-test@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/encrypted; boundary="gpg-encrypted-boundary";
+ protocol="application/pgp-encrypted"
+
+--gpg-encrypted-boundary
+Content-Type: application/pgp-encrypted
+
+Version: 1
+
+--gpg-encrypted-boundary
+Content-Type: application/octet-stream; name="encrypted.asc"
+
+-----BEGIN PGP MESSAGE-----
+
+hQGMA0sG8TETVMgDAQv+Jz0kjkwBaE0uWNwk7UAuR93werfoAasaSNeLQMCs15fw
+YaOxcX+EQNTm9bugDVA2FTmzbOxj+ivknRqff170p6HYeubQmdv3CwECzqpiHKV0
+jBY33SynWC4p5/K5jWCDi4zpj/tI4UhebqVmigPFFhRtONxstKcGw8+qGf/BQ6ov
+YZd3jFcCEN+LvQC8GL08VWoUANfepqkymvZp6/YcIZc8OCVZAKIH3TRdRrf0m1EB
+CYLhgS1KB3gRE+/9JdewUgsTAdhn76aYH5lRXRny5OKISmCahcU0fuHq7DQf2n6w
+eo2F0xCnTzNE2w0EUv+Y8yXGZkvSpHrgbe6sJKdP9uaRITHH4ChLGScxPdcb4g8j
+/1mt1JpEmjjJxXrZSsQhM2UHSl0VbxgAecWHOyEqTmfiswxJPL3s5G79X5l7GACo
+Rdha1b9R7/vXEaIa7owq3BauRxL3TdTso04m8iwpZFJPcJ6EPtVUO/6Hp0AsrUxL
+HUE5+aGVLIuCr5nyHjX9hF4DplIikxdIEkYSAQdAEu5kICkDmSWyDfoGNcSa5zkK
+UySoDDdB//bJwQIVJUAwJH6pLRfIAPNxpqfEJ8BaGIJtPT99gRVoeCWZ+m3ObgMj
+bUuooyVpz7jI4IlA6Qxx1MC/AQkCEFCLGOSc5MGWbDepI5PUYfsH0/CkuSk6yZNL
+h8O/eFFB+pyt0w1BivH9OmxHqFTNMNzOjxMFgwd0MZc6B4BnAC3JhejbC08ZruLY
+Tk8u22RBgXAocBursUhOKANzeRQwBduVvpPhuVMxVFb1VV+Nq5mnQFhncFV+DBYc
+jWYiKGSHOfpOPGIal9tQ5P1mfvJWqGnTsz7E4w7FE6Qz5MvwOBdQOTU108NU1nZg
+wHOsbeZr/ECpSx4lz4CU22512ejB7ZhFuWAW18zue6b1wl1bFR3LVczPqZmtlWBO
+Fv+OApov4e8geeuB+7TO8mtCgbE50JN5SoTOyzc5WSCBALRUJyi8gt5OOpKBzoA3
+sLRng5o/rqqevLJPnnlmScosWoPy694AsQJrLIEL+fE7vnmMD5Rq328g9dS4+jke
+O28mXscKzwa7B0G1WsD2SItbYpMwUuIyVSAuxkZ8DHdUxl9Jlaa2KeSJ1rWSBsSO
+h7T1Y2OqZU3GstnCLLaqT04=
+=DvcM
+-----END PGP MESSAGE-----
+
+--gpg-encrypted-boundary--

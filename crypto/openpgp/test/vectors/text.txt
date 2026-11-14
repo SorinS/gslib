@@ -1,0 +1,5 @@
+- a line that starts with a dash
+From the start  
+trailing spaces and tabs 	
+
+last line

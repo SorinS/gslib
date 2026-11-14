@@ -1,0 +1,57 @@
+Date: Tue, 14 Nov 2023 22:13:20 +0000
+From: "News" <news@example.com>
+Reply-To: "Desk" <desk@example.com>
+To: <reader@example.com>
+Subject: Issue 7
+Message-ID: <20231114.1@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed;
+ boundary=b0und-mixed
+
+--b0und-mixed
+Content-Type: multipart/related;
+ boundary=b0und-related
+
+--b0und-related
+Content-Type: multipart/alternative;
+ boundary=b0und-alt
+
+--b0und-alt
+Content-Transfer-Encoding: quoted-printable
+Content-Type: text/plain; charset=UTF-8
+
+Logo and PDF.
+
+--b0und-alt
+Content-Transfer-Encoding: quoted-printable
+Content-Type: text/html; charset=UTF-8
+
+<p><img src=3D"cid:logo"> Logo and PDF.</p>
+
+--b0und-alt--
+
+--b0und-related
+Content-Disposition: inline; filename=logo.png
+Content-ID: <logo>
+Content-Transfer-Encoding: base64
+Content-Type: image/png; name=logo.png
+
+iVBORw0KGgpub3QgcmVhbGx5
+
+--b0und-related--
+
+--b0und-mixed
+Content-Disposition: attachment; filename*=utf-8''%C3%9Cbersicht.pdf
+Content-Transfer-Encoding: base64
+Content-Type: application/pdf; name*=utf-8''%C3%9Cbersicht.pdf
+
+JVBERi0xLjQK
+
+--b0und-mixed
+Content-Disposition: attachment; filename=data.csv
+Content-Transfer-Encoding: base64
+Content-Type: text/csv; charset=utf-8; name=data.csv
+
+YSxiDQoxLDINCg==
+
+--b0und-mixed--

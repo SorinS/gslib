@@ -1,0 +1,22 @@
+Date: Tue, 14 Nov 2023 22:13:20 +0000
+From: =?utf-8?b?TydCcmllbiwgU2XDoW4=?= <sean@example.ie>
+To: "List Member 0" <member0@lists.example.com>, "List Member 1"
+ <member1@lists.example.com>, "List Member 2" <member2@lists.example.com>,
+ "List Member 3" <member3@lists.example.com>, "List Member 4"
+ <member4@lists.example.com>, "List Member 5" <member5@lists.example.com>
+Subject: A subject of plain ASCII that is long enough to fold onto a second
+ line, or a third
+Message-ID: <20231114.1@example.com>
+MIME-Version: 1.0
+Importance: urgent
+Priority: 1
+X-Priority: 1
+X-MSMail-Priority: 1
+X-Mailer: gslib
+In-Reply-To: <1@example.com>
+References: <1@example.com>
+X-Note: =?UTF-8?q?f=C3=BCr_alle?=
+Content-Transfer-Encoding: quoted-printable
+Content-Type: text/plain; charset=UTF-8
+
+Fields.

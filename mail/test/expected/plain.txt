@@ -1,0 +1,13 @@
+Date: Tue, 14 Nov 2023 22:13:20 +0000
+From: <alice@example.com>
+To: "Bob" <bob@example.com>
+Subject: Lunch
+Message-ID: <20231114.1@example.com>
+MIME-Version: 1.0
+Content-Transfer-Encoding: quoted-printable
+Content-Type: text/plain; charset=UTF-8
+
+Noon?
+
+--=20
+Alice

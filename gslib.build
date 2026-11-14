@@ -19,6 +19,7 @@ exclude = [
     "crypto/bignum/test", "crypto/bignum/tools",
     "encoding/asn1/test",
     "crypto/x509/test", "crypto/x509/tools",
+    "crypto/openpgp/test", "crypto/openpgp/tools",
     "crypto/tls/test", "crypto/tls/tools",
     "crypto/ssh/test", "crypto/ssh/tools",
     "net/ldap/test", "net/ldap/tools",
@@ -30,4 +31,5 @@ exclude = [
     "jwx/test", "jwx/tools",
     "pkcs11/test", "pkcs11/tools",
     "dns/test", "dns/tools",
+    "mail/test", "mail/tools",
 ];

@@ -1,0 +1,611 @@
+// x509.cms_env: CMS EnvelopedData (RFC 5652 §6) and AuthEnvelopedData
+// (RFC 5083), as S/MIME (RFC 8551) encrypts a message to the
+// certificates of its recipients.
+//
+// Made: a fresh content-encryption key, the content under it by AES-CBC
+// (128 or 256; EnvelopedData) or AES-GCM (RFC 5084: a 12-byte nonce and a
+// 16-byte tag; AuthEnvelopedData without authenticated attributes), and
+// for each recipient a RecipientInfo that carries the key:
+//
+//   - an RSA certificate: KeyTransRecipientInfo, RSAES-OAEP with SHA-256
+//     and MGF1-SHA-256 (RFC 8017, RFC 4055), or RSAES-PKCS1-v1_5 when
+//     asked (what openssl sends by default);
+//   - an EC certificate (P-256, P-384, P-521): KeyAgreeRecipientInfo,
+//     ephemeral-static ECDH (RFC 5753), the X9.63 KDF over SHA-256, -384
+//     or -512 as the curve (dhSinglePass-stdDH-sha256kdf-scheme and so
+//     on; openssl's default is the SHA-1 one, which is read too), the key
+//     wrapped by AES key wrap (RFC 3394) of the content key's size.
+//
+// Recipients are named by issuer and serial number, or by subject key
+// identifier when asked. The EnvelopedData is version 0 when every
+// RecipientInfo is version 0, else 2; AuthEnvelopedData is version 0.
+//
+// Read: BER or DER (cms_der). The RecipientInfo for a given certificate,
+// by issuer and serial or by key identifier, is found among those sent;
+// key transport by OAEP (SHA-1, -256, -384 or -512, the label empty) or
+// PKCS #1 v1.5, which is decrypted as Go's DecryptPKCS1v15SessionKey does
+// (a malformed block gives a random key of the right length, not an
+// error, so no padding oracle: the content then fails to decrypt); key
+// agreement by ECDH with any of the KDFs above, with or without a ukm.
+// The content: AES-128, -192 or -256 in CBC (PKCS #7 padding, checked in
+// constant time) or GCM (16-byte tags). Errors: ERR_MALFORMED,
+// ERR_UNSUPPORTED_ALGORITHM, ERR_CMS_NOT_RECIPIENT (no RecipientInfo for
+// the certificate) and ERR_CMS_DECRYPT (the key does not decrypt it, or
+// the content does not: one error for every way, as much as can be).
+
+namespace x509;
+
+import std;
+import crypto.x509;
+import crypto.x509.keys;
+import crypto.x509.cms;
+import encoding.asn1;
+import crypto.bignum;
+import crypto.bignum.rsa;
+import crypto.bignum.ec;
+import crypto.bignum.aes;
+import crypto.bignum.modes;
+import crypto.bignum.gcm;
+import crypto.bignum.keywrap;
+import crypto.bignum.hmac;
+import crypto.bignum.entropy;
+
+let OID_CMS_ENVELOPED_DATA:      const u8[:] = "1.2.840.113549.1.7.3";
+let OID_CMS_AUTH_ENVELOPED_DATA: const u8[:] = "1.2.840.113549.1.9.16.1.23";
+let OID_RSAES_OAEP:              const u8[:] = "1.2.840.113549.1.1.7";
+let OID_MGF1:                    const u8[:] = "1.2.840.113549.1.1.8";
+let OID_P_SPECIFIED:             const u8[:] = "1.2.840.113549.1.1.9";
+let OID_EC_PUBLIC_KEY:           const u8[:] = "1.2.840.10045.2.1";
+let OID_ECDH_SHA1KDF:            const u8[:] = "1.3.133.16.840.63.0.2";
+let OID_ECDH_SHA256KDF:          const u8[:] = "1.3.132.1.11.1";
+let OID_ECDH_SHA384KDF:          const u8[:] = "1.3.132.1.11.2";
+let OID_ECDH_SHA512KDF:          const u8[:] = "1.3.132.1.11.3";
+
+// Content-encryption algorithms.
+let CMS_AES128_CBC: i64 = 1;
+let CMS_AES192_CBC: i64 = 2;    // read only
+let CMS_AES256_CBC: i64 = 3;
+let CMS_AES128_GCM: i64 = 4;
+let CMS_AES192_GCM: i64 = 5;    // read only
+let CMS_AES256_GCM: i64 = 6;
+
+// Its errors are x509's, ERR_CMS_NOT_RECIPIENT and ERR_CMS_DECRYPT among them.
+fn cms_error_text(e: i64) -> const u8[:] {
+    return error_text(e);
+}
+
+// How cms_encrypt encrypts.
+struct CmsEncryptOptions {
+    cipher:    i64  = CMS_AES256_CBC,   // CMS_AES128_CBC, CMS_AES256_CBC, CMS_AES128_GCM or CMS_AES256_GCM
+    rsa_pkcs1: bool = false,            // RSAES-PKCS1-v1_5 for RSA recipients in place of OAEP
+    by_key_id: bool = false,            // recipients named by subject key identifier, when they have one
+}
+
+fn cms_cipher_oid(c: i64) -> const u8[:] {
+    if c == CMS_AES128_CBC { return "2.16.840.1.101.3.4.1.2"; }
+    if c == CMS_AES192_CBC { return "2.16.840.1.101.3.4.1.22"; }
+    if c == CMS_AES256_CBC { return "2.16.840.1.101.3.4.1.42"; }
+    if c == CMS_AES128_GCM { return "2.16.840.1.101.3.4.1.6"; }
+    if c == CMS_AES192_GCM { return "2.16.840.1.101.3.4.1.26"; }
+    return "2.16.840.1.101.3.4.1.46";
+}
+
+// The cipher a content-encryption OID names, or 0.
+fn cms_cipher_of(d: const u8[:], t: asn1::Tlv) -> i64 {
+    for c in [CMS_AES128_CBC, CMS_AES192_CBC, CMS_AES256_CBC, CMS_AES128_GCM, CMS_AES192_GCM, CMS_AES256_GCM] {
+        if asn1::oid_is(d, t, cms_cipher_oid(c)) { return c; }
+    }
+    return 0;
+}
+
+fn cms_cipher_key_len(c: i64) -> i64 {
+    if c == CMS_AES128_CBC || c == CMS_AES128_GCM { return 16; }
+    if c == CMS_AES192_CBC || c == CMS_AES192_GCM { return 24; }
+    if c == CMS_AES256_CBC || c == CMS_AES256_GCM { return 32; }
+    return 0;
+}
+
+fn cms_cipher_gcm(c: i64) -> bool { c == CMS_AES128_GCM || c == CMS_AES192_GCM || c == CMS_AES256_GCM }
+
+// The AES key wrap OID for a key-encryption key of n bytes (RFC 3565).
+fn cms_wrap_oid(n: i64) -> const u8[:] {
+    if n == 16 { return "2.16.840.1.101.3.4.1.5"; }
+    if n == 24 { return "2.16.840.1.101.3.4.1.25"; }
+    return "2.16.840.1.101.3.4.1.45";
+}
+
+// The key-encryption key length an AES key wrap AlgorithmIdentifier
+// names (parameters absent), or 0.
+fn cms_wrap_len_of(d: const u8[:], t: asn1::Tlv) -> i64 {
+    let p, ok = asn1::children_of(d, t, asn1::SEQUENCE);
+    if !ok || p.len != 1 { return 0; }
+    for n in [16, 24, 32] { if asn1::oid_is(d, p[0], cms_wrap_oid(n)) { return n; } }
+    return 0;
+}
+
+// The hash of an ECDH key agreement scheme OID (RFC 5753 §7.1.4), or 0.
+fn cms_kdf_hash_of(d: const u8[:], t: asn1::Tlv) -> i64 {
+    if asn1::oid_is(d, t, OID_ECDH_SHA1KDF) { return 160; }
+    if asn1::oid_is(d, t, OID_ECDH_SHA256KDF) { return 256; }
+    if asn1::oid_is(d, t, OID_ECDH_SHA384KDF) { return 384; }
+    if asn1::oid_is(d, t, OID_ECDH_SHA512KDF) { return 512; }
+    return 0;
+}
+
+// The ANSI X9.63 KDF (SEC 1 §3.6.1): n bytes of
+// H(z || counter || shared_info), the counter 32 bits from 1.
+fn cms_x963_kdf(h: i64, z: const u8[:], shared_info: const u8[:], n: i64) -> u8[>..] {
+    var out:     u8[>..] = [];
+    var counter: i64     = 1;
+    while out.len < n {
+        var zc: u8[>..] = [];
+        zc.append(z);
+        for i in 4 { zc.push(((counter >> (24 - 8 * i)) & 0xff) as! u8); }
+        out.append(bignum::hash2(h, zc, shared_info));
+        counter++;
+    }
+    out.resize(n);
+    return out;
+}
+
+// ECC-CMS-SharedInfo (RFC 5753 §7.2): the key wrap's AlgorithmIdentifier
+// (as sent), the ukm if there is one, and the key-encryption key's length
+// in bits.
+fn cms_shared_info(wrap_alg: const u8[:], ukm: const u8[:], has_ukm: bool, kek_len: i64) -> u8[>..] {
+    var body: u8[>..] = [];
+    body.append(wrap_alg);
+    if has_ukm {
+        var u: u8[>..] = [];
+        asn1::put_octets(u, ukm);
+        asn1::put(body, asn1::ctx(0, true), u);
+    }
+    var bits: u8[4] = [0; 4];
+    let nbits = kek_len * 8;
+    for i in 4 { bits[i] = ((nbits >> (24 - 8 * i)) & 0xff) as! u8; }
+    var s: u8[>..] = [];
+    asn1::put_octets(s, bits);
+    asn1::put(body, asn1::ctx(2, true), s);
+    var out: u8[>..] = [];
+    asn1::put(out, asn1::SEQUENCE, body);
+    return out;
+}
+
+// A ContentInfo of the given type around a structure's DER.
+fn cms_wrap(oid: const u8[:], inner: const u8[:]) -> u8[>..] {
+    var body: u8[>..] = [];
+    asn1::put_oid(body, oid);
+    asn1::put(body, asn1::ctx(0, true), inner);
+    var out: u8[>..] = [];
+    asn1::put(out, asn1::SEQUENCE, body);
+    return out;
+}
+
+// The content type (a dotted OID) of a ContentInfo, BER or DER: what it
+// holds (OID_CMS_SIGNED_DATA, OID_CMS_ENVELOPED_DATA, ...); empty if it
+// does not parse.
+fn cms_content_type(ber: const u8[:]) -> u8[>..] {
+    var none: u8[>..] = [];
+    let d, ok = cms_der(ber);
+    if !ok { return none; }
+    let top, okt = asn1::parse(d);
+    let ci, okc = asn1::children_of(d, top, asn1::SEQUENCE);
+    if !okt || !okc || ci.len < 1 || ci[0].tag != asn1::OID { return none; }
+    let s, oks = asn1::read_oid(d, ci[0]);
+    if !oks { return none; }
+    return s;
+}
+
+// --- Encrypting ---------------------------------------------------------------
+
+// The recipient identifier: issuer and serial (version 0 for key
+// transport), or the key identifier when asked and the certificate has
+// one ([0], primitive for key transport, a RecipientKeyIdentifier for key
+// agreement). Whether it is the key identifier.
+fn cms_put_rid(out: u8[>..]&, rc: const Cert&, by_key_id: bool, agree: bool) -> bool {
+    let d = rc.der[..];
+    if by_key_id && rc.ski.end > rc.ski.start {
+        let ski = d[rc.ski.off..rc.ski.end];
+        if agree {
+            var rk: u8[>..] = [];
+            asn1::put_octets(rk, ski);
+            asn1::put(out, asn1::ctx(0, true), rk);
+        } else {
+            asn1::put(out, asn1::ctx(0, false), ski);
+        }
+        return true;
+    }
+    var ias: u8[>..] = [];
+    ias.append(d[rc.issuer.start..rc.issuer.end]);
+    ias.append(d[rc.serial.start..rc.serial.end]);
+    asn1::put(out, asn1::SEQUENCE, ias);
+    return false;
+}
+
+// The AlgorithmIdentifier of a SHA-2 hash, its parameters absent.
+fn cms_hash_alg_id(out: u8[>..]&, h: i64) {
+    var b: u8[>..] = [];
+    asn1::put_oid(b, hash_oid(h));
+    asn1::put(out, asn1::SEQUENCE, b);
+}
+
+// A RecipientInfo for certificate rc carrying cek, appended to out; true
+// if its version is not 0. ERR_KEY_USAGE when the certificate's key usage
+// forbids it, ERR_UNSUPPORTED_ALGORITHM for a key that cannot encrypt.
+fn cms_recipient_info(out: u8[>..]&, rc: const Cert&, cek: const u8[:], o: const CmsEncryptOptions&) -> bool, i64 {
+    let d = rc.der[..];
+    let kb, okk = key_bytes(d, rc.key);
+    if !okk { return false, ERR_MALFORMED; }
+    if rc.key_type == KEY_RSA {
+        if rc.has_key_usage && rc.key_usage & KU_KEY_ENCIPHERMENT == 0 { return false, ERR_KEY_USAGE; }
+        let pub, okp = rsa_public_key(rc);
+        if !okp || bignum::rsa_oaep_max(pub, 256) < cek.len { return false, ERR_UNSUPPORTED_ALGORITHM; }
+        var ri:  u8[>..] = [];
+        var rid: u8[>..] = [];
+        let v2 = cms_put_rid(rid, rc, o.by_key_id, false);
+        asn1::put_i64(ri, if v2 { 2 } else { 0 });
+        ri.append(rid);
+        var alg: u8[>..] = [];
+        if o.rsa_pkcs1 {
+            asn1::put_oid(alg, OID_RSA_ENCRYPTION);
+            asn1::put_null(alg);
+        } else {
+            // RSAES-OAEP-params: SHA-256, MGF1 with SHA-256, the label empty
+            // (the default pSourceAlgorithm, left out).
+            asn1::put_oid(alg, OID_RSAES_OAEP);
+            var params: u8[>..] = [];
+            var hid:    u8[>..] = [];
+            cms_hash_alg_id(hid, 256);
+            asn1::put(params, asn1::ctx(0, true), hid);
+            var mgf: u8[>..] = [];
+            asn1::put_oid(mgf, OID_MGF1);
+            mgf.append(hid);
+            var mgfs: u8[>..] = [];
+            asn1::put(mgfs, asn1::SEQUENCE, mgf);
+            asn1::put(params, asn1::ctx(1, true), mgfs);
+            asn1::put(alg, asn1::SEQUENCE, params);
+        }
+        asn1::put(ri, asn1::SEQUENCE, alg);
+        let ek = if o.rsa_pkcs1 { bignum::rsa_encrypt_pkcs1(pub, cek) } else { bignum::rsa_encrypt_oaep(pub, cek, "", 256) };
+        asn1::put_octets(ri, ek);
+        asn1::put(out, asn1::SEQUENCE, ri);
+        return v2, OK;
+    }
+    if rc.key_type == KEY_EC_P256 || rc.key_type == KEY_EC_P384 || rc.key_type == KEY_EC_P521 {
+        if rc.has_key_usage && rc.key_usage & KU_KEY_AGREEMENT == 0 { return false, ERR_KEY_USAGE; }
+        let curve = curve_of_key(rc.key_type);
+        let h = if rc.key_type == KEY_EC_P384 { 384 } else if rc.key_type == KEY_EC_P521 { 512 } else { 256 };
+        let esk, epk = bignum::ec_keypair(curve);
+        let z, okz = bignum::ecdh_shared(curve, esk, kb);
+        if !okz { return false, ERR_MALFORMED; }
+        var wrap: u8[>..] = [];
+        var wb:   u8[>..] = [];
+        asn1::put_oid(wb, cms_wrap_oid(cek.len));
+        asn1::put(wrap, asn1::SEQUENCE, wb);
+        let kek = cms_x963_kdf(h, z, cms_shared_info(wrap, "", false, cek.len), cek.len);
+        let ek, okw = bignum::aes_key_wrap(kek, cek);
+        assert(okw);
+        var kari: u8[>..] = [];
+        asn1::put_i64(kari, 3);
+        // originator [0]: originatorKey [1], id-ecPublicKey without the
+        // curve (as openssl writes it; the recipient knows it) and the point.
+        var opk:  u8[>..] = [];
+        var ealg: u8[>..] = [];
+        asn1::put_oid(ealg, OID_EC_PUBLIC_KEY);
+        asn1::put(opk, asn1::SEQUENCE, ealg);
+        asn1::put_bits(opk, epk);
+        var orig: u8[>..] = [];
+        asn1::put(orig, asn1::ctx(1, true), opk);
+        asn1::put(kari, asn1::ctx(0, true), orig);
+        var kea: u8[>..] = [];
+        asn1::put_oid(kea, if h == 384 { OID_ECDH_SHA384KDF } else if h == 512 { OID_ECDH_SHA512KDF } else { OID_ECDH_SHA256KDF });
+        kea.append(wrap);
+        asn1::put(kari, asn1::SEQUENCE, kea);
+        var rek: u8[>..] = [];
+        let v = cms_put_rid(rek, rc, o.by_key_id, true);
+        asn1::put_octets(rek, ek);
+        var reks: u8[>..] = [];
+        asn1::put(reks, asn1::SEQUENCE, rek);
+        asn1::put(kari, asn1::SEQUENCE, reks);
+        asn1::put(out, asn1::ctx(1, true), kari);
+        return true, OK;
+    }
+    return false, ERR_UNSUPPORTED_ALGORITHM;
+}
+
+// A ContentInfo holding `content` (of type content_type, a dotted OID)
+// encrypted to each of `recipients` (certificates, DER laid end to end):
+// an EnvelopedData for a CBC cipher, an AuthEnvelopedData for GCM. Returns
+// it and OK, or ERR_MALFORMED (a certificate that does not parse, or
+// none), ERR_KEY_USAGE or ERR_UNSUPPORTED_ALGORITHM (a recipient's key
+// cannot be encrypted to).
+fn cms_encrypt(content_type: const u8[:], content: const u8[:], recipients: const u8[:],
+               o: const CmsEncryptOptions&) -> u8[>..], i64 {
+    var out: u8[>..] = [];
+    let c = o.cipher;
+    if c != CMS_AES128_CBC && c != CMS_AES256_CBC && c != CMS_AES128_GCM && c != CMS_AES256_GCM {
+        return out, ERR_UNSUPPORTED_ALGORITHM;
+    }
+    var cek: u8[>..] = [];
+    cek.resize(cms_cipher_key_len(c), 0);
+    bignum::random_bytes(cek);
+    var ris: u8[>..] = [];
+    var any_v2 = false;
+    var n = 0;
+    var at = 0;
+    while at < recipients.len {
+        let t, okt = asn1::read(recipients, at, recipients.len);
+        if !okt { return out, ERR_MALFORMED; }
+        at = t.end;
+        let rc, e = parse(recipients[t.start..t.end]);
+        if e != OK { return out, e; }
+        let v2, er = cms_recipient_info(ris, rc, cek, o);
+        if er != OK { return out, er; }
+        if v2 { any_v2 = true; }
+        n++;
+    }
+    if n == 0 { return out, ERR_MALFORMED; }
+    var body: u8[>..] = [];
+    let gcm = cms_cipher_gcm(c);
+    asn1::put_i64(body, if any_v2 && !gcm { 2 } else { 0 });
+    cms_set_of(body, ris);
+    var eci: u8[>..] = [];
+    asn1::put_oid(eci, content_type);
+    var alg: u8[>..] = [];
+    asn1::put_oid(alg, cms_cipher_oid(c));
+    var ct:  u8[>..] = [];
+    var tag: u8[>..] = [];
+    if gcm {
+        // GCMParameters: the nonce and the tag length, 16 (as openssl writes).
+        var nonce: u8[12] = [0; 12];
+        bignum::random_bytes(nonce);
+        var gp: u8[>..] = [];
+        asn1::put_octets(gp, nonce);
+        asn1::put_i64(gp, 16);
+        asn1::put(alg, asn1::SEQUENCE, gp);
+        let sealed = bignum::aes_gcm_seal(cek, nonce, "", content);
+        ct.append(sealed[..sealed.len - 16]);
+        tag.append(sealed[sealed.len - 16..]);
+    } else {
+        var iv: u8[16] = [0; 16];
+        bignum::random_bytes(iv);
+        asn1::put_octets(alg, iv);
+        ct = bignum::pkcs7_pad(content, 16);
+        let k = bignum::aes_init(cek);
+        bignum::cbc_encrypt(k, iv, ct);
+    }
+    asn1::put(eci, asn1::SEQUENCE, alg);
+    asn1::put(eci, asn1::ctx(0, false), ct);
+    asn1::put(body, asn1::SEQUENCE, eci);
+    if gcm { asn1::put_octets(body, tag); }
+    var sq: u8[>..] = [];
+    asn1::put(sq, asn1::SEQUENCE, body);
+    return cms_wrap(if gcm { OID_CMS_AUTH_ENVELOPED_DATA } else { OID_CMS_ENVELOPED_DATA }, sq), OK;
+}
+
+// --- Decrypting ---------------------------------------------------------------
+
+// The hash of RSAES-OAEP-params (RFC 8017 A.2.1): 160 when absent (every
+// default), the hash with MGF1 over the same hash and an empty label, or
+// 0 for anything else.
+fn cms_oaep_hash(d: const u8[:], sp: const asn1::Tlv[:]) -> i64 {
+    if sp.len == 1 { return 160; }
+    if sp.len != 2 { return 0; }
+    let f, ok = asn1::children_of(d, sp[1], asn1::SEQUENCE);
+    if !ok { return 0; }
+    var h:    i64 = 160;
+    var mh:   i64 = 160;
+    var last: i64 = -1;
+    for x in f {
+        if x.cls != asn1::CLASS_CONTEXT || !x.constructed || x.number <= last { return 0; }
+        last = x.number;
+        let inner, oki = asn1::explicit(d, x);
+        if !oki { return 0; }
+        if x.number == 0 {
+            h = cms_digest_of(d, inner);
+        } else if x.number == 1 {
+            let m, okm = asn1::children_of(d, inner, asn1::SEQUENCE);
+            if !okm || m.len != 2 || !asn1::oid_is(d, m[0], OID_MGF1) { return 0; }
+            mh = cms_digest_of(d, m[1]);
+        } else if x.number == 2 {
+            let s, oks = asn1::children_of(d, inner, asn1::SEQUENCE);
+            if !oks || s.len < 1 || s.len > 2 || !asn1::oid_is(d, s[0], OID_P_SPECIFIED) { return 0; }
+            if s.len == 2 && (s[1].tag != asn1::OCTET_STRING || asn1::content_len(s[1]) != 0) { return 0; }
+        } else {
+            return 0;
+        }
+    }
+    if h == 0 || mh != h { return 0; }
+    return h;
+}
+
+// Whether a KeyAgreeRecipientIdentifier names certificate c.
+fn cms_kari_rid_matches(d: const u8[:], rid: asn1::Tlv, c: const Cert&) -> bool {
+    if rid.tag == asn1::SEQUENCE { return cms_sid_matches(d, rid, c); }
+    if rid.tag != asn1::ctx(0, true) { return false; }
+    let p, ok = asn1::children(d, rid);
+    if !ok || p.len < 1 || p[0].tag != asn1::OCTET_STRING { return false; }
+    let cd = c.der[..];
+    return c.ski.end > c.ski.start && d[p[0].off..p[0].end] == cd[c.ski.off..c.ski.end];
+}
+
+// The content-encryption key (kl bytes) from the RecipientInfo for cert,
+// decrypted with key.
+fn cms_recover_cek(d: const u8[:], ris: asn1::Tlv, key: const PrivateKey&, cert: const Cert&,
+                   kl: i64) -> u8[>..], i64 {
+    var none: u8[>..] = [];
+    let list, ok = asn1::children(d, ris);
+    if !ok { return none, ERR_MALFORMED; }
+    for r in list {
+        if r.tag == asn1::SEQUENCE {
+            // KeyTransRecipientInfo: version, rid, algorithm, encryptedKey.
+            let p, okp = asn1::children(d, r);
+            if !okp || p.len != 4 || p[3].tag != asn1::OCTET_STRING { return none, ERR_MALFORMED; }
+            if !cms_sid_matches(d, p[1], cert) { continue; }
+            if key.kind != KEY_RSA { return none, ERR_CMS_DECRYPT; }
+            let ek = d[p[3].off..p[3].end];
+            let sp, oks = asn1::children_of(d, p[2], asn1::SEQUENCE);
+            if !oks || sp.len < 1 { return none, ERR_MALFORMED; }
+            if asn1::oid_is(d, sp[0], OID_RSA_ENCRYPTION) && (sp.len == 1 || (sp.len == 2 && asn1::read_null(d, sp[1]))) {
+                // A random key unless the block holds one of kl bytes.
+                var cek: u8[>..] = [];
+                cek.resize(kl, 0);
+                bignum::random_bytes(cek);
+                if !bignum::rsa_decrypt_pkcs1_session_key(key.rsa, ek, cek) { return none, ERR_CMS_DECRYPT; }
+                return cek, OK;
+            }
+            if asn1::oid_is(d, sp[0], OID_RSAES_OAEP) {
+                let h = cms_oaep_hash(d, sp);
+                if h == 0 { return none, ERR_UNSUPPORTED_ALGORITHM; }
+                let cek, okc = bignum::rsa_decrypt_oaep(key.rsa, ek, "", h);
+                if !okc || cek.len != kl { return none, ERR_CMS_DECRYPT; }
+                return cek, OK;
+            }
+            return none, ERR_UNSUPPORTED_ALGORITHM;
+        }
+        if r.tag != asn1::ctx(1, true) { continue; }   // kekri, pwri, ori: not for a certificate
+        // KeyAgreeRecipientInfo: version, originator, ukm?, algorithm, recipientEncryptedKeys.
+        let p, okp = asn1::children(d, r);
+        if !okp || p.len < 4 || p.len > 5 || p[1].tag != asn1::ctx(0, true) { return none, ERR_MALFORMED; }
+        let has_ukm = p.len == 5;
+        if has_ukm && p[2].tag != asn1::ctx(1, true) { return none, ERR_MALFORMED; }
+        let reks, okr = asn1::children_of(d, p[p.len - 1], asn1::SEQUENCE);
+        if !okr { return none, ERR_MALFORMED; }
+        var found = false;
+        var ek = asn1::Tlv { tag: 0, cls: 0, constructed: false, number: 0, start: 0, off: 0, end: 0 };
+        for rek in reks {
+            let q, okq = asn1::children_of(d, rek, asn1::SEQUENCE);
+            if !okq || q.len != 2 || q[1].tag != asn1::OCTET_STRING { return none, ERR_MALFORMED; }
+            if !found && cms_kari_rid_matches(d, q[0], cert) { found = true; ek = q[1]; }
+        }
+        if !found { continue; }
+        if key.kind != KEY_EC_P256 && key.kind != KEY_EC_P384 && key.kind != KEY_EC_P521 { return none, ERR_CMS_DECRYPT; }
+        let curve = curve_of_key(key.kind);
+        // The originator's ephemeral key: originatorKey [1] only.
+        let orig, oko = asn1::explicit(d, p[1]);
+        if !oko || orig.tag != asn1::ctx(1, true) { return none, ERR_UNSUPPORTED_ALGORITHM; }
+        let ok2, oko2 = asn1::children(d, orig);
+        if !oko2 || ok2.len != 2 { return none, ERR_MALFORMED; }
+        let oa, okoa = asn1::children_of(d, ok2[0], asn1::SEQUENCE);
+        if !okoa || oa.len < 1 || oa.len > 2 || !asn1::oid_is(d, oa[0], OID_EC_PUBLIC_KEY) { return none, ERR_UNSUPPORTED_ALGORITHM; }
+        if oa.len == 2 && !asn1::read_null(d, oa[1]) && !asn1::oid_is(d, oa[1], curve_oid(key.kind)) {
+            return none, ERR_CMS_DECRYPT;
+        }
+        let epk, oke = key_bytes(d, ok2[1]);
+        if !oke { return none, ERR_MALFORMED; }
+        var ukm: u8[>..] = [];
+        if has_ukm {
+            let u, oku = asn1::explicit(d, p[2]);
+            if !oku || u.tag != asn1::OCTET_STRING { return none, ERR_MALFORMED; }
+            ukm.append(d[u.off..u.end]);
+        }
+        let kea, okk = asn1::children_of(d, p[p.len - 2], asn1::SEQUENCE);
+        if !okk || kea.len != 2 { return none, ERR_MALFORMED; }
+        let h = cms_kdf_hash_of(d, kea[0]);
+        let kek_len = cms_wrap_len_of(d, kea[1]);
+        if h == 0 || kek_len == 0 { return none, ERR_UNSUPPORTED_ALGORITHM; }
+        let z, okz = bignum::ecdh_shared(curve, key.ec_sk, epk);
+        if !okz { return none, ERR_CMS_DECRYPT; }
+        let info = cms_shared_info(d[kea[1].start..kea[1].end], ukm, has_ukm, kek_len);
+        let kek = cms_x963_kdf(h, z, info, kek_len);
+        let cek, okw = bignum::aes_key_unwrap(kek, d[ek.off..ek.end]);
+        if !okw || cek.len != kl { return none, ERR_CMS_DECRYPT; }
+        return cek, OK;
+    }
+    return none, ERR_CMS_NOT_RECIPIENT;
+}
+
+// Decrypts a ContentInfo holding an EnvelopedData or AuthEnvelopedData
+// (BER or DER) with `key`, whose certificate is `cert`. Returns the
+// content, its type (a dotted OID) and OK; or ERR_MALFORMED,
+// ERR_UNSUPPORTED_ALGORITHM, ERR_CMS_NOT_RECIPIENT or ERR_CMS_DECRYPT.
+fn cms_decrypt(ber: const u8[:], key: const PrivateKey&, cert: const Cert&) -> u8[>..], u8[>..], i64 {
+    var none:  u8[>..] = [];
+    var none2: u8[>..] = [];
+    let d, okd = cms_der(ber);
+    if !okd { return none, none2, ERR_MALFORMED; }
+    let top, ok = asn1::parse(d);
+    let ci, okc = asn1::children_of(d, top, asn1::SEQUENCE);
+    if !ok || !okc || ci.len != 2 || ci[1].tag != asn1::ctx(0, true) { return none, none2, ERR_MALFORMED; }
+    let auth = asn1::oid_is(d, ci[0], OID_CMS_AUTH_ENVELOPED_DATA);
+    if !auth && !asn1::oid_is(d, ci[0], OID_CMS_ENVELOPED_DATA) { return none, none2, ERR_MALFORMED; }
+    let inner, oki = asn1::explicit(d, ci[1]);
+    if !oki { return none, none2, ERR_MALFORMED; }
+    let f, okf = asn1::children_of(d, inner, asn1::SEQUENCE);
+    if !okf || f.len < 3 { return none, none2, ERR_MALFORMED; }
+    let version, okv = asn1::read_i64(d, f[0]);
+    if !okv || version < 0 || version > 4 { return none, none2, ERR_MALFORMED; }
+    var i = 1;
+    if f[i].tag == asn1::ctx(0, true) { i++; }                 // originatorInfo: not used
+    if i + 1 >= f.len || f[i].tag != asn1::SET { return none, none2, ERR_MALFORMED; }
+    let ris = f[i];
+    let eci = f[i + 1];
+    i += 2;
+    // AuthEnvelopedData: [1] authAttrs?, mac, [2] unauthAttrs?.
+    var has_aa = false;
+    var aa = eci;
+    var mac = eci;
+    if auth {
+        if i < f.len && f[i].tag == asn1::ctx(1, true) { has_aa = true; aa = f[i]; i++; }
+        if i >= f.len || f[i].tag != asn1::OCTET_STRING { return none, none2, ERR_MALFORMED; }
+        mac = f[i];
+        i++;
+        if i < f.len && f[i].tag == asn1::ctx(2, true) { i++; }
+    } else if i < f.len && f[i].tag == asn1::ctx(1, true) {
+        i++;                                                    // unprotectedAttrs
+    }
+    if i != f.len { return none, none2, ERR_MALFORMED; }
+
+    // EncryptedContentInfo: the type, the algorithm, [0] the ciphertext.
+    let e, oke = asn1::children_of(d, eci, asn1::SEQUENCE);
+    if !oke || e.len != 3 || e[0].tag != asn1::OID || e[2].number != 0 || e[2].cls != asn1::CLASS_CONTEXT {
+        return none, none2, ERR_MALFORMED;          // no ciphertext: detached, not handled
+    }
+    let ctype, okt = asn1::read_oid(d, e[0]);
+    if !okt { return none, none2, ERR_MALFORMED; }
+    let alg, oka = asn1::children_of(d, e[1], asn1::SEQUENCE);
+    if !oka || alg.len != 2 { return none, none2, ERR_MALFORMED; }
+    let cipher = cms_cipher_of(d, alg[0]);
+    if cipher == 0 || cms_cipher_gcm(cipher) != auth { return none, none2, ERR_UNSUPPORTED_ALGORITHM; }
+    let ct, okct = cms_octets(d, e[2]);
+    if !okct { return none, none2, ERR_MALFORMED; }
+
+    let cek, er = cms_recover_cek(d, ris, key, cert, cms_cipher_key_len(cipher));
+    if er != OK { return none, none2, er; }
+
+    if auth {
+        // GCMParameters: the nonce, the tag length (12 by default; 16 only here).
+        let gp, okg = asn1::children_of(d, alg[1], asn1::SEQUENCE);
+        if !okg || gp.len < 1 || gp.len > 2 || gp[0].tag != asn1::OCTET_STRING || asn1::content_len(gp[0]) == 0 {
+            return none, none2, ERR_MALFORMED;
+        }
+        var icv: i64 = 12;
+        if gp.len == 2 {
+            let v, okiv = asn1::read_i64(d, gp[1]);
+            if !okiv { return none, none2, ERR_MALFORMED; }
+            icv = v;
+        }
+        if icv != 16 || asn1::content_len(mac) != 16 { return none, none2, ERR_UNSUPPORTED_ALGORITHM; }
+        // The authenticated attributes, if any, are the additional data,
+        // DER with the SET OF tag (RFC 5083 §2.2).
+        var aad: u8[>..] = [];
+        if has_aa {
+            aad.append(d[aa.start..aa.end]);
+            aad[0] = asn1::SET as! u8;
+        }
+        var sealed: u8[>..] = [];
+        sealed.append(ct);
+        sealed.append(d[mac.off..mac.end]);
+        let pt, okp = bignum::aes_gcm_open(cek, d[gp[0].off..gp[0].end], aad, sealed);
+        if !okp { return none, none2, ERR_CMS_DECRYPT; }
+        return pt, ctype, OK;
+    }
+    if alg[1].tag != asn1::OCTET_STRING || asn1::content_len(alg[1]) != 16 { return none, none2, ERR_MALFORMED; }
+    if ct.len == 0 || ct.len % 16 != 0 { return none, none2, ERR_CMS_DECRYPT; }
+    var buf: u8[>..] = [];
+    buf.append(ct);
+    let k = bignum::aes_init(cek);
+    bignum::cbc_decrypt(k, d[alg[1].off..alg[1].end], buf);
+    let pt, okp = bignum::pkcs7_unpad(buf, 16);
+    if !okp { return none, none2, ERR_CMS_DECRYPT; }
+    return pt, ctype, OK;
+}

@@ -21,12 +21,14 @@ later.
 | `jwx` | JOSE, as Go's lestrrat-go/jwx: JSON Web Keys (and key sets, thumbprints, PEM), Signatures (compact and JSON, every RFC 7518 algorithm and EdDSA), Encryption (every key management and content algorithm, zip, several recipients) and Tokens (claims, validation, nested) | [README](jwx/README.md) |
 | `pkcs11` | PKCS#11 (Cryptoki), as Go's miekg/pkcs11: modules (HSMs, tokens, SoftHSM) loaded at run time, every C_* function, templates, mechanisms and their parameters, all the OASIS constants; and miekg's p11 layer (Module, Slot, Session, Object, keys) | [README](pkcs11/README.md) |
 | `dns` | The DNS, as Go's miekg/dns: messages and the 79 record types it implements, in wire form (with compression) and text, zone files (`$ORIGIN`, `$TTL`, `$INCLUDE`, `$GENERATE`), EDNS0, DNSSEC (signing, verifying, DS, NSEC3, keys), TSIG and SIG(0), dynamic updates, zone transfers, a client and a server; goose-dig and goose-dnsd | [README](dns/README.md) |
+| `crypto/openpgp` | OpenPGP (RFC 9580, RFC 4880 as gpg writes it): keys (Ed25519/Curve25519, RSA, ECDSA/ECDH on NIST curves, v6 read), protected secret keys, signatures (inline, detached, cleartext), encryption to keys and passphrases (SEIPD v1, gpg's OCB packet and SEIPD v2 read), compression, key generation; goose-pgp | [README](crypto/openpgp/README.md) |
+| `mail` | Email, as Go's go-mail for sending: messages built and written as MIME (addresses, text and HTML, attachments, inline parts), an SMTP client (STARTTLS or TLS, AUTH with PLAIN, LOGIN, CRAM-MD5, SCRAM-SHA-1/256, XOAUTH2, SMTPUTF8, DSN), a POP3 client (STLS, APOP, SASL, UIDL, TOP) and an IMAP client (IMAP4rev2 and rev1: mailboxes, FETCH with ENVELOPE and BODYSTRUCTURE, SEARCH, STORE, MOVE, APPEND, IDLE); DKIM signing and verifying (RSA, Ed25519); S/MIME and PGP/MIME signing and encryption; goose-mail | [README](mail/README.md) |
 | `net/http` | HTTP/1.1 and HTTP/2, server and client: a client with Go's policy (redirects, cookies, credentials, proxies, gzip, TLS session resumption, streaming uploads, several responses at once), URLs, cookies, HPACK; goose-http and goose-httpd | [README](net/http/README.md) |
 | `net` | TCP client sockets, as the client half of Go's net: `net::dial` with a deadline, `net::read` and `net::write` with timeouts, `net::readable`, `net::close`; what http, dns, krb5 and the examples connect with (POSIX and Winsock) | [net.goose](net.goose) |
 
-## dns, pkcs11 and jwx
+## dns, pkcs11, jwx, mail and openpgp
 
-These three have the most to say beyond their table rows: what each
+These five have the most to say beyond their table rows: what each
 module does, how it was built and how it was tested. Each README has the
 full API.
 
@@ -159,6 +161,74 @@ ciphertexts and 8 encrypted keys remade byte for byte; RFC 7515, 7517,
 messages made by Go's jwx v3; and a differential both ways with Go's jwx
 (`make differential-jwx`).
 
+### mail: messages, SMTP, POP3, IMAP, DKIM, S/MIME and PGP/MIME
+
+`mail` sends email as Go's
+[go-mail](https://github.com/wneessen/go-mail) does, and fetches it as
+Python's `poplib` and an IMAP4rev2 client do; its [README](mail/README.md)
+has the API.
+
+- **`mail.address`** and **`mail.message`**: addresses as Go's net/mail
+  parses and writes them, and a message builder: From, To, Cc, Bcc (kept
+  out of the headers), Reply-To, an encoded-word subject, headers, Date
+  and Message-ID, text and HTML bodies, attachments and inline parts,
+  written as multipart/mixed, related and alternative with
+  quoted-printable, base64 or 8bit, plus the SMTP envelope.
+- **`mail.smtp`**: EHLO (HELO as a fallback), STARTTLS or TLS on 465,
+  AUTH, MAIL with 8BITMIME, SMTPUTF8 and DSN, RCPT, DATA with
+  dot-stuffing, `send` and `send_message`.
+- **`mail.pop3`**: CAPA, STLS or TLS on 995, USER/PASS, APOP and AUTH,
+  STAT, LIST, UIDL, RETR, TOP, DELE.
+- **`mail.imap`**: CAPABILITY, STARTTLS or TLS on 993, LOGIN and
+  AUTHENTICATE (SASL-IR), ENABLE, mailboxes (LIST in modified UTF-7 or
+  UTF-8, SELECT, STATUS, CREATE, RENAME, DELETE), FETCH with ENVELOPE and
+  BODYSTRUCTURE parsed, SEARCH and ESEARCH, STORE, COPY, MOVE, EXPUNGE,
+  APPEND with LITERAL+, IDLE; a response parser with literals and nested
+  lists, bounded in memory.
+- **`mail.sasl`**: PLAIN, LOGIN, CRAM-MD5, SCRAM-SHA-1 and SCRAM-SHA-256
+  (the server's signature checked) and XOAUTH2, for all three clients.
+- **`mail.dkim`**: DKIM (RFC 6376) signing and verifying with
+  RSA-SHA256 and Ed25519-SHA256 (RFC 8463), simple and relaxed
+  canonicalization, From over-signed, keys from DNS through dns.client or
+  handed in; rsa-sha1 and small RSA keys refused (RFC 8301).
+- **`mail.smime`**: S/MIME 4.0 signing (multipart/signed and opaque) and
+  encryption (RSA-OAEP, RSA PKCS #1 v1.5 and ECDH recipients, AES-CBC
+  and AES-GCM), and reading both back with the signer checked against
+  From; over x509's CMS, which grew detached signatures, EnvelopedData and
+  AuthEnvelopedData for it.
+- **`mail.pgp`**: PGP/MIME (RFC 3156) signing and encryption over
+  crypto/openpgp.
+- **goose-mail** sends a file or a built message, reads a POP3 or IMAP
+  mailbox, and signs, verifies, encrypts and decrypts with DKIM and
+  S/MIME.
+
+The clients do their own I/O over `net` and gslib's TLS. They refuse CR
+and LF in commands, refuse to read bytes a server sent before STARTTLS or
+STLS took effect (CVE-2011-0411), and send passwords readable only over
+TLS or to localhost.
+
+Tested against the RFCs' SASL examples (RFC 5802, 7677, 2195, and RFC
+1939's APOP digest); 80 addresses checked against Go's net/mail; messages
+compared byte for byte and parsed back by Python's `email`. Over the
+network: scripted SMTP, POP3 and IMAP servers that check every mechanism
+the server's way and misbehave on purpose, mailpit (SMTP, then POP3
+reading what was sent) and dovecot 2.4 (POP3 and IMAP with STARTTLS,
+APOP and SASL, and IMAP's mailbox commands) (`make interop-mail`). DKIM
+is checked against RFC 8463's examples and dkimpy both ways, S/MIME
+against `openssl cms` both ways, PGP/MIME against gpg.
+
+### openpgp: OpenPGP
+
+`crypto/openpgp` reads and writes what gpg does: v4 keys with their user IDs,
+subkeys, bindings and back-signatures checked; secret keys protected by gpg's
+S2K; signatures inline, detached and in cleartext by RSA, Ed25519 and ECDSA;
+encryption to RSA, Curve25519, X25519 and NIST ECDH keys and to passphrases.
+It reads gpg 2.3+'s default encryption, LibrePGP's OCB packet (AES-OCB is
+in crypto/openpgp/ocb.goose, checked against RFC 7253), and writes SEIPD v1
+with the MDC, which every implementation reads. mail.pgp builds PGP/MIME
+(RFC 3156) on it. Tested against RFC 9580's samples, fixtures gpg made,
+tampering and fuzzed input, and gpg both ways (`make interop-openpgp`).
+
 ## Using it
 
 A program declares the package once, in its root file, and imports the
@@ -177,7 +247,7 @@ fn main() {
 ```
 
 The libraries are grouped as Go groups its packages: `crypto/` (bignum,
-tls, x509, ssh), `encoding/` (asn1, yaml), `net/` (http, ldap), and
+tls, x509, ssh, openpgp), `encoding/` (asn1, yaml), `net/` (http, ldap), and
 `compress/` and `mime/` at the top, as Go's are (zip and tar are in
 compress too: they share its namespace, results and checksums), and
 `krb5/`, `jwx/`, `pkcs11/` and `dns/` at the top as well, none having a place in Go's tree. As in Go,
@@ -218,6 +288,7 @@ gslib.goose, gslib.build              the package's entry and its sidecar
 compress.goose, compress/             compress, laid out the same way at the top
 net.goose, net/src/                   net's sockets and their C (net/ is also http's and ldap's group)
 mime.goose, mime/                     mime, the same
+mail.goose, mail/                     mail, the same
 examples/<lib>/                       each library's examples (excluded too)
 scripts/run_all.py            every library's unit tests
 Makefile                      the programs, checks and tests
@@ -239,7 +310,7 @@ goose examples/jwx/jwt_tokens.goose
 ```
 
 and checks its own results, so `make test` runs them too, with each
-library's tests. The few that need a live peer (an HTTP, LDAP or DNS
+library's tests. The few that need a live peer (an HTTP, LDAP, DNS or mail
 server, a KDC) take it as arguments and are only type-checked there; the
 pkcs11 ones run against a fresh SoftHSM token. Each library's README lists
 its examples.
@@ -266,7 +337,7 @@ make            # the targets, with what each does
 make build      # the programs into ../bin (BIN=dir for another): goose-http, goose-httpd,
                 # goose-ssh, goose-sshd, goose-scp, goose-sftp-server, goose-ssh-keygen,
                 # goose-ldapsearch, goose-ldapadd, goose-ldapmodify and the other ldap tools,
-                # goose-krb5, goose-gss, goose-dig, goose-dnsd
+                # goose-krb5, goose-gss, goose-dig, goose-dnsd, goose-mail, goose-pgp
 make check      # type-check every tool and example
 ```
 
@@ -278,7 +349,8 @@ The compiler is `GOOSE`, else `goose` on the PATH, else
 ```bash
 make test                 # every library's unit tests (make test-http: one library's)
 make test-native          # also built with the C compiler
-make interop              # live: OpenSSL, Go, OpenSSH, OpenLDAP, curl, nghttp2, h2spec, pkcs11-tool, dig, miekg/dns
+make interop              # live: OpenSSL, Go, OpenSSH, OpenLDAP, curl, nghttp2, h2spec, pkcs11-tool, dig, miekg/dns,
+                          # mailpit, dovecot, dkimpy, gpg
 make differential         # against Go (net/http, net/url, hpack, compress, mime, jwx, miekg/dns), zlib, openssl
 make test-all             # check, test, interop and differential
 python3 scripts/run_all.py [--native] [--only http,tls]   # what make test runs
@@ -287,7 +359,8 @@ python3 scripts/run_all.py [--native] [--only http,tls]   # what make test runs
 Each library's README lists its differentials (against Go, Python's zlib
 and hashlib, OpenSSL, Go's lestrrat-go/jwx and miekg/dns), its interop
 runs (curl, Go's net/http and crypto/tls, OpenSSL, OpenSSH, OpenLDAP,
-nghttp2, h2spec, OpenSC's pkcs11-tool, dig, miekg/dns), and what is not
+nghttp2, h2spec, OpenSC's pkcs11-tool, dig, miekg/dns, mailpit, dovecot,
+dkimpy, gpg), and what is not
 done yet. Every server they start
 listens on 127.0.0.1.
 
@@ -298,3 +371,11 @@ not failed. Its interop also needs OpenSC (`pkcs11-tool`) and OpenSSL.
 dns's client test starts goose-dnsd on 127.0.0.1 itself and needs nothing
 else; its interop and differential need Go (miekg/dns is fetched by
 `scripts/oracle`'s go.mod), and dig if it is installed.
+
+mail's interop runs scripted SMTP, POP3 and IMAP servers of its own
+(Python's `ssl`, and `openssl` for their certificate), and mailpit and
+dovecot when they are installed (`brew install mailpit dovecot`); DKIM's
+needs dkimpy (`pip install dkimpy pynacl`, or `DKIMPY_PYTHON` naming a
+python with them), S/MIME's openssl 3 or later, PGP/MIME's and
+openpgp's gpg (`brew install gnupg`). Each is skipped when its tool is
+missing.

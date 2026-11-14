@@ -1,0 +1,25 @@
+Date: Tue, 14 Nov 2023 22:13:20 +0000
+From: =?utf-8?q?Zo=C3=AB?= <zoe@example.com>
+To: =?utf-8?b?TcO8bGxlciwgSsO2cmc=?= <joerg@example.org>, "Smith, Bob"
+ <bob@example.com>
+Cc: <carol@example.net>
+Subject: =?UTF-8?q?Gr=C3=BC=C3=9Fe_aus_Z=C3=BCrich?=
+Message-ID: <20231114.1@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+ boundary=b0und-alt
+
+--b0und-alt
+Content-Transfer-Encoding: quoted-printable
+Content-Type: text/plain; charset=UTF-8
+
+Gr=C3=BC=C3=9Fe! =E2=98=95
+A line with =3D and trailing space=20
+
+--b0und-alt
+Content-Transfer-Encoding: quoted-printable
+Content-Type: text/html; charset=UTF-8
+
+<p>Gr=C3=BC=C3=9Fe! =E2=98=95</p>
+
+--b0und-alt--

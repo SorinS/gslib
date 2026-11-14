@@ -1,0 +1,2 @@
+# CRLF line ends are the content: never convert them.
+*.txt -text

@@ -17,7 +17,8 @@ CertificateVerify signatures.
 | `x509.keys` | `PrivateKey`, key generation, PKCS #8 / SEC 1 / PKCS #1 / SPKI parsing and marshalling (ML-DSA and DSA included), signing |
 | `x509.ocsp` | OCSP (RFC 6960): `ocsp_create_request`, `ocsp_parse_request`, `ocsp_parse_response`, `ocsp_check_response`, `ocsp_create_response`, `ocsp_error_response` |
 | `x509.pkcs12` | `pkcs12_decode`: PKCS #12 files to their key and certificates |
-| `x509.cms` | CMS SignedData (RFC 5652) with one signer: `cms_sign`, `cms_unsigned`, `cms_parse_signed`, `cms_verify`, `cms_content`, `cms_certs` (PKINIT's carrier) |
+| `x509.cms` | CMS SignedData (RFC 5652) with one signer: `cms_sign`, `cms_sign_with` (id-data, detached, signingTime, smimeCapabilities, key identifier, Ed25519), `cms_unsigned`, `cms_parse_signed`, `cms_parse_signed_ber`, `cms_verify`, `cms_verify_detached`, `cms_signing_time`, `cms_content`, `cms_certs`, `cms_der` (BER to DER); PKINIT's carrier and S/MIME's |
+| `x509.cms_env` | CMS EnvelopedData and AuthEnvelopedData (RFC 5652 §6, RFC 5083/5084): `cms_encrypt`, `cms_decrypt`, `cms_content_type`; RSA-OAEP and PKCS #1 v1.5 key transport, ECDH key agreement (RFC 5753), AES-CBC and AES-GCM |
 | `x509.create` | `Template`, `create_certificate`, `name_der`, SAN and name-constraint builders, `create_csr`, `parse_csr`, `check_csr`, `create_crl` | It builds on
 [asn1](../../encoding/asn1) for DER and [bignum](../bignum) for the
 cryptography.
@@ -327,6 +328,32 @@ whose hash is the digest algorithm, and checks the signature over the
 attributes' DER (SET OF tag). SHA-1 only with `allow_sha1`. The signer's
 certificate path and usages are the caller's to check.
 
+## CMS for S/MIME
+
+`cms_sign_with(..., o: CmsSignOptions)` is `cms_sign` with options:
+`detached` (eContent left out), `signing_time` (the signingTime
+attribute, UTCTime through 2049), `capabilities` (smimeCapabilities) and
+`by_key_id` (the signer by subject key identifier, SignerInfo version 3);
+it signs by Ed25519 too (RFC 8419: SHA-512 digest). Over id-data the
+SignedData is version 1. `cms_verify_detached(sd, content)` checks a
+detached signature; over id-data signed attributes may be absent, the
+signature then over the content. `cms_der` turns BER (indefinite lengths,
+constructed OCTET STRINGs) into DER, as mail clients send CMS.
+
+`cms_encrypt(content_type, content, recipients, o)` encrypts to
+certificates (DER laid end to end): RSA by RSAES-OAEP with SHA-256 and
+MGF1-SHA-256 (or PKCS #1 v1.5 with `rsa_pkcs1`), EC P-256/384/521 by
+ephemeral-static ECDH, the X9.63 KDF over SHA-256/384/512
+(dhSinglePass-stdDH-shaNNNkdf-scheme) and AES key wrap of the content
+key's size; the content by AES-128/256-CBC (EnvelopedData) or
+AES-128/256-GCM (AuthEnvelopedData, 16-byte tags). `cms_decrypt(der, key,
+cert)` finds the certificate's RecipientInfo (issuer and serial, or key
+identifier) and reads what openssl writes: OAEP with SHA-1 or SHA-2,
+PKCS #1 v1.5 by implicit rejection (a malformed block decrypts the
+content under a random key, so the error is the content's, not the
+padding's), openssl's default SHA-1 ECDH KDF, AES-192, BER. Its own
+errors are ERR_CMS_NOT_RECIPIENT and ERR_CMS_DECRYPT.
+
 ## Examples
 
 In gslib's `examples/x509/`, run from gslib's top as `goose examples/x509/<name>.goose`
@@ -434,6 +461,14 @@ its arguments.
   signers, a changed signature or content refused. SignedData made here
   by each key and algorithm verify here and refuse a changed byte;
   `scripts/check_cms.py` has `openssl cms -verify` check them (30 checks).
+- `cms_smime`: SignedData and EnvelopedData from `openssl cms`
+  (`test/cms_smime/vectors.txt`, from mail's `scripts/interop_smime.py
+  --write-vectors`): signed detached and not, by RSA v1.5 and PSS, P-256 by
+  key identifier, P-384, Ed25519, without attributes and in BER;
+  encrypted by RSA v1.5, OAEP with SHA-1 and SHA-256, ECDH with the SHA-1
+  and SHA-256 KDFs, GCM, several recipients, BER, each decrypting for its
+  recipients only. Then made here every way and read back; changed bytes,
+  wrong keys and non-recipients refused; BER to DER (233 checks).
 - `scripts/check_created.py` hands such a PKI to openssl (30 checks):
   - each leaf verifies strictly for the host and under an explicit
     policy, and is refused under another policy or host;

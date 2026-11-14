@@ -24,6 +24,7 @@ import dns.rdata;
 import dns.msg;
 import dns.edns;
 import dns.tsig;
+import dns.zone;
 import net;
 
 extern fn dnsnet_udp_open(host: const u8[:], port: i32) -> i64;

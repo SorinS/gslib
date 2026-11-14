@@ -1,0 +1,22 @@
+To: bob@example.org
+From: Alice <alice@example.com>
+Subject: From OpenSSL
+MIME-Version: 1.0
+Content-Disposition: attachment; filename="smime.p7m"
+Content-Type: application/pkcs7-mime; smime-type=enveloped-data; name="smime.p7m"
+Content-Transfer-Encoding: base64
+
+MIICZAYJKoZIhvcNAQcDoIICVTCCAlECAQAxggGKMIIBhgIBADBDMD0xFTATBgNV
+BAoMDEV4YW1wbGUgVGVzdDEkMCIGA1UEAwwbUy1NSU1FIFRlc3QgSW50ZXJtZWRp
+YXRlIENBAgIQADA4BgkqhkiG9w0BAQcwK6ANMAsGCWCGSAFlAwQCAaEaMBgGCSqG
+SIb3DQEBCDALBglghkgBZQMEAgEEggEAG2TjYA6J27OiVWHrNM2mUdZb5jpA7tLJ
+h3XDIS3MCU469+7+CO9knUvFOklF66FA5DA8yDF2GWTO1IHwBOjBWsPL9A5CA6zP
+6i+lNWn02vl6+WSnK7KXBhmNb/RJwklq3zyLtJ9OVr6fRF7KXwcjmyuHJUcmgR6v
+6kT/OgSLydesEu1UsruEmtTA0UL55nGTuJJkfErDykafAIepBUdz8oK+ek+cbLlx
+N2CXOVpsPQf0/utYUz8s9xOLMjouy6W4Aqvf5lLo09XTKPUrF9w74hcPAezkZRYs
+zWP1zhX7oMItSgmeikXTOnzti+1sDj8/9Nhjsp7svxaJ9Rz//8g+hjCBvQYJKoZI
+hvcNAQcBMB0GCWCGSAFlAwQBAgQQWJBFtMzJuxD6E7zkH75D1ICBkHGP0VPpOeGs
+ocD2c7JpGTpSYRXixJcXbRTKpYt5metxJAcRw9UqU6EIvruSJ+z4uv8UvJJ+Y2GO
+J8MG2SK5KiJ2UGflAHtrIEbigYVzQHtrBkFW33ydYYC0yxktHd77nLqQe32pBaTq
+bRYPgIeQIywu475QAy+sLwf0Q44Tmcvm7yesWtslFYvwXtk28GJoZA==
+

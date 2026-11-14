@@ -1,0 +1,8 @@
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Hello Bob,
+
+this is signed. Caf=C3=A9 at noon?
+-- 
+Alice

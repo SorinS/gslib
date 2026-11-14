@@ -40,6 +40,8 @@ let ERR_REVOKED: i64 = 16;
 let ERR_REVOCATION_UNKNOWN: i64 = 17;
 let ERR_SIGNING: i64 = 18;
 let ERR_TOO_MANY_SIGNATURES: i64 = 19;
+let ERR_CMS_NOT_RECIPIENT: i64 = 20;     // no RecipientInfo names the certificate (x509.cms_env)
+let ERR_CMS_DECRYPT: i64 = 21;           // the key or the content does not decrypt (x509.cms_env)
 
 fn error_text(e: i64) -> const u8[:] {
     if e == OK { return "ok"; }
@@ -62,6 +64,8 @@ fn error_text(e: i64) -> const u8[:] {
     if e == ERR_REVOCATION_UNKNOWN { return "revocation status unknown"; }
     if e == ERR_SIGNING { return "signing failed"; }
     if e == ERR_TOO_MANY_SIGNATURES { return "too many signature checks building the chain"; }
+    if e == ERR_CMS_NOT_RECIPIENT { return "not a recipient of the message"; }
+    if e == ERR_CMS_DECRYPT { return "does not decrypt"; }
     return "unknown error";
 }
 
