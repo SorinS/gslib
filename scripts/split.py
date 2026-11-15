@@ -52,7 +52,8 @@ status and git diff in each repository.
 
 --dest is the directory holding the repositories (gslib.git's parent by
 default); a repository marked new in the table is created there with
-`git init` when it is missing. --tag defaults to gslib's tag at HEAD.
+`git init` when it is missing. --tag defaults to gslib's tag at HEAD, or,
+when HEAD has none, the latest tag before it (said so on stderr).
 --graph prints the dependency graph and the order to tag and push in.
 """
 
@@ -744,7 +745,11 @@ def main():
     if not args.tag:
         args.tag = git(["describe", "--tags", "--exact-match"], GSLIB, check=False).strip()
         if not args.tag:
-            die("gslib's HEAD has no tag: pass --tag")
+            args.tag = git(["describe", "--tags", "--abbrev=0"], GSLIB, check=False).strip()
+            if not args.tag:
+                die("gslib has no tag: pass --tag")
+            print(f"split.py: gslib's HEAD has no tag; pinning {args.tag}, the latest before it",
+                  file=sys.stderr)
 
     tracked = git(["ls-files"], GSLIB).splitlines()
     libs = {n: Lib(n, tracked) for n in SPLITS}
