@@ -649,7 +649,7 @@ fn inflate_read(d: Inflate&, input: const u8[:], out: u8[:]) -> i64, i64, i64 {
 fn inflate_done(d: const Inflate&) -> bool { d.state == IS_DONE && d.rpos == d.wpos }
 
 // Decodes a whole raw DEFLATE stream and appends it to out: 0 or an error
-// (ERR_TRUNCATED if it ends early, ERR_LIMIT past `limit` bytes of output,
+// (ERR_TRUNCATED if it ends early, ERR_LIMIT past `limit` bytes appended,
 // < 0 for none). Bytes after the stream are ignored, as Go ignores them.
 fn inflate_decode(data: const u8[:], out: u8[>..]&, limit: i64 = -1) -> i64 {
     var d = inflate_reader();
@@ -658,13 +658,14 @@ fn inflate_decode(data: const u8[:], out: u8[>..]&, limit: i64 = -1) -> i64 {
 
 fn inflate_decode_with(d: Inflate&, data: const u8[:], out: u8[>..]&, limit: i64) -> i64 {
     var p: i64 = 0;
+    let base = out.len;
     loop {
         let start = out.len;
         out.resize(start + 65536, 0);
         let used, made, st = inflate_read(d, data[p..], out[start..]);
         out.resize(start + made);
         p += used;
-        if limit >= 0 && out.len > limit { return ERR_LIMIT; }
+        if limit >= 0 && out.len - base > limit { return ERR_LIMIT; }
         if st < 0 { return st; }
         if st == STREAM_END { return 0; }
         if p >= data.len && made == 0 { return ERR_TRUNCATED; }

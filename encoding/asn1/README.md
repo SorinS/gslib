@@ -29,10 +29,13 @@ reads the element that must fill `buf`. `children(buf, t)` and
 `children_of(buf, t, tag)` return what a constructed element holds, which
 must fill it exactly. `explicit(buf, t)` unwraps an EXPLICIT tag. Tags
 compare as `t.tag == asn1::SEQUENCE`, or `asn1::ctx(0, true)` for `[0]`.
+A tag number below 31 is its one identifier octet; a higher one is that
+first octet (low bits 0x1f) shifted up 24 bits with the number below, so
+a high-form tag never equals a one-octet tag (universal 130 is not `[2]`).
 
 The reader refuses BER: indefinite lengths, lengths longer than needed,
 lengths past the parent, trailing bytes, and high tag numbers that are
-padded or below 31.
+padded, below 31 or past 24 bits.
 
 For a protocol that sends BER, as LDAP does (RFC 4511 §5.1), `read`,
 `parse`, `children`, `children_of`, `explicit`, `read_bool` and

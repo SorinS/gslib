@@ -7,7 +7,8 @@
 // last AVA with an empty value is kept, and a trailing ',' is refused.
 // dn_string writes the DN as go-ldap's DN.String() does; dn_equal,
 // dn_equal_fold and dn_ancestor_of compare as its Equal, EqualFold and
-// AncestorOf (EqualFold folding ASCII only).
+// AncestorOf (EqualFold folding ASCII only). Attribute types must be a
+// descr or a numericoid (RFC 4514 §3), with no escapes; go-ldap takes any.
 
 namespace ldap;
 
@@ -32,6 +33,36 @@ fn dn_special(c: u8) -> bool {
     c == ' ' || c == '"' || c == '#' || c == '+' || c == ',' || c == ';' || c == '<' || c == '=' || c == '>' || c == '\\'
 }
 
+// An attribute type as RFC 4514 §3 has it: a descr (ALPHA *(ALPHA /
+// DIGIT / "-")) or a numericoid (two or more numbers without leading
+// zeros, joined by "."). Escapes are not allowed in a type: dn_string writes it as it is.
+fn dn_type_ok(t: const u8[:]) -> bool {
+    if t.len == 0 { return false; }
+    let c0 = t[0];
+    if (c0 >= 'a' && c0 <= 'z') || (c0 >= 'A' && c0 <= 'Z') {
+        for c in t {
+            if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-') { return false; }
+        }
+        return true;
+    }
+    var digits = 0;
+    var dots = 0;
+    var lead_zero = false;
+    for c in t {
+        if c == '.' {
+            if digits == 0 { return false; }
+            digits = 0;
+            dots++;
+        } else if c >= '0' && c <= '9' {
+            if digits == 0 { lead_zero = c == '0'; } else if lead_zero { return false; }
+            digits++;
+        } else {
+            return false;
+        }
+    }
+    return digits > 0 && dots > 0;
+}
+
 // Parses s into d; false, with err saying why, if it is not a DN.
 fn parse_dn_into(s: const u8[:], d: Dn&, err: u8[>..]&) -> bool {
     d.rdns = 0;
@@ -46,6 +77,7 @@ fn parse_dn_into(s: const u8[:], d: Dn&, err: u8[>..]&) -> bool {
     while i < s.len {
         let c = s[i];
         if c == '\\' {
+            if !has_type { err.append("escaped character in attribute type"); return false; }
             trailing = 0;
             if i + 1 >= s.len { err.append("got corrupted escaped character"); return false; }
             let e = s[i + 1];
@@ -62,6 +94,7 @@ fn parse_dn_into(s: const u8[:], d: Dn&, err: u8[>..]&) -> bool {
             if buf.len - trailing == 0 { err.append("incomplete type, value pair"); return false; }
             typ.clear();
             typ.append(buf[..buf.len - trailing]);
+            if !dn_type_ok(typ) { err.append("invalid attribute type"); return false; }
             buf.clear();
             trailing = 0;
             has_type = true;

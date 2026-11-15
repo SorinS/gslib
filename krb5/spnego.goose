@@ -336,7 +336,13 @@ fn spnego_finish(ctx: SpnegoContext&, mic: const u8[:], request_mic: bool, first
     var my_mic: u8[>..] = [];
     if want_mic && !ctx.mic_sent {
         let err = gss_get_mic(ctx.gss, ctx.mech_list, my_mic);
-        if err != OK && err != ERR_ETYPE { return true, err; }
+        // A context that cannot make one (DES3) goes without, but only
+        // when Kerberos was the initiator's first choice: else the MIC is
+        // all that shows the mechanism list was not downgraded.
+        if err != OK && (err != ERR_ETYPE || !ctx.first_choice) {
+            spnego_resp_token(out, NEG_REJECT, "", "", "");
+            return true, err;
+        }
         ctx.mic_sent = my_mic.len > 0;
     }
     let need_theirs = ctx.mic_sent && !ctx.mic_received;

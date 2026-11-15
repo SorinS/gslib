@@ -327,7 +327,7 @@ def main():
         write_conf(conf, realm, args.domain, args.kdc)
         write_conf(rc4_conf, realm, args.domain, args.kdc,
                    "    default_tkt_enctypes = arcfour-hmac\n    default_tgs_enctypes = arcfour-hmac\n"
-                   "    permitted_enctypes = arcfour-hmac\n    allow_weak_crypto = true\n")
+                   "    permitted_enctypes = arcfour-hmac\n    allow_weak_crypto = true\n    allow_rc4 = true\n")
         e = Env(tmp, conf)
         e.domain = args.domain
         e.pw = pw

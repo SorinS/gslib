@@ -239,8 +239,51 @@ fn lines() {
     }
 }
 
+fn put_str(w: u8[>..]&, s: const u8[:]) {
+    let n = s.len as! u32;
+    w.push((n >> 24) as! u8); w.push(((n >> 16) & 255) as! u8); w.push(((n >> 8) & 255) as! u8); w.push((n & 255) as! u8);
+    w.append(s);
+}
+
+// An unencrypted OpenSSH file for a P-256 public key with private scalar
+// d's bytes (an mpint's).
+fn ecdsa_file(pub_blob: const u8[:], d: const u8[:]) -> u8[>..] {
+    var priv: u8[>..] = [];
+    priv.append([0x12, 0x34, 0x56, 0x78, 0x12, 0x34, 0x56, 0x78]);
+    priv.append(pub_blob);                      // type, curve, point
+    put_str(priv, d);
+    put_str(priv, "");
+    var fill: u8 = 1;
+    while priv.len % 8 != 0 { priv.push(fill); fill++; }
+    var w: u8[>..] = [];
+    w.append("openssh-key-v1");
+    w.push(0);
+    put_str(w, "none");
+    put_str(w, "none");
+    put_str(w, "");
+    w.append([0, 0, 0, 1]);
+    put_str(w, pub_blob);
+    put_str(w, priv);
+    return pem(w);
+}
+
+// An ECDSA scalar outside 1 <= d < n is refused, not taken to the curve.
+fn ecdsa_scalar_range() {
+    // A key whose scalar's mpint is its bytes as they are (top bit clear).
+    var g = ssh::generate_key(x509::KEY_EC_P256);
+    while g.key.ec_sk[0] >= 0x80 || g.key.ec_sk[0] == 0 { g = ssh::generate_key(x509::KEY_EC_P256); }
+    let ok_k, ok_e = ssh::parse_private_key(ecdsa_file(g.public.blob[..], g.key.ec_sk[..]));
+    check("ecdsa scalar in range", ok_e == ssh::KEY_OK);
+    let n = unhex("00ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551");
+    let k1, e1 = ssh::parse_private_key(ecdsa_file(g.public.blob[..], n));
+    check("ecdsa scalar n", e1 == ssh::KEY_MALFORMED);
+    let k2, e2 = ssh::parse_private_key(ecdsa_file(g.public.blob[..], ""));
+    check("ecdsa scalar 0", e2 == ssh::KEY_MALFORMED);
+}
+
 fn main() {
     wire();
+    ecdsa_scalar_range();
     keys();
     lines();
     print("keys: ", checks, " checks, ", failures, " failed");

@@ -190,6 +190,19 @@ int64_t dnsnet_listen(dnsnet_slice addr, int32_t port, int32_t tcp) {
             continue;
         }
         set_nonblocking(s, 1);
+#if defined(_WIN32)
+        /* Windows fails the next recvfrom with WSAECONNRESET after an ICMP
+           port unreachable for an earlier reply: a client that went away
+           would cost the server a datagram. Off, as other servers have it. */
+        if (!tcp) {
+#  ifndef SIO_UDP_CONNRESET
+#    define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
+#  endif
+            BOOL off = FALSE;
+            DWORD got = 0;
+            WSAIoctl(s, SIO_UDP_CONNRESET, &off, sizeof off, NULL, 0, &got, NULL, NULL);
+        }
+#endif
         result = (int64_t)s;
         break;
     }

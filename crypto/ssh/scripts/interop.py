@@ -39,6 +39,10 @@ as this user (its own config, DH and ssh-rsa enabled again, since OpenSSH
   two hops, -o ProxyJump, 3 MB through a jump, goose-scp -J; OpenSSH ssh -J
   through goose-sshd; goose-ssh -W as OpenSSH's ProxyCommand, OpenSSH's ssh
   -W as goose-ssh's; -W and -J to closed ports; no proxy left running.
+- Hostile peers: goose-scp against scripts/evil_sftp.py (local names the
+  user's, never the server's; -p keeps no setuid bits); goose-sshd's login
+  grace time and max startups, a password file too long, authorized_keys
+  past 64 KiB, a banner's escapes, a tcpip-forward address too long.
 
     python3 scripts/interop.py [--goose PATH]
 """
@@ -207,6 +211,11 @@ def main():
     rc, _, err = run([k("goose-sshd"), "-p", str(free_port()), "-h", k("big_host"), "-k", k("authorized_keys")],
                      timeout=10)
     check("sshd: a host key file too long is refused", rc != 0 and b"too long" in err, err.decode())
+    # goose-ssh-keygen's arguments checked before anything is made: no abort.
+    for args, what in ((["-t", "rsa", "-b", "8224"], "RSA over 8192 bits"), (["-t", "rsa", "-b", "2050"], "RSA bits not a multiple of 64"),
+                       (["-C", "c" * 1100], "a comment over 1024 bytes"), (["-a", "4294967296"], "rounds past 2^31 - 1")):
+        rc, _, err = run([k("goose-ssh-keygen"), *args, "-N", "", "-f", k("bad_args_key")], timeout=30)
+        check(f"keygen: {what} refused", rc == 1 and not os.path.exists(k("bad_args_key")), (rc, err))
 
     # The servers: OpenSSH's sshd (with its sftp-server), goose-sshd (with
     # goose-sftp-server, found beside it), Go's; and a second OpenSSH sshd
@@ -473,6 +482,7 @@ def main():
         sftp_cases(k, sftp_server, {p_goose: "goose-sshd", p_openssh: "OpenSSH sshd + sftp-server",
                                     p_osftp: "OpenSSH sshd + goose-sftp-server"})
         proxy_cases(k, p_goose, p_openssh, p_go)
+        hostile_cases(k, pub)
     finally:
         for s in servers:
             s.kill()
@@ -734,6 +744,109 @@ def proxy_cases(k, p_goose, p_openssh, p_go):
     time.sleep(0.5)
     left = subprocess.run(["pgrep", "-f", k("goose-ssh") + " .*-W"], capture_output=True).stdout
     check("no -W proxy left running", left == b"", left)
+
+
+def hostile_cases(k, pub):
+    """A hostile server and hostile clients: goose-scp against
+    scripts/evil_sftp.py as goose-sshd's sftp subsystem (the local names
+    the user's, never the server's; no setuid bits kept); goose-sshd's
+    login grace time and max startups, a password file too long, an
+    authorized_keys past 64 KiB, a banner's escapes made safe, and a
+    tcpip-forward whose address is too long."""
+    def start(port, *args):
+        p = subprocess.Popen([k("goose-sshd"), "-p", str(port), "-h", k("host_ed25519"), *args], stderr=subprocess.DEVNULL)
+        if not wait_port(port):
+            p.kill()
+            sys.exit(f"goose-sshd did not start on port {port}")
+        return p
+
+    kh = k("known_hosts_hostile")
+    procs = []
+    try:
+        ports = {}
+        for mode in ("file", "dir"):
+            w = k(f"evil_{mode}")
+            with open(w, "w") as f:
+                f.write(f"#!/bin/sh\nexec {sys.executable} -I {os.path.join(ROOT, 'scripts', 'evil_sftp.py')} {mode}\n")
+            os.chmod(w, 0o755)
+            ports[mode] = free_port()
+            procs.append(start(ports[mode], "-k", k("authorized_keys"), "-s", w))
+        # authorized_keys past 64 KiB, the key at its end; a short grace
+        # time, two at once not logged in; a banner with escapes.
+        with open(k("ak_big"), "w") as f:
+            f.write(f"{pub('other_ed25519')} other\n" * 900 + open(k("user_ed25519.pub")).read())
+        p_g = free_port()
+        procs.append(start(p_g, "-k", k("ak_big"), "-G", "2", "-m", "2", "-b", "hi\x1b[31mred\x07\r\nline\r2"))
+        with open(kh, "w") as f:
+            f.write("".join(f"[127.0.0.1]:{p} {pub('host_ed25519')}\n" for p in (*ports.values(), p_g)))
+        o = ["-i", k("user_ed25519"), "-o", f"UserKnownHostsFile={kh}", "-o", "StrictHostKeyChecking=yes"]
+        scp = lambda port, *a: run([k("goose-scp"), "-P", str(port), *o, *a], timeout=60)
+
+        base = k("evil_dl")
+        dl = os.path.join(base, "in")
+        os.makedirs(dl)
+        rc, _, err = scp(ports["file"], "127.0.0.1:~/note.txt", dl + "/")
+        check("goose-scp: the local name the user's, not the server's expand-path answer",
+              rc == 0 and os.listdir(dl) == ["note.txt"], (rc, err, os.listdir(dl)))
+        rc, _, err = scp(ports["file"], "127.0.0.1:~", dl + "/")
+        check("goose-scp: ~ alone into a directory refused (no name of its own)",
+              rc == 1 and b"name the target" in err and os.listdir(dl) == ["note.txt"], (rc, err, os.listdir(dl)))
+        rc, _, err = scp(ports["file"], "-p", "127.0.0.1:~/note.txt", f"{dl}/p")
+        mode = stat.S_IMODE(os.stat(f"{dl}/p").st_mode) if os.path.exists(f"{dl}/p") else None
+        check("goose-scp -p: no setuid, setgid or sticky bit kept", rc == 0 and mode == 0o755, (rc, err, mode))
+        rc, _, err = scp(ports["dir"], "-r", "127.0.0.1:~/stuff", dl + "/")
+        inside = sorted(os.path.relpath(os.path.join(r, n), base) for r, ds, fs in os.walk(base) for n in ds + fs)
+        check("goose-scp -r: nothing written outside the target, bad names skipped",
+              rc == 0 and inside == ["in", "in/note.txt", "in/p", "in/stuff", "in/stuff/payload"], (rc, err, inside))
+
+        # goose-sshd.
+        rc, out, err = run([k("goose-ssh"), "-p", str(p_g), *o, "127.0.0.1", "echo ok"])
+        check("goose-sshd: authorized_keys past 64 KiB read whole", rc == 0 and out == b"ok\n", (rc, out, err))
+        check("goose-ssh: the banner's escapes shown as \\ooo, CRLF kept, a lone CR not",
+              b"hi\\033[31mred\\007\r\nline\\0152" in err and b"\x1b" not in err, err)
+        shutil.copy(k("user_ed25519"), k("open_user_key"))
+        os.chmod(k("open_user_key"), 0o644)
+        rc, out, err = run([k("goose-ssh"), "-p", str(p_g), "-i", k("open_user_key"), "-o", f"UserKnownHostsFile={kh}",
+                            "-o", "StrictHostKeyChecking=yes", "127.0.0.1", "echo ok"])
+        check("goose-ssh: a key file others may read is not used", rc == 255 and b"too open" in err, (rc, out, err))
+        a, b = socket.create_connection(("127.0.0.1", p_g)), socket.create_connection(("127.0.0.1", p_g))
+        a.recv(100)
+        b.recv(100)
+        time.sleep(0.3)
+        c = socket.create_connection(("127.0.0.1", p_g))
+        c.settimeout(5)
+        try:
+            third = c.recv(100)
+        except OSError:
+            third = None
+        check("goose-sshd -m 2: a third connection not logged in dropped", third == b"", third)
+        a.settimeout(10)
+        t0 = time.time()
+        try:
+            while a.recv(4096):
+                pass
+            gone = time.time() - t0
+        except OSError:
+            gone = None
+        check("goose-sshd -G 2: dropped when not logged in within 2 s", gone is not None and gone < 5, gone)
+        for x in (a, b, c):
+            x.close()
+        time.sleep(1)
+        rc, out, err = run([k("goose-ssh"), "-p", str(p_g), *o, "127.0.0.1", "echo again"])
+        check("goose-sshd -m 2: a login once the others are gone", rc == 0 and out == b"again\n", (rc, out, err))
+        rc, out, err = run(["ssh", "-p", str(p_g), "-i", k("user_ed25519"), "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes",
+                            "-o", f"UserKnownHostsFile={kh}", "-R", f"{'a' * 300}:0:127.0.0.1:1", "127.0.0.1", "echo alive"])
+        check("goose-sshd: a tcpip-forward address too long refused, the session goes on",
+              rc == 0 and out == b"alive\n", (rc, out, err))
+        with open(k("pw_big"), "w") as f:
+            f.write("u:" + "x" * 9000 + "\n")
+        rc, _, err = run([k("goose-sshd"), "-p", str(free_port()), "-h", k("host_ed25519"), "-k", k("authorized_keys"),
+                          "-P", k("pw_big")], timeout=10)
+        check("goose-sshd: a password file over 8 KiB refused", rc == 1 and b"too long" in err, (rc, err))
+    finally:
+        for p in procs:
+            p.kill()
+            p.wait()
 
 
 if __name__ == "__main__":

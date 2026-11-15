@@ -46,6 +46,10 @@ fn main() {
     let first, err = yaml::parse(text, doc, decoded);
     guard err.message.len == 0 else { print("read_config: ", err.message, " (", err.line, ":", err.column, ")"); exit(1); }
     guard first else { print("read_config: no document"); exit(1); }
+    // What yaml.v3 would refuse (repeated keys, an alias bomb, a merge of
+    // something other than mappings), refused before the lookups.
+    let bad = yaml::check(first);
+    guard bad.message.len == 0 else { print("read_config: ", bad.message); exit(1); }
     let root = first.first;
 
     let svc = yaml::member(root, "service");

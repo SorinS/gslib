@@ -136,7 +136,7 @@ let ERR_NOT_YET_VALID:  i64 = 19;   // NotBefore is ahead (with the clock skew)
 let ERR_AUDIENCE:       i64 = 20;   // no AudienceRestriction, or one that leaves us out
 let ERR_CONDITION:      i64 = 21;   // a condition not understood, or two OneTimeUse
 let ERR_SESSION:        i64 = 22;   // no AuthnStatement, or its SessionNotOnOrAfter has passed
-let ERR_REPLAY:         i64 = 23;   // the assertion was seen before (the caller's replay check)
+let ERR_REPLAY:         i64 = 23;   // the assertion or LogoutRequest was seen before (the caller's replay check)
 let ERR_UNSOLICITED:    i64 = 24;   // an IdP-initiated response, not allowed
 let ERR_NOT_ENCRYPTED:  i64 = 25;   // a plain assertion where an encrypted one is required
 let ERR_TIME:           i64 = 26;   // a time that is not an xs:dateTime, or missing
@@ -327,6 +327,20 @@ fn html_escape(out: u8[>..]&, s: const u8[:]) {
         else if c == '\'' { out.append("&#39;"); }
         else { out.push(c); }
     }
+}
+
+// Whether s is an absolute http: or https: URL with a host, and no white
+// space or control characters: what an endpoint's Location may be, so
+// that it cannot be a javascript: form action or break a Location header.
+fn location_ok(s: const u8[:]) -> bool {
+    var lower: u8[>..] = [];
+    lower.append(s[..::min(s.len, 8)]);
+    to_lower(lower);
+    var rest = 0;
+    if starts_with(lower, "https://") { rest = 8; } else if starts_with(lower, "http://") { rest = 7; } else { return false; }
+    if rest >= s.len || s[rest] == '/' || s[rest] == '?' || s[rest] == '#' { return false; }
+    for c in s { if c <= 0x20 || c == 0x7F { return false; } }
+    return true;
 }
 
 // Whether el has element children (a NameID or an Issuer must not).
@@ -685,7 +699,7 @@ fn post_body(out: u8[>..]&, is_request: bool, xml_text: const u8[:], relay_state
 fn deliver(d: xml::Doc&, root: i64, binding: i64, location: const u8[:], is_request: bool, relay_state: const u8[:],
            s: const Signer&, sign: bool, o: Outgoing&) -> i64 {
     if relay_state.len > MAX_RELAY_STATE { return ERR_LIMIT; }
-    if location.len == 0 { return ERR_ENDPOINT; }
+    if !location_ok(location) { return ERR_ENDPOINT; }
     o.binding = binding;
     o.relay_state.append(relay_state);
     if binding == BINDING_POST {

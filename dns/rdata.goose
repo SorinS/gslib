@@ -185,7 +185,11 @@ fn rdata_names(t: u16, rd: const u8[:]) -> i64[..16], bool {
     if !known { return out, true; }
     var i = 0;
     for k in lay.f {
-        if i == rd.len && k != 't' { return out, true; }       // trailing fields may be absent
+        // Every field must be there (miekg stops at any field boundary);
+        // those that run to the end may be empty. Empty rdata as a whole
+        // is the caller's call: rdata_empty_ok. ISDN's subaddress is
+        // optional (RFC 1183 §3.2).
+        if t == TYPE_ISDN && i == rd.len && i > 0 { return out, true; }
         let e = field_end(rd, i, k);
         if e < 0 { return out, false; }
         if k == 'c' || k == 'n' { out.push(i); }
@@ -199,8 +203,18 @@ fn rdata_names(t: u16, rd: const u8[:]) -> i64[..16], bool {
     return out, i == rd.len;
 }
 
+// Whether a record of type t and class may have no rdata at all: in
+// dynamic update's prerequisites and deletes (class ANY or NONE, RFC 2136
+// §2.4, §2.5), or where every field of the type may be empty.
+fn rdata_empty_ok(t: u16, class: u16) -> bool {
+    if class == CLASS_ANY || class == CLASS_NONE { return true; }
+    let names, ok = rdata_names(t, []);
+    return ok;
+}
+
 // Reads the rdata of a record of type t from msg[off..off+rdlen], its names
-// decompressed, onto out. ERR_RDATA if it is malformed.
+// decompressed, onto out. ERR_RDATA if it is malformed: every field of the
+// type's layout must be there (rdata_empty_ok says when none may be).
 fn rdata_unpack(msg: const u8[:], off: i64, rdlen: i64, t: u16, out: u8[>..]&) -> i64 {
     let end = off + rdlen;
     if end > msg.len { return ERR_SHORT; }
@@ -208,8 +222,9 @@ fn rdata_unpack(msg: const u8[:], off: i64, rdlen: i64, t: u16, out: u8[>..]&) -
     if !known || rdlen == 0 { out.append(msg[off..end]); return OK; }
     var i = off;
     for k in lay.f {
-        if i == end { break; }
+        if t == TYPE_ISDN && i == end && i > off { break; }      // no subaddress
         if k == 'c' || k == 'n' {
+            if i >= end { return ERR_RDATA; }
             let nm, next, e = read_name(msg, i);
             if e != OK { return e; }
             if next > end { return ERR_RDATA; }
@@ -221,6 +236,7 @@ fn rdata_unpack(msg: const u8[:], off: i64, rdlen: i64, t: u16, out: u8[>..]&) -
             // The gateway: maybe a name, which miekg reads as one with pointers.
             let gt = if k == 'I' { msg[off + 1] } else { msg[off + 1] & 0x7f };
             if gt == 3 {
+                if i >= end { return ERR_RDATA; }
                 let nm, next, e = read_name(msg, i);
                 if e != OK { return e; }
                 if next > end { return ERR_RDATA; }
@@ -501,9 +517,28 @@ fn svcb_valid(b: const u8[:]) -> bool {
         let key = get16(b, i) as i64;
         let len = get16(b, i + 2) as i64;
         if key <= last || i + 4 + len > b.len { return false; }
+        if !svcb_param_valid(key, b[i + 4 .. i + 4 + len]) { return false; }
         last = key;
         i += 4 + len;
     }
+    return true;
+}
+
+// The values with a structure of their own (RFC 9460 §7, as miekg's
+// unpack): mandatory a list of keys, alpn length-prefixed ids that fill
+// it, no-default-alpn and ohttp empty, port two bytes, the hints whole
+// addresses.
+fn svcb_param_valid(key: i64, v: const u8[:]) -> bool {
+    if key == 0 { return v.len > 0 && v.len % 2 == 0; }
+    if key == 1 {
+        var i = 0;
+        while i < v.len { i += 1 + v[i] as i64; }
+        return i == v.len;
+    }
+    if key == 2 || key == 8 { return v.len == 0; }
+    if key == 3 { return v.len == 2; }
+    if key == 4 { return v.len > 0 && v.len % 4 == 0; }
+    if key == 6 { return v.len > 0 && v.len % 16 == 0; }
     return true;
 }
 
@@ -639,6 +674,7 @@ fn svcb_value_append(out: u8[>..]&, key: u16, v: const u8[:]) {
         var first = true;
         while i < v.len {
             let l = v[i] as i64;
+            if i + 1 + l > v.len { break; }
             if !first { out.push(','); }
             first = false;
             for e in v[i + 1 .. i + 1 + l] {

@@ -65,7 +65,7 @@ fn main() {
     print("acceptor: ", srv.acc.domain, "\\", srv.acc.user, ", mechListMIC both ways: ", srv.mic_received && cli.mic_received);
 
     var w: u8[>..] = [];
-    ntlm::wrap(krb5::spnego_ntlm_session(cli), "sealed after SPNEGO", w);
+    ntlm::wrap(krb5::spnego_ntlm_session(cli), "sealed after SPNEGO", true, w);
     var p: u8[>..] = [];
     e = ntlm::unwrap(krb5::spnego_ntlm_session(srv), w, p);
     print("acceptor unwrapped: ", p, " (", ntlm::error_text(e), ")");

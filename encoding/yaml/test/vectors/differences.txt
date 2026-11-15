@@ -1,0 +1,384 @@
+case literal-leading-blank-lines
+0 doc 1:1
+1 scalar 1:1 tag="!!str" style=literal value="\x0aa\x0a" => str
+1 as i=!"line 1: cannot unmarshal !!str `\x0aa\x0a` into int64" u=!"line 1: cannot unmarshal !!str `\x0aa\x0a` into uint64" f=!"line 1: cannot unmarshal !!str `\x0aa\x0a` into float64" b=!"line 1: cannot unmarshal !!str `\x0aa\x0a` into bool" s="\x0aa\x0a"
+decode ok
+marshal "\x22\x5cna\x5cn\x22\x0a"
+end
+case literal-empty-keep
+0 doc 1:1
+1 map 1:1 tag="!!map" style=-
+2 scalar 1:1 tag="!!str" style=- value="a" => str
+2 as i=!"line 1: cannot unmarshal !!str `a` into int64" u=!"line 1: cannot unmarshal !!str `a` into uint64" f=!"line 1: cannot unmarshal !!str `a` into float64" b=!"line 1: cannot unmarshal !!str `a` into bool" s="a"
+2 scalar 1:4 tag="!!str" style=literal value="\x0a" => str
+2 as i=!"line 1: cannot unmarshal !!str `\x0a` into int64" u=!"line 1: cannot unmarshal !!str `\x0a` into uint64" f=!"line 1: cannot unmarshal !!str `\x0a` into float64" b=!"line 1: cannot unmarshal !!str `\x0a` into bool" s="\x0a"
+2 scalar 3:1 tag="!!str" style=- value="b" => str
+2 as i=!"line 3: cannot unmarshal !!str `b` into int64" u=!"line 3: cannot unmarshal !!str `b` into uint64" f=!"line 3: cannot unmarshal !!str `b` into float64" b=!"line 3: cannot unmarshal !!str `b` into bool" s="b"
+2 scalar 3:4 tag="!!str" style=- value="c" => str
+2 as i=!"line 3: cannot unmarshal !!str `c` into int64" u=!"line 3: cannot unmarshal !!str `c` into uint64" f=!"line 3: cannot unmarshal !!str `c` into float64" b=!"line 3: cannot unmarshal !!str `c` into bool" s="c"
+decode ok
+marshal "a: \x22\x5cn\x22\x0ab: c\x0a"
+end
+case folded-more-indented
+0 doc 1:1
+1 scalar 1:1 tag="!!str" style=folded value="a\x0a  b\x0ac\x0ad\x0a" => str
+1 as i=!"line 1: cannot unmarshal !!str `a\x0a  b\x0ac\x0ad\x0a` into int64" u=!"line 1: cannot unmarshal !!str `a\x0a  b\x0ac\x0ad\x0a` into uint64" f=!"line 1: cannot unmarshal !!str `a\x0a  b\x0ac\x0ad\x0a` into float64" b=!"line 1: cannot unmarshal !!str `a\x0a  b\x0ac\x0ad\x0a` into bool" s="a\x0a  b\x0ac\x0ad\x0a"
+decode ok
+marshal ">\x0a    a\x0a      b\x0a    c\x0a\x0a    d\x0a\x0a"
+end
+case folded-keep
+0 doc 1:1
+1 scalar 1:1 tag="!!str" style=folded value="a b\x0a\x0a" => str
+1 as i=!"line 1: cannot unmarshal !!str `a b\x0a\x0a` into int64" u=!"line 1: cannot unmarshal !!str `a b\x0a\x0a` into uint64" f=!"line 1: cannot unmarshal !!str `a b\x0a\x0a` into float64" b=!"line 1: cannot unmarshal !!str `a b\x0a\x0a` into bool" s="a b\x0a\x0a"
+decode ok
+marshal ">+\x0a    a b\x0a\x0a"
+end
+case chunk-bom-line-495
+0 doc 1:1
+1 map 1:1 tag="!!map" style=-
+2 scalar 1:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 1: cannot unmarshal !!str `k` into int64" u=!"line 1: cannot unmarshal !!str `k` into uint64" f=!"line 1: cannot unmarshal !!str `k` into float64" b=!"line 1: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 1:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 1: cannot unmarshal !!str `v` into int64" u=!"line 1: cannot unmarshal !!str `v` into uint64" f=!"line 1: cannot unmarshal !!str `v` into float64" b=!"line 1: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 2:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 2: cannot unmarshal !!str `k` into int64" u=!"line 2: cannot unmarshal !!str `k` into uint64" f=!"line 2: cannot unmarshal !!str `k` into float64" b=!"line 2: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 2:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 2: cannot unmarshal !!str `v` into int64" u=!"line 2: cannot unmarshal !!str `v` into uint64" f=!"line 2: cannot unmarshal !!str `v` into float64" b=!"line 2: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 3:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 3: cannot unmarshal !!str `k` into int64" u=!"line 3: cannot unmarshal !!str `k` into uint64" f=!"line 3: cannot unmarshal !!str `k` into float64" b=!"line 3: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 3:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 3: cannot unmarshal !!str `v` into int64" u=!"line 3: cannot unmarshal !!str `v` into uint64" f=!"line 3: cannot unmarshal !!str `v` into float64" b=!"line 3: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 4:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 4: cannot unmarshal !!str `k` into int64" u=!"line 4: cannot unmarshal !!str `k` into uint64" f=!"line 4: cannot unmarshal !!str `k` into float64" b=!"line 4: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 4:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 4: cannot unmarshal !!str `v` into int64" u=!"line 4: cannot unmarshal !!str `v` into uint64" f=!"line 4: cannot unmarshal !!str `v` into float64" b=!"line 4: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 5:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 5: cannot unmarshal !!str `k` into int64" u=!"line 5: cannot unmarshal !!str `k` into uint64" f=!"line 5: cannot unmarshal !!str `k` into float64" b=!"line 5: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 5:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 5: cannot unmarshal !!str `v` into int64" u=!"line 5: cannot unmarshal !!str `v` into uint64" f=!"line 5: cannot unmarshal !!str `v` into float64" b=!"line 5: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 6:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 6: cannot unmarshal !!str `k` into int64" u=!"line 6: cannot unmarshal !!str `k` into uint64" f=!"line 6: cannot unmarshal !!str `k` into float64" b=!"line 6: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 6:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 6: cannot unmarshal !!str `v` into int64" u=!"line 6: cannot unmarshal !!str `v` into uint64" f=!"line 6: cannot unmarshal !!str `v` into float64" b=!"line 6: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 7:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 7: cannot unmarshal !!str `k` into int64" u=!"line 7: cannot unmarshal !!str `k` into uint64" f=!"line 7: cannot unmarshal !!str `k` into float64" b=!"line 7: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 7:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 7: cannot unmarshal !!str `v` into int64" u=!"line 7: cannot unmarshal !!str `v` into uint64" f=!"line 7: cannot unmarshal !!str `v` into float64" b=!"line 7: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 8:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 8: cannot unmarshal !!str `k` into int64" u=!"line 8: cannot unmarshal !!str `k` into uint64" f=!"line 8: cannot unmarshal !!str `k` into float64" b=!"line 8: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 8:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 8: cannot unmarshal !!str `v` into int64" u=!"line 8: cannot unmarshal !!str `v` into uint64" f=!"line 8: cannot unmarshal !!str `v` into float64" b=!"line 8: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 9:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 9: cannot unmarshal !!str `k` into int64" u=!"line 9: cannot unmarshal !!str `k` into uint64" f=!"line 9: cannot unmarshal !!str `k` into float64" b=!"line 9: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 9:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 9: cannot unmarshal !!str `v` into int64" u=!"line 9: cannot unmarshal !!str `v` into uint64" f=!"line 9: cannot unmarshal !!str `v` into float64" b=!"line 9: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 10:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 10: cannot unmarshal !!str `k` into int64" u=!"line 10: cannot unmarshal !!str `k` into uint64" f=!"line 10: cannot unmarshal !!str `k` into float64" b=!"line 10: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 10:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 10: cannot unmarshal !!str `v` into int64" u=!"line 10: cannot unmarshal !!str `v` into uint64" f=!"line 10: cannot unmarshal !!str `v` into float64" b=!"line 10: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 11:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 11: cannot unmarshal !!str `k` into int64" u=!"line 11: cannot unmarshal !!str `k` into uint64" f=!"line 11: cannot unmarshal !!str `k` into float64" b=!"line 11: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 11:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 11: cannot unmarshal !!str `v` into int64" u=!"line 11: cannot unmarshal !!str `v` into uint64" f=!"line 11: cannot unmarshal !!str `v` into float64" b=!"line 11: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 12:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 12: cannot unmarshal !!str `k` into int64" u=!"line 12: cannot unmarshal !!str `k` into uint64" f=!"line 12: cannot unmarshal !!str `k` into float64" b=!"line 12: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 12:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 12: cannot unmarshal !!str `v` into int64" u=!"line 12: cannot unmarshal !!str `v` into uint64" f=!"line 12: cannot unmarshal !!str `v` into float64" b=!"line 12: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 13:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 13: cannot unmarshal !!str `k` into int64" u=!"line 13: cannot unmarshal !!str `k` into uint64" f=!"line 13: cannot unmarshal !!str `k` into float64" b=!"line 13: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 13:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 13: cannot unmarshal !!str `v` into int64" u=!"line 13: cannot unmarshal !!str `v` into uint64" f=!"line 13: cannot unmarshal !!str `v` into float64" b=!"line 13: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 14:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 14: cannot unmarshal !!str `k` into int64" u=!"line 14: cannot unmarshal !!str `k` into uint64" f=!"line 14: cannot unmarshal !!str `k` into float64" b=!"line 14: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 14:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 14: cannot unmarshal !!str `v` into int64" u=!"line 14: cannot unmarshal !!str `v` into uint64" f=!"line 14: cannot unmarshal !!str `v` into float64" b=!"line 14: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 15:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 15: cannot unmarshal !!str `k` into int64" u=!"line 15: cannot unmarshal !!str `k` into uint64" f=!"line 15: cannot unmarshal !!str `k` into float64" b=!"line 15: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 15:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 15: cannot unmarshal !!str `v` into int64" u=!"line 15: cannot unmarshal !!str `v` into uint64" f=!"line 15: cannot unmarshal !!str `v` into float64" b=!"line 15: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 16:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 16: cannot unmarshal !!str `k` into int64" u=!"line 16: cannot unmarshal !!str `k` into uint64" f=!"line 16: cannot unmarshal !!str `k` into float64" b=!"line 16: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 16:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 16: cannot unmarshal !!str `v` into int64" u=!"line 16: cannot unmarshal !!str `v` into uint64" f=!"line 16: cannot unmarshal !!str `v` into float64" b=!"line 16: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 17:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 17: cannot unmarshal !!str `k` into int64" u=!"line 17: cannot unmarshal !!str `k` into uint64" f=!"line 17: cannot unmarshal !!str `k` into float64" b=!"line 17: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 17:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 17: cannot unmarshal !!str `v` into int64" u=!"line 17: cannot unmarshal !!str `v` into uint64" f=!"line 17: cannot unmarshal !!str `v` into float64" b=!"line 17: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 18:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 18: cannot unmarshal !!str `k` into int64" u=!"line 18: cannot unmarshal !!str `k` into uint64" f=!"line 18: cannot unmarshal !!str `k` into float64" b=!"line 18: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 18:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 18: cannot unmarshal !!str `v` into int64" u=!"line 18: cannot unmarshal !!str `v` into uint64" f=!"line 18: cannot unmarshal !!str `v` into float64" b=!"line 18: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 19:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 19: cannot unmarshal !!str `k` into int64" u=!"line 19: cannot unmarshal !!str `k` into uint64" f=!"line 19: cannot unmarshal !!str `k` into float64" b=!"line 19: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 19:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 19: cannot unmarshal !!str `v` into int64" u=!"line 19: cannot unmarshal !!str `v` into uint64" f=!"line 19: cannot unmarshal !!str `v` into float64" b=!"line 19: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 20:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 20: cannot unmarshal !!str `k` into int64" u=!"line 20: cannot unmarshal !!str `k` into uint64" f=!"line 20: cannot unmarshal !!str `k` into float64" b=!"line 20: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 20:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 20: cannot unmarshal !!str `v` into int64" u=!"line 20: cannot unmarshal !!str `v` into uint64" f=!"line 20: cannot unmarshal !!str `v` into float64" b=!"line 20: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 21:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 21: cannot unmarshal !!str `k` into int64" u=!"line 21: cannot unmarshal !!str `k` into uint64" f=!"line 21: cannot unmarshal !!str `k` into float64" b=!"line 21: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 21:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 21: cannot unmarshal !!str `v` into int64" u=!"line 21: cannot unmarshal !!str `v` into uint64" f=!"line 21: cannot unmarshal !!str `v` into float64" b=!"line 21: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 22:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 22: cannot unmarshal !!str `k` into int64" u=!"line 22: cannot unmarshal !!str `k` into uint64" f=!"line 22: cannot unmarshal !!str `k` into float64" b=!"line 22: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 22:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 22: cannot unmarshal !!str `v` into int64" u=!"line 22: cannot unmarshal !!str `v` into uint64" f=!"line 22: cannot unmarshal !!str `v` into float64" b=!"line 22: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 23:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 23: cannot unmarshal !!str `k` into int64" u=!"line 23: cannot unmarshal !!str `k` into uint64" f=!"line 23: cannot unmarshal !!str `k` into float64" b=!"line 23: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 23:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 23: cannot unmarshal !!str `v` into int64" u=!"line 23: cannot unmarshal !!str `v` into uint64" f=!"line 23: cannot unmarshal !!str `v` into float64" b=!"line 23: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 24:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 24: cannot unmarshal !!str `k` into int64" u=!"line 24: cannot unmarshal !!str `k` into uint64" f=!"line 24: cannot unmarshal !!str `k` into float64" b=!"line 24: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 24:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 24: cannot unmarshal !!str `v` into int64" u=!"line 24: cannot unmarshal !!str `v` into uint64" f=!"line 24: cannot unmarshal !!str `v` into float64" b=!"line 24: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 25:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 25: cannot unmarshal !!str `k` into int64" u=!"line 25: cannot unmarshal !!str `k` into uint64" f=!"line 25: cannot unmarshal !!str `k` into float64" b=!"line 25: cannot unmarshal !!str `k` into bool" s="k"
+more 308 42af908ca0eee7b8
+end
+case chunk-bom-line-510
+0 doc 1:1
+1 map 1:1 tag="!!map" style=-
+2 scalar 1:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 1: cannot unmarshal !!str `k` into int64" u=!"line 1: cannot unmarshal !!str `k` into uint64" f=!"line 1: cannot unmarshal !!str `k` into float64" b=!"line 1: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 1:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 1: cannot unmarshal !!str `v` into int64" u=!"line 1: cannot unmarshal !!str `v` into uint64" f=!"line 1: cannot unmarshal !!str `v` into float64" b=!"line 1: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 2:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 2: cannot unmarshal !!str `k` into int64" u=!"line 2: cannot unmarshal !!str `k` into uint64" f=!"line 2: cannot unmarshal !!str `k` into float64" b=!"line 2: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 2:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 2: cannot unmarshal !!str `v` into int64" u=!"line 2: cannot unmarshal !!str `v` into uint64" f=!"line 2: cannot unmarshal !!str `v` into float64" b=!"line 2: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 3:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 3: cannot unmarshal !!str `k` into int64" u=!"line 3: cannot unmarshal !!str `k` into uint64" f=!"line 3: cannot unmarshal !!str `k` into float64" b=!"line 3: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 3:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 3: cannot unmarshal !!str `v` into int64" u=!"line 3: cannot unmarshal !!str `v` into uint64" f=!"line 3: cannot unmarshal !!str `v` into float64" b=!"line 3: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 4:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 4: cannot unmarshal !!str `k` into int64" u=!"line 4: cannot unmarshal !!str `k` into uint64" f=!"line 4: cannot unmarshal !!str `k` into float64" b=!"line 4: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 4:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 4: cannot unmarshal !!str `v` into int64" u=!"line 4: cannot unmarshal !!str `v` into uint64" f=!"line 4: cannot unmarshal !!str `v` into float64" b=!"line 4: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 5:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 5: cannot unmarshal !!str `k` into int64" u=!"line 5: cannot unmarshal !!str `k` into uint64" f=!"line 5: cannot unmarshal !!str `k` into float64" b=!"line 5: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 5:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 5: cannot unmarshal !!str `v` into int64" u=!"line 5: cannot unmarshal !!str `v` into uint64" f=!"line 5: cannot unmarshal !!str `v` into float64" b=!"line 5: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 6:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 6: cannot unmarshal !!str `k` into int64" u=!"line 6: cannot unmarshal !!str `k` into uint64" f=!"line 6: cannot unmarshal !!str `k` into float64" b=!"line 6: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 6:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 6: cannot unmarshal !!str `v` into int64" u=!"line 6: cannot unmarshal !!str `v` into uint64" f=!"line 6: cannot unmarshal !!str `v` into float64" b=!"line 6: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 7:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 7: cannot unmarshal !!str `k` into int64" u=!"line 7: cannot unmarshal !!str `k` into uint64" f=!"line 7: cannot unmarshal !!str `k` into float64" b=!"line 7: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 7:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 7: cannot unmarshal !!str `v` into int64" u=!"line 7: cannot unmarshal !!str `v` into uint64" f=!"line 7: cannot unmarshal !!str `v` into float64" b=!"line 7: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 8:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 8: cannot unmarshal !!str `k` into int64" u=!"line 8: cannot unmarshal !!str `k` into uint64" f=!"line 8: cannot unmarshal !!str `k` into float64" b=!"line 8: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 8:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 8: cannot unmarshal !!str `v` into int64" u=!"line 8: cannot unmarshal !!str `v` into uint64" f=!"line 8: cannot unmarshal !!str `v` into float64" b=!"line 8: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 9:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 9: cannot unmarshal !!str `k` into int64" u=!"line 9: cannot unmarshal !!str `k` into uint64" f=!"line 9: cannot unmarshal !!str `k` into float64" b=!"line 9: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 9:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 9: cannot unmarshal !!str `v` into int64" u=!"line 9: cannot unmarshal !!str `v` into uint64" f=!"line 9: cannot unmarshal !!str `v` into float64" b=!"line 9: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 10:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 10: cannot unmarshal !!str `k` into int64" u=!"line 10: cannot unmarshal !!str `k` into uint64" f=!"line 10: cannot unmarshal !!str `k` into float64" b=!"line 10: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 10:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 10: cannot unmarshal !!str `v` into int64" u=!"line 10: cannot unmarshal !!str `v` into uint64" f=!"line 10: cannot unmarshal !!str `v` into float64" b=!"line 10: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 11:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 11: cannot unmarshal !!str `k` into int64" u=!"line 11: cannot unmarshal !!str `k` into uint64" f=!"line 11: cannot unmarshal !!str `k` into float64" b=!"line 11: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 11:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 11: cannot unmarshal !!str `v` into int64" u=!"line 11: cannot unmarshal !!str `v` into uint64" f=!"line 11: cannot unmarshal !!str `v` into float64" b=!"line 11: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 12:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 12: cannot unmarshal !!str `k` into int64" u=!"line 12: cannot unmarshal !!str `k` into uint64" f=!"line 12: cannot unmarshal !!str `k` into float64" b=!"line 12: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 12:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 12: cannot unmarshal !!str `v` into int64" u=!"line 12: cannot unmarshal !!str `v` into uint64" f=!"line 12: cannot unmarshal !!str `v` into float64" b=!"line 12: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 13:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 13: cannot unmarshal !!str `k` into int64" u=!"line 13: cannot unmarshal !!str `k` into uint64" f=!"line 13: cannot unmarshal !!str `k` into float64" b=!"line 13: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 13:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 13: cannot unmarshal !!str `v` into int64" u=!"line 13: cannot unmarshal !!str `v` into uint64" f=!"line 13: cannot unmarshal !!str `v` into float64" b=!"line 13: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 14:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 14: cannot unmarshal !!str `k` into int64" u=!"line 14: cannot unmarshal !!str `k` into uint64" f=!"line 14: cannot unmarshal !!str `k` into float64" b=!"line 14: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 14:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 14: cannot unmarshal !!str `v` into int64" u=!"line 14: cannot unmarshal !!str `v` into uint64" f=!"line 14: cannot unmarshal !!str `v` into float64" b=!"line 14: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 15:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 15: cannot unmarshal !!str `k` into int64" u=!"line 15: cannot unmarshal !!str `k` into uint64" f=!"line 15: cannot unmarshal !!str `k` into float64" b=!"line 15: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 15:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 15: cannot unmarshal !!str `v` into int64" u=!"line 15: cannot unmarshal !!str `v` into uint64" f=!"line 15: cannot unmarshal !!str `v` into float64" b=!"line 15: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 16:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 16: cannot unmarshal !!str `k` into int64" u=!"line 16: cannot unmarshal !!str `k` into uint64" f=!"line 16: cannot unmarshal !!str `k` into float64" b=!"line 16: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 16:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 16: cannot unmarshal !!str `v` into int64" u=!"line 16: cannot unmarshal !!str `v` into uint64" f=!"line 16: cannot unmarshal !!str `v` into float64" b=!"line 16: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 17:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 17: cannot unmarshal !!str `k` into int64" u=!"line 17: cannot unmarshal !!str `k` into uint64" f=!"line 17: cannot unmarshal !!str `k` into float64" b=!"line 17: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 17:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 17: cannot unmarshal !!str `v` into int64" u=!"line 17: cannot unmarshal !!str `v` into uint64" f=!"line 17: cannot unmarshal !!str `v` into float64" b=!"line 17: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 18:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 18: cannot unmarshal !!str `k` into int64" u=!"line 18: cannot unmarshal !!str `k` into uint64" f=!"line 18: cannot unmarshal !!str `k` into float64" b=!"line 18: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 18:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 18: cannot unmarshal !!str `v` into int64" u=!"line 18: cannot unmarshal !!str `v` into uint64" f=!"line 18: cannot unmarshal !!str `v` into float64" b=!"line 18: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 19:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 19: cannot unmarshal !!str `k` into int64" u=!"line 19: cannot unmarshal !!str `k` into uint64" f=!"line 19: cannot unmarshal !!str `k` into float64" b=!"line 19: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 19:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 19: cannot unmarshal !!str `v` into int64" u=!"line 19: cannot unmarshal !!str `v` into uint64" f=!"line 19: cannot unmarshal !!str `v` into float64" b=!"line 19: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 20:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 20: cannot unmarshal !!str `k` into int64" u=!"line 20: cannot unmarshal !!str `k` into uint64" f=!"line 20: cannot unmarshal !!str `k` into float64" b=!"line 20: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 20:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 20: cannot unmarshal !!str `v` into int64" u=!"line 20: cannot unmarshal !!str `v` into uint64" f=!"line 20: cannot unmarshal !!str `v` into float64" b=!"line 20: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 21:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 21: cannot unmarshal !!str `k` into int64" u=!"line 21: cannot unmarshal !!str `k` into uint64" f=!"line 21: cannot unmarshal !!str `k` into float64" b=!"line 21: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 21:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 21: cannot unmarshal !!str `v` into int64" u=!"line 21: cannot unmarshal !!str `v` into uint64" f=!"line 21: cannot unmarshal !!str `v` into float64" b=!"line 21: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 22:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 22: cannot unmarshal !!str `k` into int64" u=!"line 22: cannot unmarshal !!str `k` into uint64" f=!"line 22: cannot unmarshal !!str `k` into float64" b=!"line 22: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 22:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 22: cannot unmarshal !!str `v` into int64" u=!"line 22: cannot unmarshal !!str `v` into uint64" f=!"line 22: cannot unmarshal !!str `v` into float64" b=!"line 22: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 23:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 23: cannot unmarshal !!str `k` into int64" u=!"line 23: cannot unmarshal !!str `k` into uint64" f=!"line 23: cannot unmarshal !!str `k` into float64" b=!"line 23: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 23:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 23: cannot unmarshal !!str `v` into int64" u=!"line 23: cannot unmarshal !!str `v` into uint64" f=!"line 23: cannot unmarshal !!str `v` into float64" b=!"line 23: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 24:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 24: cannot unmarshal !!str `k` into int64" u=!"line 24: cannot unmarshal !!str `k` into uint64" f=!"line 24: cannot unmarshal !!str `k` into float64" b=!"line 24: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 24:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 24: cannot unmarshal !!str `v` into int64" u=!"line 24: cannot unmarshal !!str `v` into uint64" f=!"line 24: cannot unmarshal !!str `v` into float64" b=!"line 24: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 25:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 25: cannot unmarshal !!str `k` into int64" u=!"line 25: cannot unmarshal !!str `k` into uint64" f=!"line 25: cannot unmarshal !!str `k` into float64" b=!"line 25: cannot unmarshal !!str `k` into bool" s="k"
+more 320 52a71de6a2913fef
+end
+case chunk-bom-line-525
+0 doc 1:1
+1 map 1:1 tag="!!map" style=-
+2 scalar 1:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 1: cannot unmarshal !!str `k` into int64" u=!"line 1: cannot unmarshal !!str `k` into uint64" f=!"line 1: cannot unmarshal !!str `k` into float64" b=!"line 1: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 1:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 1: cannot unmarshal !!str `v` into int64" u=!"line 1: cannot unmarshal !!str `v` into uint64" f=!"line 1: cannot unmarshal !!str `v` into float64" b=!"line 1: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 2:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 2: cannot unmarshal !!str `k` into int64" u=!"line 2: cannot unmarshal !!str `k` into uint64" f=!"line 2: cannot unmarshal !!str `k` into float64" b=!"line 2: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 2:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 2: cannot unmarshal !!str `v` into int64" u=!"line 2: cannot unmarshal !!str `v` into uint64" f=!"line 2: cannot unmarshal !!str `v` into float64" b=!"line 2: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 3:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 3: cannot unmarshal !!str `k` into int64" u=!"line 3: cannot unmarshal !!str `k` into uint64" f=!"line 3: cannot unmarshal !!str `k` into float64" b=!"line 3: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 3:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 3: cannot unmarshal !!str `v` into int64" u=!"line 3: cannot unmarshal !!str `v` into uint64" f=!"line 3: cannot unmarshal !!str `v` into float64" b=!"line 3: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 4:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 4: cannot unmarshal !!str `k` into int64" u=!"line 4: cannot unmarshal !!str `k` into uint64" f=!"line 4: cannot unmarshal !!str `k` into float64" b=!"line 4: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 4:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 4: cannot unmarshal !!str `v` into int64" u=!"line 4: cannot unmarshal !!str `v` into uint64" f=!"line 4: cannot unmarshal !!str `v` into float64" b=!"line 4: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 5:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 5: cannot unmarshal !!str `k` into int64" u=!"line 5: cannot unmarshal !!str `k` into uint64" f=!"line 5: cannot unmarshal !!str `k` into float64" b=!"line 5: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 5:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 5: cannot unmarshal !!str `v` into int64" u=!"line 5: cannot unmarshal !!str `v` into uint64" f=!"line 5: cannot unmarshal !!str `v` into float64" b=!"line 5: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 6:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 6: cannot unmarshal !!str `k` into int64" u=!"line 6: cannot unmarshal !!str `k` into uint64" f=!"line 6: cannot unmarshal !!str `k` into float64" b=!"line 6: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 6:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 6: cannot unmarshal !!str `v` into int64" u=!"line 6: cannot unmarshal !!str `v` into uint64" f=!"line 6: cannot unmarshal !!str `v` into float64" b=!"line 6: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 7:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 7: cannot unmarshal !!str `k` into int64" u=!"line 7: cannot unmarshal !!str `k` into uint64" f=!"line 7: cannot unmarshal !!str `k` into float64" b=!"line 7: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 7:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 7: cannot unmarshal !!str `v` into int64" u=!"line 7: cannot unmarshal !!str `v` into uint64" f=!"line 7: cannot unmarshal !!str `v` into float64" b=!"line 7: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 8:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 8: cannot unmarshal !!str `k` into int64" u=!"line 8: cannot unmarshal !!str `k` into uint64" f=!"line 8: cannot unmarshal !!str `k` into float64" b=!"line 8: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 8:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 8: cannot unmarshal !!str `v` into int64" u=!"line 8: cannot unmarshal !!str `v` into uint64" f=!"line 8: cannot unmarshal !!str `v` into float64" b=!"line 8: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 9:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 9: cannot unmarshal !!str `k` into int64" u=!"line 9: cannot unmarshal !!str `k` into uint64" f=!"line 9: cannot unmarshal !!str `k` into float64" b=!"line 9: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 9:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 9: cannot unmarshal !!str `v` into int64" u=!"line 9: cannot unmarshal !!str `v` into uint64" f=!"line 9: cannot unmarshal !!str `v` into float64" b=!"line 9: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 10:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 10: cannot unmarshal !!str `k` into int64" u=!"line 10: cannot unmarshal !!str `k` into uint64" f=!"line 10: cannot unmarshal !!str `k` into float64" b=!"line 10: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 10:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 10: cannot unmarshal !!str `v` into int64" u=!"line 10: cannot unmarshal !!str `v` into uint64" f=!"line 10: cannot unmarshal !!str `v` into float64" b=!"line 10: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 11:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 11: cannot unmarshal !!str `k` into int64" u=!"line 11: cannot unmarshal !!str `k` into uint64" f=!"line 11: cannot unmarshal !!str `k` into float64" b=!"line 11: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 11:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 11: cannot unmarshal !!str `v` into int64" u=!"line 11: cannot unmarshal !!str `v` into uint64" f=!"line 11: cannot unmarshal !!str `v` into float64" b=!"line 11: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 12:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 12: cannot unmarshal !!str `k` into int64" u=!"line 12: cannot unmarshal !!str `k` into uint64" f=!"line 12: cannot unmarshal !!str `k` into float64" b=!"line 12: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 12:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 12: cannot unmarshal !!str `v` into int64" u=!"line 12: cannot unmarshal !!str `v` into uint64" f=!"line 12: cannot unmarshal !!str `v` into float64" b=!"line 12: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 13:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 13: cannot unmarshal !!str `k` into int64" u=!"line 13: cannot unmarshal !!str `k` into uint64" f=!"line 13: cannot unmarshal !!str `k` into float64" b=!"line 13: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 13:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 13: cannot unmarshal !!str `v` into int64" u=!"line 13: cannot unmarshal !!str `v` into uint64" f=!"line 13: cannot unmarshal !!str `v` into float64" b=!"line 13: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 14:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 14: cannot unmarshal !!str `k` into int64" u=!"line 14: cannot unmarshal !!str `k` into uint64" f=!"line 14: cannot unmarshal !!str `k` into float64" b=!"line 14: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 14:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 14: cannot unmarshal !!str `v` into int64" u=!"line 14: cannot unmarshal !!str `v` into uint64" f=!"line 14: cannot unmarshal !!str `v` into float64" b=!"line 14: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 15:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 15: cannot unmarshal !!str `k` into int64" u=!"line 15: cannot unmarshal !!str `k` into uint64" f=!"line 15: cannot unmarshal !!str `k` into float64" b=!"line 15: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 15:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 15: cannot unmarshal !!str `v` into int64" u=!"line 15: cannot unmarshal !!str `v` into uint64" f=!"line 15: cannot unmarshal !!str `v` into float64" b=!"line 15: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 16:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 16: cannot unmarshal !!str `k` into int64" u=!"line 16: cannot unmarshal !!str `k` into uint64" f=!"line 16: cannot unmarshal !!str `k` into float64" b=!"line 16: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 16:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 16: cannot unmarshal !!str `v` into int64" u=!"line 16: cannot unmarshal !!str `v` into uint64" f=!"line 16: cannot unmarshal !!str `v` into float64" b=!"line 16: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 17:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 17: cannot unmarshal !!str `k` into int64" u=!"line 17: cannot unmarshal !!str `k` into uint64" f=!"line 17: cannot unmarshal !!str `k` into float64" b=!"line 17: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 17:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 17: cannot unmarshal !!str `v` into int64" u=!"line 17: cannot unmarshal !!str `v` into uint64" f=!"line 17: cannot unmarshal !!str `v` into float64" b=!"line 17: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 18:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 18: cannot unmarshal !!str `k` into int64" u=!"line 18: cannot unmarshal !!str `k` into uint64" f=!"line 18: cannot unmarshal !!str `k` into float64" b=!"line 18: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 18:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 18: cannot unmarshal !!str `v` into int64" u=!"line 18: cannot unmarshal !!str `v` into uint64" f=!"line 18: cannot unmarshal !!str `v` into float64" b=!"line 18: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 19:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 19: cannot unmarshal !!str `k` into int64" u=!"line 19: cannot unmarshal !!str `k` into uint64" f=!"line 19: cannot unmarshal !!str `k` into float64" b=!"line 19: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 19:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 19: cannot unmarshal !!str `v` into int64" u=!"line 19: cannot unmarshal !!str `v` into uint64" f=!"line 19: cannot unmarshal !!str `v` into float64" b=!"line 19: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 20:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 20: cannot unmarshal !!str `k` into int64" u=!"line 20: cannot unmarshal !!str `k` into uint64" f=!"line 20: cannot unmarshal !!str `k` into float64" b=!"line 20: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 20:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 20: cannot unmarshal !!str `v` into int64" u=!"line 20: cannot unmarshal !!str `v` into uint64" f=!"line 20: cannot unmarshal !!str `v` into float64" b=!"line 20: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 21:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 21: cannot unmarshal !!str `k` into int64" u=!"line 21: cannot unmarshal !!str `k` into uint64" f=!"line 21: cannot unmarshal !!str `k` into float64" b=!"line 21: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 21:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 21: cannot unmarshal !!str `v` into int64" u=!"line 21: cannot unmarshal !!str `v` into uint64" f=!"line 21: cannot unmarshal !!str `v` into float64" b=!"line 21: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 22:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 22: cannot unmarshal !!str `k` into int64" u=!"line 22: cannot unmarshal !!str `k` into uint64" f=!"line 22: cannot unmarshal !!str `k` into float64" b=!"line 22: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 22:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 22: cannot unmarshal !!str `v` into int64" u=!"line 22: cannot unmarshal !!str `v` into uint64" f=!"line 22: cannot unmarshal !!str `v` into float64" b=!"line 22: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 23:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 23: cannot unmarshal !!str `k` into int64" u=!"line 23: cannot unmarshal !!str `k` into uint64" f=!"line 23: cannot unmarshal !!str `k` into float64" b=!"line 23: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 23:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 23: cannot unmarshal !!str `v` into int64" u=!"line 23: cannot unmarshal !!str `v` into uint64" f=!"line 23: cannot unmarshal !!str `v` into float64" b=!"line 23: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 24:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 24: cannot unmarshal !!str `k` into int64" u=!"line 24: cannot unmarshal !!str `k` into uint64" f=!"line 24: cannot unmarshal !!str `k` into float64" b=!"line 24: cannot unmarshal !!str `k` into bool" s="k"
+2 scalar 24:4 tag="!!str" style=- value="v" => str
+2 as i=!"line 24: cannot unmarshal !!str `v` into int64" u=!"line 24: cannot unmarshal !!str `v` into uint64" f=!"line 24: cannot unmarshal !!str `v` into float64" b=!"line 24: cannot unmarshal !!str `v` into bool" s="v"
+2 scalar 25:1 tag="!!str" style=- value="k" => str
+2 as i=!"line 25: cannot unmarshal !!str `k` into int64" u=!"line 25: cannot unmarshal !!str `k` into uint64" f=!"line 25: cannot unmarshal !!str `k` into float64" b=!"line 25: cannot unmarshal !!str `k` into bool" s="k"
+more 332 1066b5020ef94f81
+end
+case yamlv3-decode-82
+0 doc 1:1
+1 map 1:1 tag="!!map" style=-
+2 scalar 1:1 tag="!!str" style=- value="scalar" => str
+2 as i=!"line 1: cannot unmarshal !!str `scalar` into int64" u=!"line 1: cannot unmarshal !!str `scalar` into uint64" f=!"line 1: cannot unmarshal !!str `scalar` into float64" b=!"line 1: cannot unmarshal !!str `scalar` into bool" s="scalar"
+2 scalar 1:9 tag="!!str" style=literal value="\x0aliteral\x0a\x0a\x09text\x0a" => str
+2 as i=!"line 1: cannot unmarshal !!str `\x0alitera...` into int64" u=!"line 1: cannot unmarshal !!str `\x0alitera...` into uint64" f=!"line 1: cannot unmarshal !!str `\x0alitera...` into float64" b=!"line 1: cannot unmarshal !!str `\x0alitera...` into bool" s="\x0aliteral\x0a\x0a\x09text\x0a"
+decode ok
+marshal "scalar: \x22\x5cnliteral\x5cn\x5cn\x5cttext\x5cn\x22\x0a"
+end
+case yamlv3-decode-85
+0 doc 1:1
+1 map 1:1 tag="!!map" style=-
+2 scalar 1:1 tag="!!str" style=- value="scalar" => str
+2 as i=!"line 1: cannot unmarshal !!str `scalar` into int64" u=!"line 1: cannot unmarshal !!str `scalar` into uint64" f=!"line 1: cannot unmarshal !!str `scalar` into float64" b=!"line 1: cannot unmarshal !!str `scalar` into bool" s="scalar"
+2 scalar 1:9 tag="!!str" style=folded value="\x0afolded line\x0anext line\x0a * one\x0a * two\x0a\x0alast line\x0a" => str
+2 as i=!"line 1: cannot unmarshal !!str `\x0afolded...` into int64" u=!"line 1: cannot unmarshal !!str `\x0afolded...` into uint64" f=!"line 1: cannot unmarshal !!str `\x0afolded...` into float64" b=!"line 1: cannot unmarshal !!str `\x0afolded...` into bool" s="\x0afolded line\x0anext line\x0a * one\x0a * two\x0a\x0alast line\x0a"
+decode ok
+marshal "scalar: \x22\x5cnfolded line\x5cnnext line\x5cn * one\x5cn * two\x5cn\x5cnlast line\x5cn\x22\x0a"
+end
+case yamlv2-decode-71
+0 doc 1:1
+1 map 1:1 tag="!!map" style=-
+2 scalar 1:1 tag="!!str" style=- value="scalar" => str
+2 as i=!"line 1: cannot unmarshal !!str `scalar` into int64" u=!"line 1: cannot unmarshal !!str `scalar` into uint64" f=!"line 1: cannot unmarshal !!str `scalar` into float64" b=!"line 1: cannot unmarshal !!str `scalar` into bool" s="scalar"
+2 scalar 1:9 tag="!!str" style=literal value="\x0aliteral\x0a\x0a\x09text\x0a" => str
+2 as i=!"line 1: cannot unmarshal !!str `\x0alitera...` into int64" u=!"line 1: cannot unmarshal !!str `\x0alitera...` into uint64" f=!"line 1: cannot unmarshal !!str `\x0alitera...` into float64" b=!"line 1: cannot unmarshal !!str `\x0alitera...` into bool" s="\x0aliteral\x0a\x0a\x09text\x0a"
+decode ok
+marshal "scalar: \x22\x5cnliteral\x5cn\x5cn\x5cttext\x5cn\x22\x0a"
+end
+case yamlv2-decode-74
+0 doc 1:1
+1 map 1:1 tag="!!map" style=-
+2 scalar 1:1 tag="!!str" style=- value="scalar" => str
+2 as i=!"line 1: cannot unmarshal !!str `scalar` into int64" u=!"line 1: cannot unmarshal !!str `scalar` into uint64" f=!"line 1: cannot unmarshal !!str `scalar` into float64" b=!"line 1: cannot unmarshal !!str `scalar` into bool" s="scalar"
+2 scalar 1:9 tag="!!str" style=folded value="\x0afolded line\x0anext line\x0a * one\x0a * two\x0a\x0alast line\x0a" => str
+2 as i=!"line 1: cannot unmarshal !!str `\x0afolded...` into int64" u=!"line 1: cannot unmarshal !!str `\x0afolded...` into uint64" f=!"line 1: cannot unmarshal !!str `\x0afolded...` into float64" b=!"line 1: cannot unmarshal !!str `\x0afolded...` into bool" s="\x0afolded line\x0anext line\x0a * one\x0a * two\x0a\x0alast line\x0a"
+decode ok
+marshal "scalar: \x22\x5cnfolded line\x5cnnext line\x5cn * one\x5cn * two\x5cn\x5cnlast line\x5cn\x22\x0a"
+end

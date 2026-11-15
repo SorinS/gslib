@@ -96,6 +96,7 @@ fn list_valid(list: const u8[:]) -> bool {
         if nl < 0 || i + nl + 10 > list.len { return false; }
         let rr = rr_at(list, i);
         if rr.end > list.len { return false; }
+        if rr.end == rr.rd && !rdata_empty_ok(rr.rtype, rr.class) { return false; }
         if rr.end > rr.rd && !rdata_valid(rr.rtype, rr.rdata(list)) { return false; }
         i = rr.end;
     }
@@ -518,12 +519,16 @@ fn unpack_rr(msg: const u8[:], off: i64, list: u8[>..]&) -> i64, i64 {
     let t = get16(msg, p);
     let rdlen = get16(msg, p + 8) as i64;
     if p + 10 + rdlen > msg.len { return off, ERR_SHORT; }
+    if rdlen == 0 && !rdata_empty_ok(t, get16(msg, p + 2)) { return off, ERR_RDATA; }
     let start = list.len;
     list.append(nm);
     list.append(msg[p .. p + 10]);
     let lp = list.len - 2;
     let e2 = rdata_unpack(msg, p + 10, rdlen, t, list);
     if e2 != OK { list.resize(start); return off, e2; }
+    // Decompressed, rdata can pass what its length field holds (HIP with
+    // many pointers): ERR_BUF, as rr_append has it.
+    if list.len - lp - 2 > 65535 { list.resize(start); return off, ERR_BUF; }
     set16(list, lp, (list.len - lp - 2) as! u16);
     return p + 10 + rdlen, OK;
 }

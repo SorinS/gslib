@@ -37,8 +37,12 @@ let ERR_IO:      i64 = -5;  // reset, or another error on the socket
 // A connection to host:port: the socket, or ERR_ARG, ERR_RESOLVE,
 // ERR_CONNECT or ERR_TIMEOUT. The host is a name or a numeric address,
 // without brackets; each of its addresses is tried in turn until
-// timeout_ms has passed. The socket has TCP_NODELAY set, and writing to
-// one the peer closed gives ERR_IO, not SIGPIPE.
+// timeout_ms has passed. The timeout bounds connecting, not the name's
+// lookup: getaddrinfo, which has no timeout of its own, takes as long as
+// the system's resolver does (its own timeouts and retries), and the
+// time it took comes off what is left to connect in. Give a
+// numeric address to leave the resolver out. The socket has TCP_NODELAY
+// set, and writing to one the peer closed gives ERR_IO, not SIGPIPE.
 fn dial(host: const u8[:], port: i32, timeout_ms: i32) -> i64 {
     return gsnet_dial(host, port, timeout_ms);
 }

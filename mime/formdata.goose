@@ -142,19 +142,27 @@ fn temp_dir(f: const Form&, out: u8[>..]&) {
     if !::env("TMPDIR", out) || out.len == 0 { out.clear(); out.append("/tmp"); }
 }
 
-// Moves the current file's bytes in memory to a new temporary file.
+// Moves the current file's bytes in memory to a new temporary file: made
+// new (never one that is there, nor through a symbolic link), readable by
+// its owner only (0600); a few random names tried.
 fn start_spill(f: Form&) -> bool {
-    f.spill.clear();
-    temp_dir(f, f.spill);
-    if f.spill.len > 0 && f.spill[f.spill.len - 1] != '/' { f.spill.push('/'); }
-    f.spill.append("multipart-");
-    var rnd: u8[8] = [0; 8];
-    bignum::random_bytes(rnd);
-    for b in rnd { f.spill.push(mime::LOWERHEX[b >> 4]); f.spill.push(mime::LOWERHEX[b & 15]); }
-    if ::file_exists(f.spill) { return false; }
-    if !::write_file(f.spill, f.text[f.part_start..]) { return false; }
-    f.text.resize(f.part_start);
-    return true;
+    for attempt in 8 {
+        f.spill.clear();
+        temp_dir(f, f.spill);
+        if f.spill.len > 0 && f.spill[f.spill.len - 1] != '/' { f.spill.push('/'); }
+        f.spill.append("multipart-");
+        var rnd: u8[8] = [0; 8];
+        bignum::random_bytes(rnd);
+        for b in rnd { f.spill.push(mime::LOWERHEX[b >> 4]); f.spill.push(mime::LOWERHEX[b & 15]); }
+        let rc = mime::mime_create_private(f.spill, f.text[f.part_start..]);
+        if rc == 0 {
+            f.text.resize(f.part_start);
+            return true;
+        }
+        if rc != 1 { break; }
+    }
+    f.spill.clear();   // not ours: never removed
+    return false;
 }
 
 // The current part's data so far: in f.text from part_start, or on disk.
@@ -188,7 +196,7 @@ fn begin_part(f: Form&, r: const Reader&) -> i64 {
     f.max_memory_bytes -= name.len;
     f.max_memory_bytes -= 200;
     if f.max_memory_bytes < 0 { return mime::ERR_MULTIPART_TOO_LARGE; }
-    if filename.len == 0 {
+    if !has_file_name(r) {
         f.kind = K_VALUE;
         let ns = add_text(f, name);
         f.values.push(FormValue { name: ns, value: FSpan { pos: 0, end: 0 } });

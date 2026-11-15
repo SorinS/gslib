@@ -557,10 +557,12 @@ fn msg_has_text(s: const u8[:]) -> bool {
 }
 
 // An address field: the addresses written as (*Address).String, ", "
-// between them.
+// between them. ERR_ADDRESS for an Address made by hand (or given by a
+// server) with CR, LF or NUL in it, which could start a header of its own.
 fn write_address_field(out: u8[>..]&, name: const u8[:], list: const Address[:]) -> i64 {
     var v: u8[>..] = [];
     for i in list.len {
+        if addr_has_break(list[i].name) || addr_has_break(list[i].addr) { return ERR_ADDRESS; }
         if i > 0 { v.append(", "); }
         write_address(v, list[i]);
     }

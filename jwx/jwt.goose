@@ -361,15 +361,25 @@ fn finish(payload: const u8[:], err: i64, c: Claims&, v: Validator) -> i64 {
     return validate(c, v);
 }
 
+// A JWT is in the compact serialization only (RFC 7519 §1): a JSON JWS or
+// JWE is ERR_MALFORMED.
+fn compact(token: const u8[:]) -> bool {
+    let t = trim(token);
+    return t.len > 0 && t[0] != '{';
+}
+
 // Verifies a signed token by alg with key, reads its claims into c and
 // validates them.
+
 fn parse(token: const u8[:], alg: i64, key: const jwk::Key&, c: Claims&, v: Validator) -> i64 {
+    if !compact(token) { return jwx::ERR_MALFORMED; }
     let payload, err = jws::verify(token, alg, key);
     return finish(payload, err, c, v);
 }
 
 // parse, with a key of a set (jws::verify_set).
 fn parse_set(token: const u8[:], keys: const jwk::Key[:], c: Claims&, v: Validator, infer: bool = false) -> i64 {
+    if !compact(token) { return jwx::ERR_MALFORMED; }
     let payload, err = jws::verify_set(token, keys, infer);
     return finish(payload, err, c, v);
 }
@@ -377,6 +387,7 @@ fn parse_set(token: const u8[:], keys: const jwk::Key[:], c: Claims&, v: Validat
 // Decrypts an encrypted token by alg with key, reads its claims and
 // validates them.
 fn parse_encrypted(token: const u8[:], alg: i64, key: const jwk::Key&, c: Claims&, v: Validator) -> i64 {
+    if !compact(token) { return jwx::ERR_MALFORMED; }
     let payload, err = jwe::decrypt(token, alg, key);
     return finish(payload, err, c, v);
 }
@@ -385,8 +396,10 @@ fn parse_encrypted(token: const u8[:], alg: i64, key: const jwk::Key&, c: Claims
 // by sig_alg with verify_key.
 fn parse_nested(token: const u8[:], alg: i64, dec_key: const jwk::Key&, sig_alg: i64, verify_key: const jwk::Key&,
                 c: Claims&, v: Validator) -> i64 {
+    if !compact(token) { return jwx::ERR_MALFORMED; }
     let inner, err = jwe::decrypt(token, alg, dec_key);
     if err != jwx::OK { return err; }
+    if !compact(inner) { return jwx::ERR_MALFORMED; }
     let payload, e2 = jws::verify(inner, sig_alg, verify_key);
     return finish(payload, e2, c, v);
 }
@@ -394,6 +407,7 @@ fn parse_nested(token: const u8[:], alg: i64, dec_key: const jwk::Key&, sig_alg:
 // A token's claims without verifying it (jwx's WithVerify(false)): for
 // looking at a token, never for trusting one.
 fn parse_insecure(token: const u8[:], c: Claims&) -> i64 {
+    if !compact(token) { return jwx::ERR_MALFORMED; }
     var m = jws::Message { .. };
     let e = jws::parse(m, token);
     if e != jwx::OK { return e; }

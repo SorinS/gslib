@@ -121,7 +121,15 @@ fn split_target(o: Options&, target: const u8[:]) -> u8[>..] {
 // Adds a key file; false if it is not there or not usable. For a
 // protected one the passphrase is asked for (on the terminal, or from
 // $SSH_ASKPASS) up to three times, as ssh does; an empty answer skips it.
+// One that group or others may read is refused, as by ssh.
 fn load_key(o: const Options&, cfg: ssh::ClientConfig&, path: const u8[:], required: bool) -> bool {
+    // As OpenSSH's: a key file of ours that others may read is not used.
+    var probe: u8[>..] = [];
+    probe.resize(65536, 0);
+    if sysnet::os_read_private(path, probe) == -5 {
+        sysnet::eprint(str(o.prog, ": ", path, ": permissions are too open (others may read it): key not used\n"));
+        return false;
+    }
     var text: u8[>..] = [];
     if !read_file(path, text) {
         if required { sysnet::eprint(str(o.prog, ": cannot read ", path, "\n")); }
@@ -160,7 +168,7 @@ fn config(o: Options&, host: const u8[:]) -> ssh::ClientConfig {
     if o.known_hosts_file.len == 0 { o.known_hosts_file.append(str(home, "/.ssh/known_hosts")); }
     var cfg = ssh::client_config(o.user, host, o.port);
     var kh: u8[>..] = [];
-    if read_file(o.known_hosts_file, kh) { cfg.known_hosts.append(kh[..::min(kh.len, cfg.known_hosts.cap)]); }
+    if read_file(o.known_hosts_file, kh) { cfg.known_hosts.append(kh); }
     for line in split(o.algs, '\n') {
         let w = words(line);
         if w.len != 2 { continue; }
@@ -341,7 +349,7 @@ fn login_event(o: const Options&, cfg: ssh::ClientConfig&, c: ssh::Conn&, e: ssh
         return 1;
     }
     if e.kind == ssh::EV_BANNER {
-        sysnet::eprint(d);
+        sysnet::eprint(sysnet::safe_text(d));
         return 1;
     }
     if e.kind == ssh::EV_PASSWORD_NEEDED {

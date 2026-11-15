@@ -50,7 +50,9 @@ certificate list of a TLS Certificate message, or a PEM bundle run through
 - a version that doesn't match the fields present;
 - the same extension twice, or a critical flag spelled out as FALSE;
 - malformed basicConstraints, key usage, extended key usage, SAN or key
-  identifiers.
+  identifiers; a SAN or name-constraint entry that is not a
+  context-class GeneralName ([0] to [8], constructed or primitive as its
+  form requires).
 
 A `Cert` keeps its own copy of the DER. Everything else is a decoded
 scalar or an `asn1::Tlv` into that copy:
@@ -169,6 +171,9 @@ first, so two roots of one name both work.
   - Other forms (otherName and the rest) can't be evaluated, so a
     certificate is refused only if it has names of a form that is
     constrained.
+  - A wildcard dNSName `*.X` counts as every name under X against
+    excluded subtrees: `*.example.com` is refused under an excluded
+    `secret.example.com`.
 - **Certificate policies** (§6.1). The policy tree is built from
   certificatePolicies, policyMappings, policyConstraints and
   inhibitAnyPolicy, and capped at 1,000 nodes. It is then intersected with
@@ -183,11 +188,17 @@ first, so two roots of one name both work.
   - the issuer's key usage, if present, allows cRLSign;
   - it is current at `now`;
   - its issuingDistributionPoint scope (user or CA certificates only)
-    includes the certificate.
+    includes the certificate;
+  - if its issuingDistributionPoint names a distribution point (a
+    fullName), one of those names is among the fullNames of the
+    certificate's CRL distribution points, the same DER (RFC 5280
+    §6.3.3 (b)(2)(i)): another partition's CRL, or any partitioned CRL for
+    a certificate without distribution points, does not count.
 
   A certificate listed in such a CRL is `ERR_REVOKED`. A certificate with
   no usable CRL is `ERR_REVOCATION_UNKNOWN`. Delta CRLs, indirect CRLs and
-  CRLs partitioned by reason parse but are never used. `crl_urls(c)`
+  CRLs partitioned by reason or named relative to the issuer parse but are
+  never used. `crl_urls(c)`
   lists a certificate's distribution points. OCSP is in `x509.ocsp`.
 
 ## Pools and the system's roots
@@ -330,7 +341,9 @@ its answer for that serial (or its only answer), without checking it;
 successful response whose CertID names the certificate and its issuer,
 signed by the issuer or by a responder certificate the issuer signed with
 id-kp-OCSPSigning, and current, and gives OK (good), ERR_REVOKED, or
-ERR_REVOCATION_UNKNOWN. A delegated responder's certificate must also be
+ERR_REVOCATION_UNKNOWN. A critical extension in the response or in its
+SingleResponse is ERR_UNKNOWN_CRITICAL_EXTENSION at parsing (none is
+implemented). A delegated responder's certificate must also be
 within its validity at `now`, have no unknown critical extension, allow
 digitalSignature if it has keyUsage, and be the one the ResponderID names
 (by subject or by key hash). These checks are RFC 6960's (§4.2.2.2) and
@@ -346,7 +359,10 @@ concatenated) of a .p12 or .pfx file, after checking its MAC (HMAC over
 SHA-1, SHA-224 or SHA-2). It reads what Go's x/crypto/pkcs12 reads
 (pbeWithSHAAnd3-KeyTripleDES-CBC, pbeWithSHAAnd40BitRC2-CBC) and what it
 refuses: openssl 3's default PBES2 (PBKDF2 and AES-CBC), 2-key 3DES,
-128-bit RC2, unencrypted bags. A wrong password is ERR_BAD_SIGNATURE.
+128-bit RC2, unencrypted bags. A wrong password is ERR_BAD_SIGNATURE. A
+file without a MAC is read only with the empty password; under any other
+it is ERR_BAD_SIGNATURE, as in Go, since nothing would hold its contents
+to the password.
 
 ## CMS SignedData
 
@@ -609,7 +625,8 @@ its arguments.
 - `pkcs12_vectors`: 54 files from openssl (`scripts/pkcs12_vectors.py`):
   RSA and P-256 keys with their chains under nine schemes and three
   passwords, each decoding to openssl's key and certificates; wrong
-  passwords and changed bytes refused. Go's x/crypto/pkcs12 reads the 12
+  passwords and changed bytes refused, the files without a MAC refused
+  under a password. Go's x/crypto/pkcs12 reads the 12
   legacy ones to the same keys (and refuses the rest).
 - `cms_vectors`: SignedData from `openssl cms -sign` (24, from
   `scripts/cms_vectors.py`): RSA (PKCS #1 v1.5 and PSS), P-256, P-384 and

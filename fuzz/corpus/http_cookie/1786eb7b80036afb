@@ -1,0 +1,4 @@
+a=1; max-Age=-1
+b=2; expires=Tue, 01 Jan 2013 11:59:50 UTC
+c=2; max-age=-1; expires=Tue, 01 Jan 2013 11:59:50 UTC
+d=4; max-age=-1; expires=Tue, 01 Jan 2013 12:00:10 UTC

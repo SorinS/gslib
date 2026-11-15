@@ -811,7 +811,9 @@ fn conn_handshake(c: Client&, i: i64, name: const u8[:]) -> i64 {
     pc.tc = tls::client(c.tlscfg);
     c.wire.clear();
     tls::client_start(pc.tc, c.tlscfg, c.wire);
-    let e = conn_handshake_run(c, i, name);
+    // A config TLS will not start with (verify on but no name, no
+    // version to offer) fails here, before anything is sent.
+    let e = if tls::failed(pc.tc) { ERR_TLS } else { conn_handshake_run(c, i, name) };
     c.tlscfg.session = tls::no_session();
     // A handshake that failed with a session offered drops it (as Go).
     if e != ERR_NONE && offered { session_drop(c, name); }
@@ -860,7 +862,7 @@ fn outer_handshake(c: Client&, i: i64, name: const u8[:]) -> i64 {
     o.tc = tls::client(c.tlscfg);
     c.wire2.clear();
     tls::client_start(o.tc, c.tlscfg, c.wire2);
-    let e = outer_handshake_run(c, i, k, name);
+    let e = if tls::failed(o.tc) { ERR_TLS } else { outer_handshake_run(c, i, k, name) };
     c.tlscfg.session = tls::no_session();
     if e != ERR_NONE && offered { session_drop(c, name); }
     if e == ERR_NONE { keep_session(c, i, true); }
@@ -2086,11 +2088,15 @@ fn read_body(c: Client&, r: Response&, out: u8[>..]&) -> i64 {
         let n = read_wire_body(c, r, wire);
         if n < 0 { inflate_free(c, r); return n; }
         let before = out.len;
-        if inflate_feed(c.inflates[k], wire, out) != 0 {
+        // No more decoded than max_body still allows (read_all's body
+        // grows in out): a small read must not inflate a thousandfold
+        // before the size is checked.
+        let fe = inflate_feed(c.inflates[k], wire, out, c.opt.max_body);
+        if fe != 0 {
             if r.conn >= 0 { conn_close(c, r.conn); r.conn = -1; }
             r.body_done = true;
             inflate_free(c, r);
-            return -ERR_DECODE;
+            return if fe == FLATE_ERR_LIMIT { -ERR_TOO_LARGE } else { -ERR_DECODE };
         }
         // The body ended: the gzip stream must have ended whole with it.
         if r.body_done {

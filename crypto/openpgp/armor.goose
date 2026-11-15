@@ -282,6 +282,23 @@ fn cleartext_body(out: u8[>..]&, ct: const Cleartext&) {
     out.push('\n');
 }
 
+// What a cleartext signature hashes of text, as parse_cleartext reads the
+// lines dash_escape writes: lines split at LF only, each without its
+// trailing CR, spaces and tabs, joined by CRLF. A CR within a line is
+// text, on both sides.
+fn cleartext_hashed(out: u8[>..]&, text: const u8[:]) {
+    var at = 0;
+    loop {
+        var nl = at;
+        while nl < text.len && text[nl] != '\n' { nl++; }
+        let e, next = line_at(text, at);
+        out.append(text[at..e]);
+        if nl >= text.len { break; }
+        out.append("\r\n");
+        at = next;
+    }
+}
+
 // The dash-escaped text of a cleartext message (§7.2), lines LF-ended:
 // each line that starts with '-' gets "- " before it, and so does one
 // that starts "From " (as gpg escapes it, for mbox).

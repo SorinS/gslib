@@ -4,7 +4,8 @@
 // and 3DES PBEs Go's x/crypto/pkcs12 reads, 2-key 3DES, 128-bit RC2, no
 // encryption, no MAC and a SHA-512 MAC; empty, ASCII and non-ASCII
 // passwords. Each decodes to openssl's key and certificates; a wrong
-// password and a changed byte are refused.
+// password and a changed byte are refused, and so is a file without a MAC
+// under any password but the empty one.
 import std;
 import gslib from "../../..";
 import gslib.crypto.x509;
@@ -43,6 +44,11 @@ fn main() {
         let want_key, okw = x509::parse_private_key(unhex(w[3]));
         let pfx = unhex(w[5]);
         let key, certs, e = x509::pkcs12_decode(pfx, pw);
+        if (label == "rsa-nomac" || label == "p256-nomac") && pw.len > 0 {
+            // No MAC to hold the file to a password: refused, as in Go.
+            check("no MAC under a password", e == x509::ERR_BAD_SIGNATURE && key.len == 0 && certs.len == 0);
+            continue;
+        }
         let k, okk = x509::parse_private_key(key);
         check(label, okw && e == x509::OK && okk && x509::marshal_pkcs8(k) == x509::marshal_pkcs8(want_key));
         // The same certificates, in either order (openssl writes the

@@ -462,8 +462,50 @@ fn no_boundary() {
     tv::check_eq("no boundary message", m, "multipart: boundary is empty");
 }
 
+// A preamble line fed a byte at a time is searched for its end once, not
+// again from its start at each feed (1.7 s for 1 MB before).
+fn preamble_linear() {
+    var r = multipart::Reader { .. };
+    multipart::init(r, "XX");
+    var data: u8[>..] = [];
+    var line: u8[>..] = [];
+    line.resize(3000, 'a');
+    for i in line.len {
+        multipart::feed(r, line[i..i + 1]);
+        let ev = multipart::next(r, data);
+        if ev != multipart::EV_NEED_MORE { tv::check_int("preamble byte by byte", ev, multipart::EV_NEED_MORE); return; }
+    }
+    tv::check_int("preamble searched once", r.scanned, 3000);
+    multipart::feed(r, "\r\n--XX\r\nA: b\r\n\r\nhello\r\n--XX--\r\n");
+    multipart::finish(r);
+    tv::check_int("  then the part", multipart::next(r, data), multipart::EV_PART);
+    tv::check_int("  scan reset", r.scanned, 0);
+    let t0 = ::clock();
+    var r2 = multipart::Reader { .. };
+    multipart::init(r2, "XX");
+    var body: u8[>..] = [];
+    for i in 100 { for j in 4000 { body.push('a'); } body.append("\r\n"); }
+    body.append("--XX\r\nA: b\r\n\r\nhello\r\n--XX--\r\n");
+    var parts = 0;
+    var p = 0;
+    loop {
+        let ev = multipart::next(r2, data);
+        if ev == multipart::EV_NEED_MORE {
+            if p >= body.len { multipart::finish(r2); continue; }
+            multipart::feed(r2, body[p..p + 1]);
+            p++;
+            continue;
+        }
+        if ev == multipart::EV_PART { parts++; }
+        if ev == multipart::EV_END || ev == multipart::EV_ERROR { break; }
+    }
+    tv::check_int("400 KB of preamble byte by byte", parts, 1);
+    tv::check("  in well under a few seconds", ::clock() - t0 < 5.0);
+}
+
 fn main() {
     parse_tests();
+    preamble_linear();
     boundary_line();
     test_multipart("\r\n", false);
     test_multipart("\n", false);

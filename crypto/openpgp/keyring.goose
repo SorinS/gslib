@@ -40,8 +40,16 @@ struct Uid {
 }
 
 // A packet of the keyring: its tag, whose transferable key it is part of,
-// and where it is in raw.
-struct Rec { tag: i64, key: i64, start: i64, end: i64 }
+// what in that key it belongs to (part: the primary's key packet, a
+// signature directly on it, a user ID or a subkey with their signatures;
+// owner: the user ID's index in kr.uids or the subkey's in kr.keys), and
+// where it is in raw.
+struct Rec { tag: i64, key: i64, start: i64, end: i64, part: i64 = 0, owner: i64 = -1 }
+
+let PART_KEY:    i64 = 0;
+let PART_DIRECT: i64 = 1;
+let PART_UID:    i64 = 2;
+let PART_SUB:    i64 = 3;
 
 root struct Keyring {
     keys: Key[>..] = [],
@@ -53,79 +61,144 @@ root struct Keyring {
 let MAX_KEY_PACKETS: i64 = 100000;
 
 // What applies a self-signature's key data to a key: flags and expiry.
-fn take_self_sig(k: Key&, s: const Signature&) {
-    if s.created < k.bound_at { return; }
+// The newest self-signature of a primary user ID counts, else the newest;
+// a direct-key signature counts when it is newer than that.
+fn take_self_sig(k: Key&, s: const Signature&, primary_uid: bool = false, direct: bool = false) {
+    if direct {
+        if s.created < k.bound_at { return; }
+    } else {
+        if k.bound_primary && !primary_uid { return; }
+        if s.created < k.bound_at && (k.bound_primary || !primary_uid) { return; }
+        k.bound_primary = primary_uid;
+    }
     k.bound_at = s.created;
     k.has_flags = s.has_flags;
     k.flags = s.flags;
     k.expires = s.key_expires;
 }
 
-// The state of reading: the current primary, subkey and user ID.
-struct ReadState { primary: i64 = -1, sub: i64 = -1, uid: i64 = -1, primary_uid_seen: bool = false }
+// The state of reading: the current primary, subkey and user ID, and
+// whether the primary was in the keyring already (merged: its packets go
+// with the copy there).
+struct ReadState { primary: i64 = -1, sub: i64 = -1, uid: i64 = -1, merged: bool = false }
 
-fn handle_signature(kr: Keyring&, st: ReadState&, body: const u8[:]) {
-    if st.primary < 0 { return; }
+// Checks a signature read after st's packets and applies it: true when it
+// is the primary's own (a self-signature, binding or revocation) and
+// verifies.
+fn handle_signature(kr: Keyring&, st: ReadState&, body: const u8[:]) -> bool {
+    if st.primary < 0 { return false; }
     let s, err = parse_signature(body);
-    if err != OK { return; }
+    if err != OK { return false; }
     let pk = kr.keys[st.primary];
-    if !issued_by(s, pk) { return; }
+    if !issued_by(s, pk) { return false; }
     var data: u8[>..] = [];
     put_key_hash(data, pk);
     let t = s.sigtype;
     if st.sub < 0 && st.uid < 0 {
         // Directly on the primary: direct-key signatures and revocations.
-        if t != SIG_DIRECT_KEY && t != SIG_KEY_REVOCATION { return; }
-        if verify_signature(pk, s, data) != OK { return; }
-        if t == SIG_KEY_REVOCATION { kr.keys[st.primary].revoked = true; return; }
+        if t != SIG_DIRECT_KEY && t != SIG_KEY_REVOCATION { return false; }
+        if verify_signature(pk, s, data) != OK { return false; }
+        if t == SIG_KEY_REVOCATION { kr.keys[st.primary].revoked = true; return true; }
         kr.keys[st.primary].valid = true;
-        if s.has_flags || s.key_expires > 0 { take_self_sig(kr.keys[st.primary], s); }
-        return;
+        if s.has_flags || s.key_expires > 0 { take_self_sig(kr.keys[st.primary], s, false, true); }
+        return true;
     }
     if st.sub < 0 {
         // On a user ID.
-        if !(t >= SIG_CERT_GENERIC && t <= SIG_CERT_POSITIVE) && t != SIG_CERT_REVOCATION { return; }
+        if !(t >= SIG_CERT_GENERIC && t <= SIG_CERT_POSITIVE) && t != SIG_CERT_REVOCATION { return false; }
         put_uid_hash(data, kr.uids[st.uid].text);
-        if verify_signature(pk, s, data) != OK { return; }
-        if t == SIG_CERT_REVOCATION { kr.uids[st.uid].revoked = true; return; }
-        if s.created < kr.uids[st.uid].certified_at { return; }
+        if verify_signature(pk, s, data) != OK { return false; }
+        if t == SIG_CERT_REVOCATION { kr.uids[st.uid].revoked = true; return true; }
+        if s.created < kr.uids[st.uid].certified_at { return true; }
         kr.uids[st.uid].valid = true;
         kr.uids[st.uid].certified_at = s.created;
         kr.uids[st.uid].primary = s.primary_uid;
         kr.keys[st.primary].valid = true;
         // The primary user ID's self-signature, else the newest, says
         // what the primary key may do.
-        if s.primary_uid || !st.primary_uid_seen {
-            if s.primary_uid && !st.primary_uid_seen { kr.keys[st.primary].bound_at = 0; }
-            if s.primary_uid { st.primary_uid_seen = true; }
-            take_self_sig(kr.keys[st.primary], s);
-        }
-        return;
+        take_self_sig(kr.keys[st.primary], s, s.primary_uid);
+        return true;
     }
     // On a subkey.
-    if t != SIG_SUBKEY_BINDING && t != SIG_SUBKEY_REVOCATION { return; }
+    if t != SIG_SUBKEY_BINDING && t != SIG_SUBKEY_REVOCATION { return false; }
     let sk = kr.keys[st.sub];
     // RFC 9980 §7.2: a post-quantum subkey's binding is not by SHA-1 or
     // RIPEMD-160.
-    if (is_pq_kem(sk.algo) || is_pq_sig(sk.algo)) && (s.hash == HASH_SHA1 || s.hash == HASH_RIPEMD160) { return; }
+    if (is_pq_kem(sk.algo) || is_pq_sig(sk.algo)) && (s.hash == HASH_SHA1 || s.hash == HASH_RIPEMD160) { return false; }
     put_key_hash(data, sk);
-    if verify_signature(pk, s, data) != OK { return; }
-    if t == SIG_SUBKEY_REVOCATION { kr.keys[st.sub].revoked = true; return; }
+    if verify_signature(pk, s, data) != OK { return false; }
+    if t == SIG_SUBKEY_REVOCATION { kr.keys[st.sub].revoked = true; return true; }
     // A subkey that may sign must sign back (§5.2.1, 0x19).
     if s.has_flags && s.flags & FLAG_SIGN != 0 {
-        if s.embedded.len == 0 { return; }
+        if s.embedded.len == 0 { return false; }
         let b, eb = parse_signature(s.embedded);
-        if eb != OK || b.sigtype != SIG_PRIMARY_BINDING || verify_signature(sk, b, data) != OK { return; }
+        if eb != OK || b.sigtype != SIG_PRIMARY_BINDING || verify_signature(sk, b, data) != OK { return false; }
     }
-    if s.created < kr.keys[st.sub].bound_at { return; }
+    if s.created < kr.keys[st.sub].bound_at { return true; }
     kr.keys[st.sub].valid = true;
     take_self_sig(kr.keys[st.sub], s);
+    return true;
+}
+
+// A key revocation certificate on its own (gpg's --gen-revoke): the
+// primary of the keyring it revokes, -1 if none it verifies for.
+fn apply_revocation(kr: Keyring&, body: const u8[:]) -> i64 {
+    let s, err = parse_signature(body);
+    if err != OK || s.sigtype != SIG_KEY_REVOCATION { return -1; }
+    if !s.has_issuer && s.issuer_fpr.len == 0 { return -1; }
+    for i in kr.keys.len {
+        if !is_primary(kr, i) || !issued_by(s, kr.keys[i]) { continue; }
+        var data: u8[>..] = [];
+        put_key_hash(data, kr.keys[i]);
+        if verify_signature(kr.keys[i], s, data) != OK { continue; }
+        kr.keys[i].revoked = true;
+        return i;
+    }
+    return -1;
+}
+
+// The secret of src, for the copy of the same key in the keyring that has
+// none (or only gpg's stub).
+fn take_secret(dst: Key&, src: const Key&) {
+    if !src.has_secret || (dst.has_secret && !dst.stub) || (dst.has_secret && src.stub) { return; }
+    dst.has_secret = true;
+    dst.locked = src.locked;
+    dst.stub = src.stub;
+    dst.sexp = src.sexp;
+    dst.sec_raw.clear(); dst.sec_raw.append(src.sec_raw);
+    dst.d.clear(); dst.d.append(src.d);
+    dst.p.clear(); dst.p.append(src.p);
+    dst.q.clear(); dst.q.append(src.q);
+    dst.u.clear(); dst.u.append(src.u);
+    dst.scalar.clear(); dst.scalar.append(src.scalar);
+    dst.pq_sec.clear(); dst.pq_sec.append(src.pq_sec);
+}
+
+// Whether the keyring holds this packet for this part of a key already.
+fn has_rec(kr: const Keyring&, key: i64, part: i64, owner: i64, pkt: const u8[:]) -> bool {
+    for r in kr.recs {
+        if r.key == key && r.part == part && r.owner == owner && r.end - r.start == pkt.len
+           && kr.raw[r.start..r.end] == pkt { return true; }
+    }
+    return false;
+}
+
+fn push_rec(kr: Keyring&, tag: i64, key: i64, part: i64, owner: i64, pkt: const u8[:]) {
+    let start = kr.raw.len;
+    kr.raw.append(pkt);
+    kr.recs.push(Rec { tag: tag, key: key, start: start, end: kr.raw.len, part: part, owner: owner });
 }
 
 // Reads transferable keys (armored, any number of armored blocks, or
 // binary) into kr. Keys whose version or algorithm is not supported are
 // skipped with their subkeys and signatures; ERR_MALFORMED if the framing
 // is broken, and ERR_NO_KEY if no key was read at all.
+//
+// A key the keyring has already (the same fingerprint) is merged into
+// that copy, as gpg imports keys: its new user IDs, subkeys, secrets and
+// its own signatures (revocations among them) are added; signatures by
+// other keys on it are not. A key revocation certificate on its own
+// revokes the key of the keyring it is for.
 fn add_keys(kr: Keyring&, data: const u8[:]) -> i64 {
     var bin: u8[>..] = [];
     if is_armored(data) {
@@ -141,7 +214,7 @@ fn add_keys(kr: Keyring&, data: const u8[:]) -> i64 {
     } else {
         bin.append(data);
     }
-    let before = kr.keys.len;
+    var read = 0;                    // keys and revocation certificates taken
     var st = ReadState { .. };
     var skip = false;                // inside a key that could not be read
     var at = 0;
@@ -154,46 +227,87 @@ fn add_keys(kr: Keyring&, data: const u8[:]) -> i64 {
         at = p.end;
         if p.partial { return ERR_MALFORMED; }
         let body = bin[p.body..p.body_end];
+        let pkt = bin[p.at..p.end];
         let t = p.tag;
         if t == TAG_PUBLIC_KEY || t == TAG_SECRET_KEY {
             let k, e = parse_key(t, body);
             st = ReadState { .. };
             if e != OK { skip = true; continue; }
             skip = false;
+            read++;
+            var have = -1;
+            for i in kr.keys.len { if is_primary(kr, i) && kr.keys[i].fpr[..] == k.fpr[..] { have = i; break; } }
+            if have >= 0 {
+                st.primary = have;
+                st.merged = true;
+                take_secret(kr.keys[have], k);
+                continue;
+            }
             kr.keys.push(k);
             st.primary = kr.keys.len - 1;
             kr.keys[st.primary].primary = st.primary;
-        } else if skip || st.primary < 0 {
+            push_rec(kr, t, st.primary, PART_KEY, -1, pkt);
+        } else if skip {
             continue;
+        } else if st.primary < 0 {
+            // A revocation certificate, alone.
+            if t != TAG_SIGNATURE { continue; }
+            let r = apply_revocation(kr, body);
+            if r < 0 { continue; }
+            read++;
+            if !has_rec(kr, r, PART_DIRECT, -1, pkt) { push_rec(kr, t, r, PART_DIRECT, -1, pkt); }
         } else if t == TAG_PUBLIC_SUBKEY || t == TAG_SECRET_SUBKEY {
             let k, e = parse_key(t, body);
             st.uid = -1;
             if e != OK { st.sub = -2; continue; }
+            // The same subkey of the same primary: the copy there.
+            var have = -1;
+            for i in kr.keys.len {
+                if kr.keys[i].primary == st.primary && kr.keys[i].subkey && kr.keys[i].fpr[..] == k.fpr[..] { have = i; break; }
+            }
+            if have >= 0 {
+                st.sub = have;
+                take_secret(kr.keys[have], k);
+                continue;
+            }
             kr.keys.push(k);
             st.sub = kr.keys.len - 1;
             kr.keys[st.sub].primary = st.primary;
+            push_rec(kr, t, st.primary, PART_SUB, st.sub, pkt);
         } else if t == TAG_USER_ID {
             if st.sub != -1 { continue; }
+            if body.len > 1024 {
+                // Longer than a Uid holds: skipped with its signatures.
+                st.uid = -1;
+                st.sub = -2;
+                continue;
+            }
+            var have = -1;
+            for i in kr.uids.len {
+                if kr.uids[i].key == st.primary && kr.uids[i].text[..] == body { have = i; break; }
+            }
+            if have >= 0 { st.uid = have; continue; }
             var u = Uid { .. };
             u.key = st.primary;
-            u.text.append(body[.. ::min(body.len, u.text.cap)]);
+            u.text.append(body);
             kr.uids.push(u);
             st.uid = kr.uids.len - 1;
+            push_rec(kr, t, st.primary, PART_UID, st.uid, pkt);
         } else if t == TAG_USER_ATTRIBUTE {
             st.uid = -1;
             if st.sub == -1 { st.sub = -2; }      // its signatures are not ours to check
             continue;
         } else if t == TAG_SIGNATURE {
             if st.sub == -2 { continue; }
-            handle_signature(kr, st, body);
-        } else {
-            continue;                    // trust, marker, padding
+            let own = handle_signature(kr, st, body);
+            let part = if st.sub >= 0 { PART_SUB } else if st.uid >= 0 { PART_UID } else { PART_DIRECT };
+            let owner = if st.sub >= 0 { st.sub } else { st.uid };
+            if st.merged && (!own || has_rec(kr, st.primary, part, owner, pkt)) { continue; }
+            push_rec(kr, t, st.primary, part, owner, pkt);
         }
-        let start = kr.raw.len;
-        kr.raw.append(bin[p.at..p.end]);
-        kr.recs.push(Rec { tag: t, key: st.primary, start: start, end: kr.raw.len });
+        // Trust, marker and padding packets are not kept.
     }
-    if kr.keys.len == before { return ERR_NO_KEY; }
+    if read == 0 { return ERR_NO_KEY; }
     return OK;
 }
 
@@ -250,8 +364,10 @@ fn key_by_fpr(kr: const Keyring&, fpr: const u8[:], secret: bool = false) -> i64
 }
 
 // A primary key by what a user names it with: a fingerprint or key ID in
-// hex (with or without "0x" and spaces), or text found in a user ID
-// (without case). A key with its secret here is preferred. -1 if none.
+// hex (with or without "0x" and spaces), an email address (a user ID's
+// <address>, exactly) or other text found in a user ID (without case);
+// user IDs not validly self-certified, or revoked, do not count. A key
+// with its secret here is preferred. -1 if none.
 fn find_key(kr: const Keyring&, query: const u8[:], secret: bool = false) -> i64 {
     var q = query;
     if starts_with(q, "0x") || starts_with(q, "0X") { q = q[2..]; }
@@ -267,15 +383,38 @@ fn find_key(kr: const Keyring&, query: const u8[:], secret: bool = false) -> i64
             }
         }
     }
+    // An email address (no spaces, no angle brackets) names the user IDs
+    // whose address is just that; other text, those it is part of.
+    let email = find(query, "@") >= 0 && find(query, " ") < 0 && find(query, "<") < 0 && find(query, ">") < 0;
     for pass in 2 {
         for u in kr.uids {
+            // Only user IDs the key certifies and has not revoked.
+            if !u.valid || u.revoked { continue; }
             let k = kr.keys[u.key];
             if pass == 0 && !k.has_secret { continue; }
             if secret && (!k.has_secret || k.stub) { continue; }
-            if contains_fold(u.text, query) { return u.key; }
+            let hit = if email { eq_fold(uid_address(u.text), query) } else { contains_fold(u.text, query) };
+            if hit { return u.key; }
         }
     }
     return -1;
+}
+
+// The address of a user ID: what is in its last <...>, else all of it.
+fn uid_address(t: const u8[:]) -> const u8[:] {
+    var close = t.len - 1;
+    while close >= 0 && t[close] != '>' { close--; }
+    if close < 0 { return t; }
+    var open = close - 1;
+    while open >= 0 && t[open] != '<' { open--; }
+    if open < 0 { return t; }
+    return t[open + 1..close];
+}
+
+fn eq_fold(a: const u8[:], b: const u8[:]) -> bool {
+    if a.len != b.len { return false; }
+    for i in a.len { if lower(a[i]) != lower(b[i]) { return false; } }
+    return true;
 }
 
 // Whether a key may be used at time t (0: now) for what `flag` says.
@@ -358,25 +497,53 @@ fn unlock_all(kr: Keyring&, pass: const u8[:]) -> i64 {
 
 // --- Export ------------------------------------------------------------------------
 
+// The packets of a primary into bin: the key, its direct signatures, each
+// user ID with its signatures, each subkey with its signatures. The key
+// packets are public ones unless secret; then each secret goes as
+// put_secret_body writes it with pass and s2k.
+fn export_packets(kr: const Keyring&, primary: i64, bin: u8[>..]&, secret: bool, pass: const u8[:], s2k: i64) -> i64 {
+    let e0 = put_key_packet(kr.keys[primary], bin, secret, pass, s2k);
+    if e0 != OK { return e0; }
+    for r in kr.recs {
+        if r.key == primary && r.part == PART_DIRECT { bin.append(kr.raw[r.start..r.end]); }
+    }
+    for u in kr.uids.len {
+        if kr.uids[u].key != primary { continue; }
+        for r in kr.recs {
+            if r.key == primary && r.part == PART_UID && r.owner == u { bin.append(kr.raw[r.start..r.end]); }
+        }
+    }
+    for i in kr.keys.len {
+        if i == primary || kr.keys[i].primary != primary { continue; }
+        let e = put_key_packet(kr.keys[i], bin, secret, pass, s2k);
+        if e != OK { return e; }
+        for r in kr.recs {
+            // Its signatures (the key packet goes as the key is now).
+            if r.key == primary && r.part == PART_SUB && r.owner == i && r.tag == TAG_SIGNATURE { bin.append(kr.raw[r.start..r.end]); }
+        }
+    }
+    return OK;
+}
+
+fn put_key_packet(k: const Key&, bin: u8[>..]&, secret: bool, pass: const u8[:], s2k: i64) -> i64 {
+    if !secret || !k.has_secret {
+        put_old_packet(bin, if k.subkey { TAG_PUBLIC_SUBKEY } else { TAG_PUBLIC_KEY }, k.body);
+        return OK;
+    }
+    var body: u8[>..] = [];
+    let e = put_secret_body(body, k, pass, false, s2k);
+    if e != OK { return e; }
+    put_old_packet(bin, if k.subkey { TAG_SECRET_SUBKEY } else { TAG_SECRET_KEY }, body);
+    return OK;
+}
+
 // A primary's packets as they were read, secret key packets made public
 // ones; appended to out, armored if asked.
 fn export_public(kr: const Keyring&, primary: i64, out: u8[>..]&, armored: bool = false) -> i64 {
+    if !is_primary(kr, primary) { return ERR_NO_KEY; }
     var bin: u8[>..] = [];
-    var ki = primary;
-    for r in kr.recs {
-        if r.key != primary { continue; }
-        if r.tag == TAG_SECRET_KEY || r.tag == TAG_PUBLIC_KEY || r.tag == TAG_SECRET_SUBKEY || r.tag == TAG_PUBLIC_SUBKEY {
-            // The key packets of a primary are in kr.keys in the same order.
-            while ki < kr.keys.len && kr.keys[ki].primary != primary { ki++; }
-            if ki >= kr.keys.len { return ERR_KEY; }
-            let k = kr.keys[ki];
-            put_old_packet(bin, if k.subkey { TAG_PUBLIC_SUBKEY } else { TAG_PUBLIC_KEY }, k.body);
-            ki++;
-            continue;
-        }
-        bin.append(kr.raw[r.start..r.end]);
-    }
-    if bin.len == 0 { return ERR_NO_KEY; }
+    let e = export_packets(kr, primary, bin, false, "", 0);
+    if e != OK { return e; }
     if armored { armor(out, ARMOR_PUBLIC_KEY, bin); } else { out.append(bin); }
     return OK;
 }
@@ -387,28 +554,11 @@ fn export_public(kr: const Keyring&, primary: i64, out: u8[>..]&, armored: bool 
 // locked. ERR_KEY if it has no secret here.
 fn export_secret(kr: const Keyring&, primary: i64, out: u8[>..]&, armored: bool = false, pass: const u8[:] = "",
                  s2k: i64 = 255) -> i64 {
+    if !is_primary(kr, primary) { return ERR_NO_KEY; }
     if !kr.keys[primary].has_secret { return ERR_KEY; }
     var bin: u8[>..] = [];
-    var ki = primary;
-    for r in kr.recs {
-        if r.key != primary { continue; }
-        if r.tag == TAG_SECRET_KEY || r.tag == TAG_PUBLIC_KEY || r.tag == TAG_SECRET_SUBKEY || r.tag == TAG_PUBLIC_SUBKEY {
-            while ki < kr.keys.len && kr.keys[ki].primary != primary { ki++; }
-            if ki >= kr.keys.len { return ERR_KEY; }
-            let k = kr.keys[ki];
-            ki++;
-            if !k.has_secret {
-                put_old_packet(bin, if k.subkey { TAG_PUBLIC_SUBKEY } else { TAG_PUBLIC_KEY }, k.body);
-                continue;
-            }
-            var body: u8[>..] = [];
-            let e = put_secret_body(body, k, pass, false, s2k);
-            if e != OK { return e; }
-            put_old_packet(bin, if k.subkey { TAG_SECRET_SUBKEY } else { TAG_SECRET_KEY }, body);
-            continue;
-        }
-        bin.append(kr.raw[r.start..r.end]);
-    }
+    let e = export_packets(kr, primary, bin, true, pass, s2k);
+    if e != OK { return e; }
     if armored { armor(out, ARMOR_PRIVATE_KEY, bin); } else { out.append(bin); }
     return OK;
 }

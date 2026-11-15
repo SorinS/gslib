@@ -128,7 +128,7 @@ fn wrap_example() {
     tv::check_hex("4.2.4.4 signing key", ntlm::sign_key(rsk, true), "4788dc861b4782f35d43fd98fe1a2d39");
     var s = ntlm::new_session(flags, rsk, true);
     var w: u8[>..] = [];
-    let e = ntlm::wrap(s, utf16("Plaintext"), w);
+    let e = ntlm::wrap(s, utf16("Plaintext"), true, w);
     tv::check_err("wrap", e, ntlm::OK);
     tv::check_hex("4.2.4.4 signature", w[..16], "010000007fb38ec5c55d497600000000");
     tv::check_hex("4.2.4.4 sealed data", w[16..], "54e50165bf1936dc996020c1811b0f06fb5f");

@@ -106,12 +106,14 @@ fn signing(kr: const openpgp::Keyring&, ed: i64, rsa: i64) {
         let at = find(inl, "Round trip.");
         inl[at] = 'r';
         var mx = openpgp::Message { .. };
-        tv::check_int(str(who, " changed literal"), openpgp::verify(kr, inl, mx, openpgp::ReadOptions { .. }),
+        let label_109 = str(who, " changed literal");
+        tv::check_int(label_109, openpgp::verify(kr, inl, mx, openpgp::ReadOptions { .. }),
                       openpgp::ERR_BAD_SIGNATURE);
         var md = openpgp::Message { .. };
         var det2: u8[>..] = [];
         let e2 = openpgp::sign_detached(kr, signer, MSG, det2, wb);
-        tv::check_int(str(who, " detached other data"), openpgp::verify_detached(kr, "Round trip!", det2, md),
+        let label_115 = str(who, " detached other data");
+        tv::check_int(label_115, openpgp::verify_detached(kr, "Round trip!", det2, md),
                       openpgp::ERR_BAD_SIGNATURE);
     }
 }
@@ -159,7 +161,8 @@ fn encryption(kr: const openpgp::Keyring&, ed: i64, rsa: i64) {
         var bad = copy(bin);
         bad[off] ^= 0x01;
         var m = openpgp::Message { .. };
-        tv::check_int(str("changed ciphertext at ", off), openpgp::read_message(kr, bad, m, openpgp::ReadOptions { .. }),
+        let label_162 = str("changed ciphertext at ", off);
+        tv::check_int(label_162, openpgp::read_message(kr, bad, m, openpgp::ReadOptions { .. }),
                       openpgp::ERR_INTEGRITY);
         tv::check(str("nothing returned ", off), m.data.len == 0);
     }
@@ -263,6 +266,152 @@ fn generated() {
     tv::check_int("changed key refused", openpgp::verify_detached(kc, "signed", out, mc), openpgp::ERR_KEY);
 }
 
+// What the review found, kept found.
+fn review() {
+    var kr = openpgp::Keyring { .. };
+    tv::check_int("review key", openpgp::generate_key(kr, "Gen <gen@example.com>", T0 - 1000000), openpgp::OK);
+    var pub: u8[>..] = [];
+    let ep = openpgp::export_public(kr, 0, pub, false);
+    var sig: u8[>..] = [];
+    let w = opts(openpgp::COMP_NONE, false);
+    let es = openpgp::sign_detached(kr, 0, "doc", sig, w);
+    // A key revocation certificate (as gpg --gen-revoke makes one).
+    var hd: u8[>..] = [];
+    openpgp::put_key_hash(hd, kr.keys[0]);
+    var rev: u8[>..] = [];
+    let er = openpgp::make_signature(kr.keys[0], openpgp::SigParams { sigtype: openpgp::SIG_KEY_REVOCATION, created: T0 + 10, .. }, hd, rev);
+    tv::check("review setup", ep == openpgp::OK && es == openpgp::OK && er == openpgp::OK);
+
+    // The key again with its revocation merges into the copy there.
+    var ka = openpgp::Keyring { .. };
+    let ea = openpgp::add_keys(ka, pub);
+    var m = openpgp::Message { .. };
+    tv::check_int("verify before revocation", openpgp::verify_detached(ka, "doc", sig, m), openpgp::OK);
+    // The revocation goes after the key packet, as gpg exports it.
+    let pk0, epk = openpgp::next_packet(pub, 0);
+    var again: u8[>..] = [];
+    again.append(pub[..pk0.end]);
+    again.append(rev);
+    again.append(pub[pk0.end..]);
+    tv::check_int("re-import revoked", openpgp::add_keys(ka, again), openpgp::OK);
+    tv::check("merged, revoked", ka.keys.len == 2 && ka.uids.len == 1 && ka.keys[0].revoked);
+    tv::check_int("verify after revocation", openpgp::verify_detached(ka, "doc", sig, m), openpgp::ERR_REVOKED);
+    var out: u8[>..] = [];
+    let ex = openpgp::export_public(ka, 0, out, false);
+    var kb = openpgp::Keyring { .. };
+    tv::check("revocation exported", ex == openpgp::OK && openpgp::add_keys(kb, out) == openpgp::OK && kb.keys[0].revoked);
+    tv::check("exported once", out.len == pub.len + rev.len);
+    tv::check("exported as gpg orders it", out[..pk0.end + rev.len] == again[..pk0.end + rev.len]);
+    // A revocation certificate on its own.
+    var kc = openpgp::Keyring { .. };
+    let ec = openpgp::add_keys(kc, pub);
+    tv::check_int("revocation alone", openpgp::add_keys(kc, rev), openpgp::OK);
+    tv::check_int("verify, revoked alone", openpgp::verify_detached(kc, "doc", sig, m), openpgp::ERR_REVOKED);
+    var kd = openpgp::Keyring { .. };
+    tv::check_int("revocation, no key", openpgp::add_keys(kd, rev), openpgp::ERR_NO_KEY);
+    // The secret merges into the public copy.
+    var sec: u8[>..] = [];
+    let ex2 = openpgp::export_secret(kr, 0, sec, false);
+    var ke = openpgp::Keyring { .. };
+    let ee1 = openpgp::add_keys(ke, pub);
+    let ee2 = openpgp::add_keys(ke, sec);
+    tv::check("secret merged", ex2 == openpgp::OK && ee2 == openpgp::OK && ke.keys.len == 2 && ke.keys[0].has_secret
+              && ke.keys[1].has_secret && !ke.keys[1].locked);
+
+    // A Message used again holds nothing of the one before.
+    var enc: u8[>..] = [];
+    let ee = openpgp::encrypt(kr, [0], "", "not signed", enc, w);
+    var signed: u8[>..] = [];
+    let es2 = openpgp::sign(kr, 0, "signed", signed, w);
+    var mm = openpgp::Message { .. };
+    tv::check_int("reuse: signed", openpgp::verify(kr, signed, mm, openpgp::ReadOptions { .. }), openpgp::OK);
+    tv::check_int("reuse: not signed", openpgp::verify(kr, enc, mm, openpgp::ReadOptions { .. }), openpgp::ERR_NO_SIGNATURE);
+    tv::check("reuse: fresh", mm.sigs.len == 0 && mm.data[..] == "not signed" && mm.encrypted);
+    tv::check_int("reuse: detached", openpgp::verify_detached(kr, "doc", sig, mm), openpgp::OK);
+    tv::check("reuse: detached fresh", mm.sigs.len == 1 && mm.data[..] == "doc" && !mm.encrypted);
+
+    // A signature's own expiry counts by the clock when now is 0.
+    let idx, eidx = openpgp::resolve_signer(kr, 0);
+    var xs: u8[>..] = [];
+    let ex3 = openpgp::make_signature(kr.keys[idx], openpgp::SigParams { created: T0 - 900000, expires: 60, .. }, "data", xs);
+    tv::check_int("expired signature", openpgp::verify_detached(kr, "data", xs, m), openpgp::ERR_EXPIRED);
+    tv::check_int("expired, before", openpgp::verify_detached(kr, "data", xs, m, T0 - 900000 + 30), openpgp::OK);
+
+    // find_key: user IDs without a self-signature do not count; an email
+    // address is matched whole.
+    var bin: u8[>..] = [];
+    bin.append(pub[..pk0.end]);
+    openpgp::put_packet(bin, openpgp::TAG_USER_ID, "Bob <bob@example.com>");
+    bin.append(pub[pk0.end..]);
+    var kf = openpgp::Keyring { .. };
+    let ef = openpgp::add_keys(kf, bin);
+    tv::check("unsigned user ID read", ef == openpgp::OK && kf.uids.len == 2 && !kf.uids[0].valid && kf.uids[1].valid);
+    tv::check_int("unsigned user ID not found", openpgp::find_key(kf, "bob@example.com"), -1);
+    tv::check_int("email found", openpgp::find_key(kf, "GEN@example.com"), 0);
+    tv::check_int("email part not found", openpgp::find_key(kf, "en@example.com"), -1);
+    tv::check_int("name found", openpgp::find_key(kf, "gen <"), 0);
+
+    // Session key packets: stopped at the first that opens the data, and
+    // no more than MAX_KEY_TRIES key operations for one message.
+    var plain: u8[>..] = [];
+    let ep2 = openpgp::encrypt(kr, [0], "", "hidden", plain, w);
+    let p0, e0 = openpgp::next_packet(plain, 0);
+    for i in 1..9 { plain[p0.body + i] = 0; }      // a wildcard key ID
+    var junk: u8[>..] = [];
+    junk.push(3);
+    for i in 8 { junk.push(0); }
+    junk.push(kr.keys[1].algo as! u8);
+    junk.append("\x00\x08\x01\x01");
+    var many: u8[>..] = [];
+    many.append(plain[..p0.end]);
+    for i in 20 { openpgp::put_packet(many, openpgp::TAG_PKESK, junk); }
+    many.append(plain[p0.end..]);
+    var mw = openpgp::Message { .. };
+    tv::check_int("wildcard first", openpgp::read_message(kr, many, mw, openpgp::ReadOptions { .. }), openpgp::OK);
+    tv::check("wildcard data", mw.data[..] == "hidden");
+    var flood: u8[>..] = [];
+    for i in 20 { openpgp::put_packet(flood, openpgp::TAG_PKESK, junk); }
+    flood.append(plain);
+    tv::check_int("wildcards capped", openpgp::read_message(kr, flood, mw, openpgp::ReadOptions { .. }), openpgp::ERR_LIMIT);
+    // RFC 9580 §5.1: a v3 PKESK does not open SEIPD v2.
+    var v2: u8[>..] = [];
+    v2.append(plain);
+    let p1, e1 = openpgp::next_packet(v2, p0.end);
+    v2[p1.body] = 2;
+    tv::check_int("v3 PKESK, SEIPD v2", openpgp::read_message(kr, v2, mw, openpgp::ReadOptions { .. }), openpgp::ERR_MALFORMED);
+
+    // A v6 signature by SHA-1 is refused.
+    var b6: u8[>..] = [];
+    b6.append("\x06\x00\x1b\x02\x00\x00\x00\x06\x05\x02\x6a\xfd\x5b\x00\x00\x00\x00\x00\x12\x34\x00");
+    for i in 64 { b6.push(0); }
+    let s6, e6 = openpgp::parse_signature(b6);
+    tv::check_int("v6 SHA-1 signature", e6, openpgp::ERR_UNSUPPORTED);
+
+    // Argon2: no more work than the RFC's first choice.
+    var a2: u8[>..] = [];
+    a2.push(4);
+    for i in 16 { a2.push(7); }
+    a2.append("\x01\x04\x15");
+    let sa, na, ea2 = openpgp::read_s2k(a2, 0);
+    a2[17] = 3;
+    a2[19] = 16;
+    let sb, nb, eb = openpgp::read_s2k(a2, 0);
+    a2[17] = 64;
+    a2[19] = 21;
+    let sc, nc, ecc = openpgp::read_s2k(a2, 0);
+    a2[17] = 1;
+    a2[18] = 64;
+    let sd, nd, ed = openpgp::read_s2k(a2, 0);
+    tv::check("argon2 limits", ea2 == openpgp::OK && eb == openpgp::OK && ecc == openpgp::ERR_LIMIT && ed != openpgp::OK);
+
+    // Cleartext: a CR within a line, and a last empty line, read as signed.
+    var ct: u8[>..] = [];
+    let ecs = openpgp::sign_cleartext(kr, 0, "a\rb  \nc\n\n", ct, w);
+    var mc = openpgp::Message { .. };
+    tv::check_int("cleartext CR", openpgp::verify_cleartext(kr, ct, mc), openpgp::OK);
+    tv::check("cleartext CR text", ecs == openpgp::OK && mc.data[..] == "a\rb\nc\n\n");
+}
+
 fn main() {
     var kr = openpgp::Keyring { .. };
     let e1 = openpgp::add_keys(kr, vec("ed.sec"));
@@ -274,5 +423,6 @@ fn main() {
     signing(kr, ed, rsa);
     encryption(kr, ed, rsa);
     generated();
+    review();
     tv::done("roundtrip");
 }

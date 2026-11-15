@@ -1,0 +1,9 @@
+version: 1
+
+# a comment
+# more
+dn: cn=a,dc=x
+objectClass: top
+cn: a
+objectclass: person
+jpegPhoto:< file:///photo

@@ -310,8 +310,76 @@ fn endless_header_line() {
     }
 }
 
+// Temporary files: new (O_EXCL), mode 0600; a name that is there is not
+// written through.
+fn private_temp_files() {
+    var dir: u8[>..] = [];
+    if !::env("TMPDIR", dir) || dir.len == 0 { dir.clear(); dir.append("/tmp"); }
+    if dir[dir.len - 1] != '/' { dir.push('/'); }
+    var rnd: u8[6] = [0; 6];
+    bignum::random_bytes(rnd);
+    dir.append("mimegoose-priv-");
+    for b in rnd { dir.push(mime::LOWERHEX[b >> 4]); dir.push(mime::LOWERHEX[b & 15]); }
+    tv::check("temp dir", ::make_dir(dir));
+    let p = str(dir, "/x");
+    tv::check_int("create", mime::mime_create_private(p, "secret"), 0);
+    if !mime::is_windows() { tv::check_int("  mode 0600", mime::mime_file_mode(p), 0x180); }   // 0600
+    tv::check_int("  again: refused, there already", mime::mime_create_private(p, "other"), 1);
+    var c: u8[>..] = [];
+    ::read_file(p, c);
+    tv::check_eq("  not written through", c, "secret");
+    ::delete_file(p);
+    // A form's spilled file.
+    var w = multipart::new_writer();
+    var b: u8[>..] = [];
+    multipart::create_form_file(w, b, "f", "f.bin");
+    b.append("0123456789");
+    multipart::close(w, b);
+    var f = multipart::Form { .. };
+    f.tmp_dir.append(dir);
+    var r = multipart::Reader { .. };
+    multipart::init(r, multipart::boundary(w));
+    multipart::feed(r, b);
+    multipart::finish(r);
+    multipart::form_init(f, 0);
+    tv::check_int("spilled form", multipart::read_form(r, f), 0);
+    let k = multipart::form_file(f, "f");
+    tv::check("  on disk", k >= 0 && multipart::file_on_disk(f, k));
+    if k >= 0 && !mime::is_windows() { tv::check_int("  mode 0600", mime::mime_file_mode(multipart::file_tmpfile(f, k)), 0x180); }   // 0600
+    multipart::remove_all(f);
+    ::delete_dir(dir);
+}
+
+// File names: no directories, no backslash paths, no NUL, never . or ..;
+// a part with a filename parameter is a file whatever its name becomes.
+fn file_names() {
+    // filename*= percent-encoded: / and \ are not token characters.
+    for row in [["..%2F..%2Fetc%2Fpasswd", "passwd"], ["..", ""], [".", ""], ["a%2F..", ""], ["C%3A%5CUsers%5Cx%5Ca.txt", "a.txt"],
+                ["..%5C..%5Cb", "b"], ["a%5C", ""], ["a%00b", "ab"], [".%00.", ""], ["%2F%2F%2F", ""], ["ok.txt", "ok.txt"]] {
+        var mr = multipart::Reader { .. };
+        multipart::init(mr, "b");
+        multipart::feed(mr, str("--b\r\nContent-Disposition: form-data; name=\"f\"; filename*=utf-8''", row[0], "\r\n\r\nx\r\n--b--\r\n"));
+        multipart::finish(mr);
+        { let ev = multipart::next_part(mr); tv::check_int(str("file name part ", row[0]), ev, multipart::EV_PART); }
+        tv::check_eq(str("file_name ", row[0]), multipart::file_name(mr), row[1]);
+        var f = multipart::Form { .. };
+        var r2 = multipart::Reader { .. };
+        multipart::init(r2, "b");
+        multipart::feed(r2, str("--b\r\nContent-Disposition: form-data; name=\"f\"; filename*=utf-8''", row[0], "\r\n\r\nx\r\n--b--\r\n"));
+        multipart::finish(r2);
+        multipart::form_init(f, 1 << 20);
+        let rc = multipart::read_form(r2, f);
+        tv::check_int(str("  read_form ", row[0]), rc, 0);
+        let k = multipart::form_file(f, "f");
+        tv::check(str("  still a file ", row[0]), k >= 0);
+        if k >= 0 { tv::check_eq(str("  its name ", row[0]), multipart::file_filename(f, k), row[1]); }
+    }
+}
+
 fn main() {
     messages();
+    private_temp_files();
+    file_names();
     no_read_after_eof();
     non_file_max_memory();
     metadata_too_large();

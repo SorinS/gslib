@@ -18,7 +18,9 @@
 // connection is closed and while StartTLS waits for its response; a
 // successful StartTLS sets c.tls_ready, after which the caller speaks
 // TLS on the transport (tlsgoose does) and goes on feeding the plaintext
-// here. Responses to requests no longer outstanding (abandoned ones) are
+// here; whatever came in the clear after that response is dropped, not
+// read as LDAP (a man in the middle could have put it there: the
+// STARTTLS command injection of CVE-2011-0411). Responses to requests no longer outstanding (abandoned ones) are
 // dropped, as go-ldap drops them; a response of the wrong kind for its
 // request, or a message that is not well formed, fails the connection.
 // A Notice of Disconnection (§4.4.1) is handed on and closes it.
@@ -233,7 +235,8 @@ fn feed(c: Conn&, input: const u8[:], msgs: u8[>..]&) -> i64 {
     c.inbuf.append(input);
     var pos = 0;
     var code: i64 = 0;
-    while pos < c.inbuf.len {
+    var switched = false;
+    while pos < c.inbuf.len && !switched {
         let n = frame_len(c.inbuf[pos..], c.max_message);
         if n == 0 { break; }
         if n < 0 { code = fail_conn(c, RESULT_DECODING_ERROR, "ldap: not an LDAP message"); break; }
@@ -269,6 +272,7 @@ fn feed(c: Conn&, input: const u8[:], msgs: u8[>..]&) -> i64 {
                         c.state = ST_OPEN;
                         c.starttls_id = 0;
                         c.tls_ready = result_code(c.inbuf, m) == RESULT_SUCCESS;
+                        switched = c.tls_ready;
                     }
                 }
             }
@@ -276,6 +280,9 @@ fn feed(c: Conn&, input: const u8[:], msgs: u8[>..]&) -> i64 {
         if deliver { msgs.append(c.inbuf[pos..pos + n]); }
         pos += n;
     }
+    // Past a successful StartTLS response, the rest arrived in the clear:
+    // dropped.
+    if switched { pos = c.inbuf.len; }
     if pos > 0 {
         if pos >= c.inbuf.len {
             c.inbuf.clear();

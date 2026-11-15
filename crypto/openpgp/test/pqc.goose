@@ -167,7 +167,8 @@ fn gpg() {
         bad.append(bin);
         bad[at] ^= 0x10;
         var mb = openpgp::Message { .. };
-        tv::check(str("changed PKESK at ", at), openpgp::read_message(ks, bad, mb, openpgp::ReadOptions { .. }) != openpgp::OK);
+        let label_170 = str("changed PKESK at ", at);
+        tv::check(label_170, openpgp::read_message(ks, bad, mb, openpgp::ReadOptions { .. }) != openpgp::OK);
     }
 }
 
@@ -284,7 +285,8 @@ fn rfc9980() {
         bad.append(sig);
         bad[bad.len - back] ^= 1;
         var mb = openpgp::Message { .. };
-        tv::check_int(str("A.3.4 changed ", back, " from the end"), openpgp::verify_detached(c3, "Testing\n", bad, mb),
+        let label_287 = str("A.3.4 changed ", back, " from the end");
+        tv::check_int(label_287, openpgp::verify_detached(c3, "Testing\n", bad, mb),
                       openpgp::ERR_BAD_SIGNATURE);
     }
 
@@ -333,7 +335,8 @@ fn generated() {
         var kp = openpgp::Keyring { .. };
         tv::check_int(str(what, ": public read"), openpgp::add_keys(kp, pub), openpgp::OK);
         var mv = openpgp::Message { .. };
-        tv::check_int(str(what, ": verify"), openpgp::verify_detached(kp, msg, sig, mv), openpgp::OK);
+        let label_336 = str(what, ": verify");
+        tv::check_int(label_336, openpgp::verify_detached(kp, msg, sig, mv), openpgp::OK);
         var enc2: u8[>..] = [];
         let r6 = openpgp::encrypt(kp, [0], "", msg, enc2, w);
         tv::check_int(str(what, ": encrypt to public"), r6, openpgp::OK);
@@ -350,7 +353,8 @@ fn generated() {
         let eo = if kind == 0 { openpgp::generate_pqc_key(other, "Other <o@example.com>") }
                  else { openpgp::generate_rfc9980_key(other, "Other <o@example.com>") };
         var mo = openpgp::Message { .. };
-        tv::check(str(what, ": other key"), openpgp::read_message(other, enc2, mo, openpgp::ReadOptions { .. }) != openpgp::OK);
+        let label_356 = str(what, ": other key");
+        tv::check(label_356, openpgp::read_message(other, enc2, mo, openpgp::ReadOptions { .. }) != openpgp::OK);
     }
 }
 

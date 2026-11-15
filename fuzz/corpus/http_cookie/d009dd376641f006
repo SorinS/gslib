@@ -1,0 +1,6 @@
+a=1; domain=.a.b.c.d.com
+b=2; domain=.b.c.d.com
+c=3; domain=.c.d.com
+d=4; domain=.d.com
+X=bcd; domain=.b.c.d.com
+X=cd; domain=.c.d.com

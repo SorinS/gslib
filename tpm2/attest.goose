@@ -299,8 +299,10 @@ struct Replayed { pcrs: u8[..64][24] = [[]; 24], events: i64 = 0 }
 // bank alg: each event but EV_NO_ACTION extends its PCR by its digest of
 // alg. PCRs start at zero, PCR 0 at its locality when a StartupLocality
 // event says so. ERR_EVENTLOG for a log that is not crypto-agile, is
-// truncated, names a PCR above 23 or a hash the header did not list, or
-// has an event without a digest of alg.
+// truncated, names a PCR above 23 or a hash the header did not list, has
+// an event without a digest of alg, or has a StartupLocality event after
+// PCR 0's first extend or a second one (which would let events put before
+// it be replaced by anything).
 fn replay_event_log(log: const u8[:], alg: u16) -> Replayed, i64 {
     var out = Replayed { .. };
     let hl = digest_size(alg);
@@ -324,6 +326,7 @@ fn replay_event_log(log: const u8[:], alg: u16) -> Replayed, i64 {
     let vendor = spec[28 + 4 * nalg] as i64;
     if 28 + 4 * nalg + 1 + vendor != spec.len { return out, ERR_EVENTLOG; }
     var at = 32 + size0;
+    var pcr0_set = false;   // PCR 0 extended, or its locality set
     while at < log.len {
         if log.len - at < 12 { return out, ERR_EVENTLOG; }
         let pcr = le32(log, at) as i64;
@@ -356,6 +359,8 @@ fn replay_event_log(log: const u8[:], alg: u16) -> Replayed, i64 {
         at += esize;
         if etype == EV_NO_ACTION {
             if pcr == 0 && esize == 17 && event[..16] == "StartupLocality\x00" {
+                if pcr0_set { return out, ERR_EVENTLOG; }
+                pcr0_set = true;
                 out.pcrs[0].clear();
                 out.pcrs[0].append(zeros(hl - 1));
                 out.pcrs[0].push(event[16]);
@@ -363,6 +368,7 @@ fn replay_event_log(log: const u8[:], alg: u16) -> Replayed, i64 {
             continue;
         }
         if !found { return out, ERR_EVENTLOG; }
+        if pcr == 0 { pcr0_set = true; }
         let v = extend_value(alg, out.pcrs[pcr], digest);
         out.pcrs[pcr].clear();
         out.pcrs[pcr].append(v);

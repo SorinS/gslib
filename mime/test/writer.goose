@@ -127,8 +127,27 @@ fn file_disposition() {
     };
 }
 
+// A header the writer would split is refused, and nothing written: CR,
+// LF or NUL in a value; a key that is empty, has ':', a space or a
+// control character.
+fn header_injection() {
+    var w = multipart::new_writer();
+    var b: u8[>..] = [];
+    for v in ["a\r\nX-Evil: 1", "a\nb", "a\rb", "a\x00b"] {
+        tv::check_int(str("value ", v), multipart::create_part(w, b, [mime::KV { key: "X-A", value: v }]), mime::ERR_HEADER_FIELD);
+    }
+    for k in ["", "X:A", "X A", "X\r\nA", "X\x00"] {
+        tv::check_int(str("key ", k), multipart::create_part(w, b, [mime::KV { key: k, value: "v" }]), mime::ERR_HEADER_FIELD);
+    }
+    tv::check_int("field name with NUL", multipart::write_field(w, b, "a\x00", "v"), mime::ERR_HEADER_FIELD);
+    tv::check_int("  nothing written", b.len, 0);
+    tv::check_int("a file name with CR LF is escaped", multipart::create_form_file(w, b, "f", "a\r\nb"), 0);
+    tv::check("  as %0D%0A", find(b, "a%0D%0Ab") >= 0);
+}
+
 fn main() {
     writer();
+    header_injection();
     random_boundary();
     set_boundary();
     sorted_header();

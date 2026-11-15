@@ -181,6 +181,19 @@ fn go_quirks() {
         check(str("dn refused, go-ldap takes it: ", s), !okx);
     }
     check("dn error text", ldap::dn_error("cn=a,dc") == "DN ended with incomplete type, value pair");
+    // Types are a descr or a numericoid with no escapes (RFC 4514 §3): an
+    // escaped "=" or "," in one would be written back as another DN.
+    let bad_types = ["ou\\=x\\,cn=y", "\\63n=x", "c n=x", "1cn=x", "-a=x", "1..2=x", "1.2.=x", "01.2=x", "cn_x=y", ".1=x", "1=x"];
+    for s in bad_types {
+        let x, okx = ldap::parse_dn(s);
+        check(str("attribute type refused, go-ldap takes it: ", s), !okx);
+    }
+    check("type error text", ldap::dn_error("c n=x") == "invalid attribute type");
+    let good_types = ["cn-2=x", "CN=x", "0.9.2342.19200300.100.1.1=x", " cn = x ", "a=x"];
+    for s in good_types {
+        let x, okx = ldap::parse_dn(s);
+        check(str("attribute type taken: ", s), okx);
+    }
     check("escape dn value", ldap::escape_dn_value(" a#b,c\x01 ") == "\\ a\\#b\\,c\\01\\ ");
     // Filters nested past the limit.
     var deep: u8[>..] = [];

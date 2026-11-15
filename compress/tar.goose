@@ -1207,12 +1207,15 @@ fn tar_each<F>(data: const u8[:], limit: i64 = 1 << 30, check_paths: bool = fals
             content.clear();
             let want = tar_remaining(r);
             if want > limit { return ERR_LIMIT; }
-            content.resize(want, 0);
+            // The buffer grows as the data comes, not to the size the
+            // header declares, which costs nothing to write.
             var got = 0;
             while got < want {
+                content.resize(got + min(want - got, 1 << 16), 0);
                 let u, m, s = tar_read(r, data[at..], content[got..]);
                 at += u;
                 got += m;
+                content.resize(got);
                 if s < 0 { return s; }
                 if u == 0 && m == 0 { return tar_finish(r); }
             }

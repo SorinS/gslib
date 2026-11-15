@@ -72,6 +72,7 @@ struct Options {
     audience:    u8[..512]  = [],
     dpop_key:    u8[..512]  = [],
     par:         bool       = false,
+    allow_http:  bool       = false,
     port:        i32        = 0,
     timeout:     i64        = 300,
     save:        u8[..512]  = [],
@@ -431,6 +432,7 @@ fn configure(c: oauth::Client&, hc: http::Client&, o: const Options&) -> i32 {
     } else {
         return fail(str("no such --auth: ", mode));
     }
+    c.allow_http = o.allow_http;
     if o.dpop_key.len > 0 {
         let k, ok = dpop_key(o.dpop_key);
         if !ok || oauth::set_dpop_key(c, k) != oauth::OK { return fail(str("cannot read or write the DPoP key ", o.dpop_key)); }
@@ -448,6 +450,7 @@ fn run() -> i32 {
         let has_value = i + 1 < a.len;
         if s == "--par" { o.par = true; }
         else if s == "--refresh" { o.use_refresh = true; }
+        else if s == "--allow-http" { o.allow_http = true; }
         else if s.len > 0 && s[0] != '-' {
             if command.len > 0 || s.len > 32 { return usage(); }
             command.append(s);

@@ -39,14 +39,19 @@ let MAX_BASE64_LEN: i64 = 45;          // base64.StdEncoding.DecodedLen(63)
 
 fn is_utf8_charset(charset: const u8[:]) -> bool { eq_fold(charset, "utf-8") }
 
-// WordEncoder.Encode.
-fn encode_word(out: u8[>..]&, enc: u8, charset: const u8[:], s: const u8[:]) {
-    if !needs_encoding(s) { out.append(s); return; }
+// WordEncoder.Encode. False, and nothing written, for a charset that is
+// not a token (Go writes any; a '?' or a line break in it would end the
+// word or the header).
+fn encode_word(out: u8[>..]&, enc: u8, charset: const u8[:], s: const u8[:]) -> bool {
+    if !is_token(charset) { return false; }
+    if !needs_encoding(s) { out.append(s); return true; }
     open_word(out, enc, charset);
     if enc == B_ENCODING { b_encode(out, enc, charset, s); } else { q_encode(out, enc, charset, s); }
     out.append("?=");
+    return true;
 }
 
+// The same, "" for a charset that is not a token.
 fn encode_word(enc: u8, charset: const u8[:], s: const u8[:]) -> u8[>..] {
     var out: u8[>..] = [];
     encode_word(out, enc, charset, s);

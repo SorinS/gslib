@@ -812,7 +812,8 @@ fn jar_load_netscape(j: Jar&, p: const Psl&, text: const u8[:], now_ms: i64) -> 
                     if parts[3] == "TRUE" { flags |= CK_SECURE; }
                     if http_only { flags |= CK_HTTP_ONLY; }
                     var expires = END_OF_TIME_MS;
-                    if exp_s > 0 { flags |= CK_PERSISTENT; expires = exp_s * 1000; }
+                    // No later than END_OF_TIME_MS: a huge expiry must not overflow.
+                    if exp_s > 0 { flags |= CK_PERSISTENT; expires = if exp_s >= END_OF_TIME_MS / 1000 { END_OF_TIME_MS } else { exp_s * 1000 }; }
                     if exp_s <= 0 || expires > now_ms {
                         var low: u8[>..] = [];
                         for ch in domain { low.push(lower(ch)); }

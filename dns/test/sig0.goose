@@ -1,7 +1,8 @@
 // SIG(0) against miekg/dns (the sig0 rows of vectors/tsig.txt, from
 // scripts/oracle): miekg's messages signed with RSASHA256 and
 // ECDSAP256SHA256 KEYs verified, refused when expired or changed, and
-// the same messages signed here with miekg's keys verified.
+// the same messages signed here with miekg's keys verified. A SIG whose
+// signer runs past its rdata is refused.
 import std;
 import gslib from "../..";
 import gslib.dns;
@@ -49,7 +50,30 @@ fn vectors_dir() -> u8[>..] {
     return if a.len > 1 { str(a[1]) } else { str("vectors") };
 }
 
+// A SIG whose signer's name runs past its rdata, into what follows.
+fn signer_past_rdata() {
+    var key_rd: u8[>..] = [];
+    dns::put16(key_rd, 0x0100); key_rd.push(3); key_rd.push(13);
+    for i in 64 { key_rd.push(i as! u8); }
+    let now: i64 = 1800000000;
+    var w: u8[>..] = [];
+    dns::put16(w, 1); dns::put16(w, 0x2800); dns::put16(w, 0); dns::put16(w, 0); dns::put16(w, 0); dns::put16(w, 1);
+    w.push(0);
+    dns::put16(w, dns::TYPE_SIG); dns::put16(w, 255); dns::put32(w, 0);
+    dns::put16(w, 20);
+    dns::put16(w, 0); w.push(13); w.push(0); dns::put32(w, 0);
+    dns::put32(w, (now + 3600) as! u32); dns::put32(w, (now - 3600) as! u32);
+    dns::put16(w, dns::key_tag(key_rd));
+    w.push(2); w.push('a');                    // the rdata ends here
+    w.push('b'); w.push(0);
+    let owner, oe = dns::name_parse("ab.", []);
+    tv::check_int("SIG(0) signer past the rdata", dns::sig0_verify(w, owner, key_rd, now), dns::ERR_RDATA);
+    w.resize(w.len - 3, 0);                    // and the record past the message
+    tv::check_int("SIG(0) rdata past the message", dns::sig0_verify(w, owner, key_rd, now), dns::ERR_RDATA);
+}
+
 fn main() {
     tv::each_row(str(vectors_dir(), "/tsig.txt")) { r => if r.next() == "sig0" { check_sig0(r); } };
+    signer_past_rdata();
     tv::done("sig0");
 }

@@ -248,6 +248,19 @@ fn main() {
     var out10: u8[>..] = [];
     tls::client_start(c10, other_name, out10);
     check("other name: not offered", !c10.psk_offered);
+    // The server resumes a session only for the name it was made for: one
+    // offered under another name (a client not verifying, its session
+    // relabelled) gets a full handshake.
+    var renamed = client_cfg();
+    renamed.verify = false;
+    renamed.session = sess;
+    renamed.session.server_name.clear();
+    renamed.session.server_name.append("other.example");
+    renamed.server_name.clear();
+    renamed.server_name.append("other.example");
+    check("relabelled session: offered", offered(renamed));
+    let ok10, r10, s10 = connect("session for another name", renamed, sc);
+    check("another name: full handshake", ok10 && !r10);
     // The server's own clock: a ticket older than its lifetime is refused.
     var sc_old = server_cfg("p256");
     sc_old.ticket_key = sc.ticket_key;

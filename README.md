@@ -22,7 +22,7 @@ later.
 | `krb5` | Kerberos V5 (RFC 4120) as go-krb5 has it: TGTs and service tickets (password, keytab, cross-realm, referrals, FAST armoring), the acceptor, GSS-API (RFC 4121), SPNEGO and HTTP Negotiate, Microsoft's PAC, keytabs and credential caches; goose-krb5 (kinit, kvno, klist) and goose-gss | [README](krb5/README.md) |
 | `jwx` | JOSE, as Go's lestrrat-go/jwx: JSON Web Keys (and key sets, thumbprints, PEM), Signatures (compact and JSON, every RFC 7518 algorithm, EdDSA on Ed25519 and Ed448 and post-quantum ML-DSA (RFC 9964)), Encryption (every key management and content algorithm, ECDH-ES on X25519 and X448 too, zip, several recipients) and Tokens (claims, validation, nested) | [README](jwx/README.md) |
 | `pkcs11` | PKCS#11 (Cryptoki), as Go's miekg/pkcs11: modules (HSMs, tokens, SoftHSM) loaded at run time, every C_* function, templates, mechanisms and their parameters, all the OASIS constants; and miekg's p11 layer (Module, Slot, Session, Object, keys) | [README](pkcs11/README.md) |
-| `dns` | The DNS, as Go's miekg/dns: messages and the 79 record types it implements, in wire form (with compression) and text, zone files (`$ORIGIN`, `$TTL`, `$INCLUDE`, `$GENERATE`), EDNS0, DNSSEC (signing, verifying, DS, NSEC3, keys), TSIG and SIG(0), dynamic updates, zone transfers, a client and a server; goose-dig and goose-dnsd | [README](dns/README.md) |
+| `dns` | The DNS, as Go's miekg/dns: messages and the 79 record types it implements, in wire form (with compression) and text, zone files (`$ORIGIN`, `$TTL`, `$INCLUDE`, `$GENERATE`), EDNS0, DNSSEC primitives (signing, verifying, DS, NSEC3, keys; no validating resolver), TSIG and SIG(0), dynamic updates, zone transfers, a client and a server; goose-dig and goose-dnsd | [README](dns/README.md) |
 | `crypto/openpgp` | OpenPGP (RFC 9580, RFC 4880 as gpg writes it): keys (Ed25519/Curve25519, Ed448/X448, RSA, ECDSA/ECDH on NIST and Brainpool curves, v6 read), protected secret keys, signatures (inline, detached, cleartext; gpg's v5 ones), encryption to keys and passphrases (SEIPD v1, gpg's OCB packet and SEIPD v2 read), compression, key generation; post-quantum ML-KEM+ECDH (gpg 2.5's Kyber keys, its default ky768_bp256 among them, and RFC 9980's) and ML-DSA-65+Ed25519 (RFC 9980); goose-pgp | [README](crypto/openpgp/README.md) |
 | `mail` | Email, as Go's go-mail for sending: messages built and written as MIME (addresses, text and HTML, attachments, inline parts), an SMTP client (STARTTLS or TLS, AUTH with PLAIN, LOGIN, CRAM-MD5, SCRAM-SHA-1/256, XOAUTH2, SMTPUTF8, DSN), a POP3 client (STLS, APOP, SASL, UIDL, TOP) and an IMAP client (IMAP4rev2 and rev1: mailboxes, FETCH with ENVELOPE and BODYSTRUCTURE, SEARCH, STORE, MOVE, APPEND, IDLE); DKIM signing and verifying (RSA, Ed25519); S/MIME (ML-DSA and ML-KEM too) and PGP/MIME signing and encryption; goose-mail | [README](mail/README.md) |
 | `acme` | ACME (RFC 8555) certificates from Let's Encrypt, an enterprise's own CA (Vault and OpenBao's PKI, step-ca, EJBCA) or a commercial CA with external account binding: accounts, orders, http-01 and dns-01, finalizing, the chain, revoking, key rollover; goose-acme, with http-01 served or from a web root, and dns-01 by RFC 2136 updates | [README](acme/README.md) |
@@ -937,3 +937,15 @@ webauthn (py_webauthn), cbor2 and cryptography in a venv
 what it needs. No browser or hardware key can be driven from here:
 webauthn/README.md says how to try `goose-webauthn serve` with your own.
 cbor's differential needs cbor2 (`CBOR_PYTHON`).
+
+The parsers of untrusted input are also fuzzed, coverage-guided: fuzz/
+holds a target for each (ASN.1, the X.509 family and CMS, DNS messages and
+zone files, CBOR and COSE keys, XML, YAML, every compressor and archive,
+MIME, HTTP/1.1, HPACK, HTTP/2, URLs and cookies, LDAP, JOSE, OpenPGP, SSH,
+Kerberos and the PAC, NTLM, TPM 2.0, WebAuthn, SAML, the TLS handshake and
+mail), with seed corpora from the test vectors. `make fuzz-replay` runs
+the corpora and the regression inputs through a plain driver with ASan
+and UBSan, which Apple's clang builds; `make fuzz TARGET=dns_msg
+SECONDS=600` runs one target under libFuzzer, which needs a clang that
+has it (Homebrew's LLVM, or clang on Linux). fuzz/README.md says how the
+targets are built and how crashes are triaged.

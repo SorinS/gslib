@@ -365,7 +365,8 @@ fn client_certificate_request12(c: Conn&, cfg: const ClientConfig&, m: const u8[
     var types = get_vec(b, m, 1);
     var sl = get_vec(b, m, 2);
     let cas = get_vec(b, m, 2);
-    if !done(b) { return fail(c, ALERT_DECODE_ERROR, out); }
+    // A whole, non-empty list of two-byte schemes (RFC 5246 §7.4.4).
+    if !done(b) || sl.end == sl.pos || (sl.end - sl.pos) % 2 != 0 { return fail(c, ALERT_DECODE_ERROR, out); }
     var schemes: u16[..64] = [];
     while sl.pos + 1 < sl.end {
         let v = get_u16(sl, m);
@@ -559,13 +560,14 @@ fn server_client_hello12(c: Conn&, cfg: const ServerConfig&, m: const u8[:], h: 
     var s, oks = suite(chosen);
     if select_alpn(c, cfg, h, m, out) != 0 { return -1; }
     c.sni.clear();
-    if h.sni.end - h.sni.pos <= 255 { c.sni.append(m[h.sni.pos..h.sni.end]); }
+    c.sni.append(m[h.sni.pos..h.sni.end]);       // at most 255 bytes (parse_hello)
     c.ems = h.ems;
     c.ticket12 = h.has_ticket && cfg.tickets > 0;
     for i in 32 { c.peer_random[i] = m[h.random.pos + i]; }
     c.client_version = h.version as! u16;
     // Resumption: a TLS 1.2 ticket of ours, unexpired, for a suite both
-    // still take, with a client certificate that suits, and with the
+    // still take and the name the session was made for (else a full
+    // handshake), with a client certificate that suits, and with the
     // extended master secret if it had one (a session that had it is
     // refused without, one that had not is not resumed with it, RFC 7627
     // §5.3).
@@ -576,7 +578,7 @@ fn server_client_hello12(c: Conn&, cfg: const ServerConfig&, m: const u8[:], h: 
         var ours = false;
         for id in cfg.suites12 { if id == t.suite { ours = true; } }
         if okt && t.version == VERSION_TLS12 && ours && in_u16_list(m, h.suites, t.suite) && now >= t.created &&
-           now - t.created <= t.lifetime && ticket_client_ok(cfg, t, now) {
+           now - t.created <= t.lifetime && t.sni[..] == c.sni[..] && ticket_client_ok(cfg, t, now) {
             if t.ems && !h.ems { return fail(c, ALERT_HANDSHAKE_FAILURE, out); }
             if t.ems == h.ems {
                 resumed = true;

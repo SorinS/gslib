@@ -173,6 +173,13 @@ fn is_char(c: i64) -> bool {
 
 fn is_space(c: i64) -> bool { c == 0x20 || c == 0x9 || c == 0xA || c == 0xD }
 
+// Whether s has white space: then it is not a URI reference, so not a
+// namespace name (Namespaces in XML §2.2, RFC 3986; libxml2 refuses it too).
+fn has_space(s: const u8[:]) -> bool {
+    for c in s { if is_space(c) { return true; } }
+    return false;
+}
+
 // NameStartChar and NameChar (§2.3), the colon left to the caller.
 fn is_name_start(c: i64) -> bool {
     if c < 0x80 { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == ':'; }
@@ -474,6 +481,9 @@ fn read_xml_decl(p: Parser&) {
             if lower != "utf-8" && lower != "utf8" && lower != "us-ascii" && lower != "ascii" {
                 fail_at(p.s, vs, ERR_ENCODING, str("encoding ", v, " not supported (UTF-8 only)"));
             }
+            if lower == "us-ascii" || lower == "ascii" {
+                for i in p.s.len { if p.s[i] >= 0x80 { fail_at(p.s, i, ERR_ENCODING, "a byte over 0x7F in a document declared US-ASCII"); } }
+            }
             seen = 2;
         } else if name == "standalone" && seen >= 1 && seen < 3 {
             if v != "yes" && v != "no" { fail_at(p.s, vs, ERR_SYNTAX, "standalone must be yes or no"); }
@@ -502,7 +512,7 @@ fn read_doctype(p: Parser&) {
             let q = peek(p, 0);
             if q != '"' && q != '\'' { fail(p, ERR_SYNTAX, "malformed DOCTYPE"); }
             p.pos++;
-            while p.pos < p.s.len && p.s[p.pos] != q { next_char(p); p.pos++; }
+            while p.pos < p.s.len && p.s[p.pos] != q { let c, w = next_char(p); p.pos += w; }
             if at_end(p) { fail(p, ERR_SYNTAX, "malformed DOCTYPE"); }
             p.pos++;
             lits--;
@@ -702,6 +712,7 @@ fn read_start_tag(p: Parser&, parent: i64) -> i64, bool {
         }
         if uri == XML_NS || uri == XMLNS_NS { fail_at(p.s, r.from, ERR_NAMESPACE, str("namespace ", uri, " is reserved")); }
         if !is_default && uri.len == 0 { fail_at(p.s, r.from, ERR_NAMESPACE, str(an, "=\"\": a prefix cannot be undeclared")); }
+        if has_space(uri) { fail_at(p.s, r.from, ERR_NAMESPACE, str(an, ": a namespace URI with white space")); }
         let pspan = put(p.d, declared);
         let a = new_node(p, Node { kind: NAMESPACE, local: pspan, value: r.value, .. });
         link_attr(p.d, el, a);
@@ -1171,14 +1182,14 @@ fn names_ok(prefix: const u8[:], local: const u8[:]) -> bool {
 // a prefix without a namespace, or the reserved prefixes misused.
 fn insert_element(d: Doc&, parent: i64, before: i64, prefix: const u8[:], local: const u8[:], ns: const u8[:]) -> i64 {
     if !can_insert(d, parent, before) { return -1; }
-    if !names_ok(prefix, local) || (prefix.len > 0 && ns.len == 0) || !is_text(ns) { return -1; }
+    if !names_ok(prefix, local) || (prefix.len > 0 && ns.len == 0) || !is_text(ns) || has_space(ns) { return -1; }
     if (prefix == "xml") != (ns == XML_NS) && prefix.len > 0 { return -1; }
     if prefix.len == 0 && (ns == XML_NS || ns == XMLNS_NS) { return -1; }
     let el = add_node(d, Node { kind: ELEMENT, prefix: put(d, prefix), local: put(d, local), .. });
     link_before(d, parent, el, before);
     if prefix != "xml" {
         let cur, bound = lookup_ns(d, parent, prefix);
-        if !(bound && cur == ns) && !(!bound && ns.len == 0) { declare_ns(d, el, prefix, ns); }
+        if !(bound && cur == ns) && !(!bound && ns.len == 0) { bind_ns(d, el, prefix, ns); }
     }
     let uri, bound = lookup_ns(d, el, prefix);
     if bound { d.nodes[el].ns = put(d, uri); }
@@ -1190,21 +1201,52 @@ fn element(d: Doc&, parent: i64, prefix: const u8[:], local: const u8[:], ns: co
 }
 
 // Declares prefix (empty: the default namespace) as uri on el, replacing
-// a declaration of it there. False for names XML cannot declare.
+// a declaration of it there. False for names XML cannot declare, and for
+// a binding that would change the namespace of el, of one of its
+// attributes or of something in its subtree that has the prefix (what is
+// written must parse back to what is in memory; a descendant that
+// declares the prefix again is not told apart).
 fn declare_ns(d: Doc&, el: i64, prefix: const u8[:], uri: const u8[:]) -> bool {
     if prefix.len > 0 && (!is_ncname(prefix) || uri.len == 0) { return false; }
-    if prefix == "xml" || prefix == "xmlns" || uri == XML_NS || uri == XMLNS_NS || !is_text(uri) { return false; }
+    if prefix == "xml" || prefix == "xmlns" || uri == XML_NS || uri == XMLNS_NS || !is_text(uri) || has_space(uri) { return false; }
+    if el < 0 || el >= d.nodes.len || d.nodes[el].kind != ELEMENT || rebinds_used(d, el, prefix, uri) { return false; }
+    bind_ns(d, el, prefix, uri);
+    return true;
+}
+
+// Whether binding prefix to uri at el changes the namespace of a name
+// under it with that prefix: el's, its attributes' (a prefix only), its
+// descendants'.
+fn rebinds_used(d: const Doc&, el: i64, prefix: const u8[:], uri: const u8[:]) -> bool {
+    let cur, bound = lookup_ns(d, el, prefix);
+    if (bound && cur == uri) || (!bound && uri.len == 0) { return false; }
+    var used = false;
+    walk(d, el) { n, entering =>
+        if entering && d.nodes[n].kind == ELEMENT {
+            if view(d, d.nodes[n].prefix) == prefix && view(d, d.nodes[n].ns) != uri { used = true; }
+            var a = d.nodes[n].attrs;
+            while prefix.len > 0 && a >= 0 {
+                if d.nodes[a].kind == ATTRIBUTE && view(d, d.nodes[a].prefix) == prefix && view(d, d.nodes[a].ns) != uri { used = true; }
+                a = d.nodes[a].next;
+            }
+        }
+        !used
+    };
+    return used;
+}
+
+// The declaration itself, checked by the caller.
+fn bind_ns(d: Doc&, el: i64, prefix: const u8[:], uri: const u8[:]) {
     var a = d.nodes[el].attrs;
     while a >= 0 {
         if d.nodes[a].kind == NAMESPACE && view(d, d.nodes[a].local) == prefix {
             d.nodes[a].value = put(d, uri);
-            return true;
+            return;
         }
         a = d.nodes[a].next;
     }
     let n = add_node(d, Node { kind: NAMESPACE, local: put(d, prefix), value: put(d, uri), .. });
     link_attr(d, el, n);
-    return true;
 }
 
 // Sets el's attribute prefix:local in namespace ns to value (replacing
@@ -1213,6 +1255,7 @@ fn declare_ns(d: Doc&, el: i64, prefix: const u8[:], uri: const u8[:]) -> bool {
 fn set_attr(d: Doc&, el: i64, prefix: const u8[:], local: const u8[:], ns: const u8[:], value: const u8[:]) -> bool {
     if !names_ok(prefix, local) || (prefix.len > 0) != (ns.len > 0) || !is_text(value) || !is_text(ns) { return false; }
     if prefix == "xml" && ns != XML_NS { return false; }
+    if prefix.len == 0 && local == "xmlns" { return false; }   // a namespace declaration: declare_ns
     let a = attr_node(d, el, ns, local);
     if a >= 0 { d.nodes[a].value = put(d, value); return true; }
     if prefix.len > 0 && prefix != "xml" {
@@ -1303,7 +1346,10 @@ fn detach(d: Doc&, n: i64) {
 
 // Moves n (detached or not) into parent before `before` (-1: last);
 // false, and nothing moved, when `before` is not parent's child or the
-// move would put n inside itself.
+// move would put n inside itself. An element moved keeps its names'
+// namespaces: where its new scope binds a prefix it uses (the default
+// namespace too) otherwise, or not at all, n declares it, as
+// insert_element does.
 fn move_to(d: Doc&, n: i64, parent: i64, before: i64) -> bool {
     if before == n || within(d, n, parent) { return false; }
     if !can_insert(d, parent, before) { return false; }
@@ -1311,7 +1357,51 @@ fn move_to(d: Doc&, n: i64, parent: i64, before: i64) -> bool {
     if k == DOCUMENT || k == ATTRIBUTE || k == NAMESPACE { return false; }
     detach(d, n);
     link_before(d, parent, n, before);
+    if k != ELEMENT { return true; }
+    // One declaration on n fixes every name that took the prefix from
+    // above it; a name that n's subtree binds otherwise is left as it was
+    // (each prefix is declared once: "|p:" in done).
+    var done: u8[>..] = [];
+    loop {
+        let m = scope_mismatch(d, n);
+        if m < 0 { return true; }
+        var key: u8[>..] = [];
+        key.push('|');
+        key.append(view(d, d.nodes[m].prefix));
+        key.push(':');
+        if find(done, key) >= 0 { return true; }
+        done.append(key);
+        var uri: u8[>..] = [];
+        uri.append(view(d, d.nodes[m].ns));
+        bind_ns(d, n, key[1..key.len - 1], uri);
+    }
     return true;
+}
+
+// The first element or prefixed attribute under el whose prefix its scope
+// binds to other than its namespace (or does not bind), -1 for none.
+fn scope_mismatch(d: const Doc&, el: i64) -> i64 {
+    var found = -1;
+    walk(d, el) { n, entering =>
+        if entering && d.nodes[n].kind == ELEMENT {
+            if name_unbound(d, n, n) { found = n; }
+            var a = d.nodes[n].attrs;
+            while found < 0 && a >= 0 {
+                if d.nodes[a].kind == ATTRIBUTE && d.nodes[a].prefix.len > 0 && name_unbound(d, n, a) { found = a; }
+                a = d.nodes[a].next;
+            }
+        }
+        found < 0
+    };
+    return found;
+}
+
+// Whether name x (el or one of its attributes) has a namespace other than
+// what el's scope binds its prefix to.
+fn name_unbound(d: const Doc&, el: i64, x: i64) -> bool {
+    let uri, bound = lookup_ns(d, el, view(d, d.nodes[x].prefix));
+    let ns = view(d, d.nodes[x].ns);
+    return if bound { uri != ns } else { ns.len > 0 };
 }
 
 // --- writing ---------------------------------------------------------------------

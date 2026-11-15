@@ -1,0 +1,15 @@
+a=1; domain=.yo.foo.bar.com
+b=2; domain=.foo.com
+c=3; domain=.bar.foo.com
+d=4; domain=.foo.bar.com.net
+e=5; domain=ar.com
+f=6; domain=.
+g=7; domain=/
+h=8; domain=http://foo.bar.com
+i=9; domain=..foo.bar.com
+j=10; domain=..bar.com
+k=11; domain=.foo.bar.com?blah
+l=12; domain=.foo.bar.com/blah
+m=12; domain=.foo.bar.com:80
+n=14; domain=.foo.bar.com:
+o=15; domain=.foo.bar.com#sup

@@ -33,14 +33,15 @@ struct Relay { listeners: Listener[..16], links: Link[..48], verbose: bool }
 
 fn new_relay(verbose: bool) -> Relay { Relay { listeners: [], links: [], verbose: verbose } }
 
-fn log(r: const Relay&, s: const u8[:]) { if r.verbose { sysnet::eprint(str("forward: ", s, "\n")); } }
+fn log(r: const Relay&, s: const u8[:]) { if r.verbose { sysnet::eprint(str("forward: ", sysnet::safe_text(s), "\n")); } }
 
 fn no_link() -> Link { Link { state: LINK_FREE, fd: -1, ch: -1, sock_eof: false, chan_eof: false, socks_reply: false, greeted: false, socks: [] } }
 
-// Listens for a forward: false if the address cannot be had. Port 0 takes
-// any; l.port is then the one taken.
+// Listens for a forward: false if the address cannot be had (or bind or
+// host is longer than 255 bytes, which the peer may send). Port 0 takes any;
+// l.port is then the one taken.
 fn listen(r: Relay&, kind: i64, bind: const u8[:], port: i64, host: const u8[:], hostport: i64) -> bool {
-    if r.listeners.len == r.listeners.cap { return false; }
+    if r.listeners.len == r.listeners.cap || bind.len >= 256 || host.len >= 256 { return false; }
     let fd = sysnet::net_listen(bind, port as! i32);
     if fd < 0 { return false; }
     var l = Listener { kind: kind, fd: fd, bind: [], port: port, host: [], hostport: hostport };

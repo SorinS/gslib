@@ -83,6 +83,7 @@ let ERR_AUTH_TIME: i64 = 22;        // auth_time missing, or older than max_age
 let ERR_SUBJECT:   i64 = 23;        // the UserInfo response's sub is not the ID token's
 let ERR_DPOP:      i64 = 24;        // a DPoP proof that is not one, or not for this request
 let ERR_CLAIM:     i64 = 25;        // a claim that must be there is not
+let ERR_INSECURE:  i64 = 26;        // an http:// issuer or endpoint that is not loopback (Client.allow_http)
 
 fn error_text(e: i64) -> const u8[:] {
     if e == OK { return "ok"; }
@@ -111,6 +112,7 @@ fn error_text(e: i64) -> const u8[:] {
     if e == ERR_SUBJECT { return "the subject is not the one expected"; }
     if e == ERR_DPOP { return "the DPoP proof is not valid for this request"; }
     if e == ERR_CLAIM { return "a required claim is missing"; }
+    if e == ERR_INSECURE { return "the URL is not https"; }
     return "";
 }
 
@@ -273,9 +275,28 @@ root struct Client {
     jwks_fetched_ns:     i64           = 0,         // clock_ns() of the last fetch, 0 for never
     jwks_min_interval_s: i64           = 60,        // a refetch for an unknown kid waits at least this long
     jwks_fetches:        i64           = 0,
+    allow_http:          bool          = false,     // let the issuer and endpoints be http:// to any host
 }
 
 // --- Small things -------------------------------------------------------------
+
+// Whether the client may send a request to u: https (RFC 6749 §3.1, RFC
+// 8414 §2, OIDC Discovery §3 require TLS), or http to localhost or a
+// loopback address, or anything when c.allow_http. A URL that does not
+// parse is left to http::request to refuse.
+fn url_allowed(c: const Client&, u: const u8[:]) -> bool {
+    if c.allow_http { return true; }
+    let p, e = http::url_parse(u);
+    if e != 0 { return true; }
+    let scheme = http::url_scheme(p);
+    if eq_fold(scheme, "https") { return true; }
+    if !eq_fold(scheme, "http") { return false; }
+    var host = http::url_host(p);
+    if host.len >= 2 && host[0] == '[' && host[host.len - 1] == ']' { host = host[1..host.len - 1]; }
+    if eq_fold(host, "localhost") { return true; }
+    let ip, kind = http::parse_ip(host);
+    return http::ip_is_loopback(ip, kind);
+}
 
 fn now_s(c: const Client&) -> i64 { if c.now != 0 { c.now } else { time_ns() / 1000000000 } }
 
@@ -577,10 +598,23 @@ fn metadata_url(issuer: const u8[:], oidc: bool) -> u8[>..] {
     return out;
 }
 
+// Whether every endpoint of m is one url_allowed lets the client use,
+// those the browser is sent to (authorization, end_session) too.
+fn endpoints_allowed(c: const Client&, m: const Metadata&) -> bool {
+    for u in [m.authorization_endpoint[..], m.token_endpoint[..], m.userinfo_endpoint[..], m.jwks_uri[..],
+              m.revocation_endpoint[..], m.introspection_endpoint[..], m.device_endpoint[..], m.par_endpoint[..],
+              m.end_session_endpoint[..], m.registration_endpoint[..], m.mtls_token[..], m.mtls_revocation[..],
+              m.mtls_introspection[..], m.mtls_device[..], m.mtls_par[..], m.mtls_userinfo[..]] {
+        if u.len > 0 && !url_allowed(c, u) { return false; }
+    }
+    return true;
+}
+
 // Reads the issuer's metadata, by OpenID Connect discovery and then, if the
 // server has none, RFC 8414's. The issuer in it must be `issuer` exactly
 // (RFC 8414 §3.3, Discovery §4.3): ERR_ISSUER otherwise.
 fn discover(c: Client&, hc: http::Client&, issuer: const u8[:]) -> i64 {
+    if !url_allowed(c, issuer) { return ERR_INSECURE; }
     var last = ERR_MALFORMED;
     for which in 2 {
         let url = metadata_url(issuer, which == 0);
@@ -594,6 +628,7 @@ fn discover(c: Client&, hc: http::Client&, issuer: const u8[:]) -> i64 {
         let m, ok = read_metadata(http::response_body(r));
         if !ok { return ERR_MALFORMED; }
         if m.issuer[..] != issuer { return ERR_ISSUER; }
+        if !endpoints_allowed(c, m) { return ERR_INSECURE; }
         c.meta = m;
         return OK;
     }
@@ -832,6 +867,7 @@ fn take_dpop_nonce(dst: u8[..512]&, r: const http::Response&) -> bool {
 // nonce it sent. OK for a 2xx response; ERR_OAUTH with c.error otherwise.
 fn post_form(c: Client&, hc: http::Client&, url: const u8[:], params: const u8[:], dpop: bool = true) -> http::Response, i64 {
     if url.len == 0 { return http::empty_response(0), ERR_ARG; }
+    if !url_allowed(c, url) { return http::empty_response(0), ERR_INSECURE; }
     var tries = 0;
     loop {
         var form: u8[>..] = [];
@@ -1231,6 +1267,7 @@ fn resource_request(c: Client&, hc: http::Client&, method: const u8[:], url: con
                     fields: const u8[:] = "", body: const u8[:] = "") -> http::Response, i64 {
     let dpop = eq_fold(t.token_type, "DPoP");
     if dpop && c.dpop_alg == jwa::UNKNOWN { return http::empty_response(0), ERR_KEY; }
+    if !url_allowed(c, url) { return http::empty_response(0), ERR_INSECURE; }
     var tries = 0;
     loop {
         var f: u8[>..] = [];

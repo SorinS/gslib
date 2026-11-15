@@ -1,0 +1,1 @@
+ldap://ldap.example.com:389/dc=example,dc=com?cn,mail?sub?(cn=a%20b)?!x-ext

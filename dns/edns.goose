@@ -48,6 +48,14 @@ fn each_option<F>(rd: const u8[:]) {
 
 fn data(o: Option, rd: const u8[:]) -> const u8[:] { rd[o.off .. o.end] }
 
+// Whether OPT rdata is options and nothing else: each_option stops quietly
+// at a short one, which a server answers with FORMERR.
+fn options_valid(rd: const u8[:]) -> bool {
+    var i = 0;
+    while i + 4 <= rd.len { i += 4 + get16(rd, i + 2) as i64; }
+    return i == rd.len;
+}
+
 fn option_append(rd: u8[>..]&, code: u16, data: const u8[:]) {
     put16(rd, code);
     put16(rd, data.len as! u16);
@@ -139,13 +147,20 @@ fn hash_name_append(out: u8[>..]&, h: u8) {
     else if h == 4 { out.append("SHA384"); } else if h == 5 { out.append("SHA512"); } else { format(out, h); }
 }
 
+// Text from the wire, its bytes outside printable ASCII as \DDD, so that
+// what a server sends cannot drive the terminal it is printed on (miekg
+// writes them as they are).
+fn printable_append(out: u8[>..]&, s: const u8[:]) {
+    for c in s { if c < ' ' || c > '~' { escape_ddd(out, c); } else { out.push(c); } }
+}
+
 // One option as miekg's OPT.String() writes it, from its "\n; NAME: ".
 fn option_append_text(out: u8[>..]&, code: u16, d: const u8[:]) {
     if code == EDNS0_NSID {
         out.append("\n; NSID: ");
         hex_append(out, d, false);
         out.append("  ");
-        for c in d { out.push('('); out.push(c); out.push(')'); }
+        for c in d { out.push('('); printable_append(out, [c]); out.push(')'); }
     } else if code == EDNS0_SUBNET {
         out.append("\n; SUBNET: ");
         if d.len < 4 { return; }
@@ -193,17 +208,17 @@ fn option_append_text(out: u8[>..]&, code: u16, d: const u8[:]) {
         format(out, info);
         if info < 31 { out.append(" ("); out.append(EDE_NAMES[info]); out.push(')'); }
         out.append(": (");
-        out.append(d[2..]);
+        printable_append(out, d[2..]);
         out.push(')');
     } else if code == EDNS0_ESU {
         out.append("\n; ESU: ");
-        out.append(d);
+        printable_append(out, d);
     } else if code == EDNS0_REPORTING {
         out.append("\n; REPORT-CHANNEL: ");
         if name_len_at(d, 0) == d.len { name_append(out, d); }
     } else if code == EDNS0_ZONEVERSION {
         out.append("\n; ZONEVERSION: ");
-        if d.len > 2 { out.append(d[2..]); }
+        if d.len > 2 { printable_append(out, d[2..]); }
     } else {
         out.append("\n; LOCAL OPT: ");
         format(out, code);

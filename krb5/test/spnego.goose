@@ -115,6 +115,37 @@ fn ms_first() {
     tv::check_int("ap-rep in it", krb5::gss_init_continue(g, resp), krb5::OK);
 }
 
+// NTLM first, then Kerberos with a DES3 session key, which makes no
+// MIC: without one nothing shows the list was not downgraded, so refused.
+fn des3_not_first() {
+    let svc = krb5::random_key(17);
+    let kt = keytab_of(svc);
+    let cred = make_cred(svc, 16, 0, NOW - 600, NOW + 3000);
+    var rc: krb5::ReplayEntry[>..] = [];
+    var oids: u8[][>..] = [];
+    oids.push(krb5::NTLM_OID);
+    oids.push(krb5::KRB5_OID);
+    let t1 = foreign_init(oids, "NTLMSSP\x00 negotiate message", true);
+    var ac = krb5::empty_spnego();
+    var t2: u8[>..] = [];
+    let done, acc, aerr = krb5::spnego_accept(ac, t1, kt, false, rc, NOW, 0, 300, "", false, t2);
+    var kt1: u8[>..] = [];
+    var g, err = krb5::gss_init(cred, krb5::GSS_MUTUAL, "", false, "", NOW, 0, kt1);
+    var t3: u8[>..] = [];
+    krb5::spnego_resp_token(t3, -1, "", kt1, "");
+    var t4: u8[>..] = [];
+    let done2, acc2, aerr2 = krb5::spnego_accept(ac, t3, kt, false, rc, NOW, 0, 300, "", false, t4);
+    tv::check_int("des3, not the first choice: no MIC, refused", aerr2, krb5::ERR_ETYPE);
+    // Kerberos first: no downgrade to show, so DES3 goes without.
+    let cred2 = make_cred(svc, 16, 0, NOW - 600, NOW + 3000);
+    var u1: u8[>..] = [];
+    var ic, ierr = krb5::spnego_init(cred2, krb5::GSS_MUTUAL, "", false, "", NOW, 0, u1);
+    var ac2 = krb5::empty_spnego();
+    var u2: u8[>..] = [];
+    let d3, a3, e3 = krb5::spnego_accept(ac2, u1, kt, false, rc, NOW, 0, 300, "", false, u2);
+    tv::check("des3, first choice: accepted", e3 == krb5::OK && d3);
+}
+
 fn ntlm_first() {
     let svc = krb5::random_key(17);
     let kt = keytab_of(svc);
@@ -231,6 +262,7 @@ fn main() {
     basic();
     ms_first();
     ntlm_first();
+    des3_not_first();
     initiator_mic();
     raw_and_reject();
     tv::done("spnego");

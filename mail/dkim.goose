@@ -929,6 +929,10 @@ fn verify<F>(msg_in: const u8[:], out: Result[>..]&, o: VerifyOptions = VerifyOp
     var first = mail::ERR_SIGNATURE;
     var any = false;
     var count = 0;
+    // RFC 6376 §8.15: a second From could be the one a reader is shown,
+    // unsigned; a message with more than one fails every signature.
+    var froms = 0;
+    for f in fields { if mail::eq_fold(field_name(msg, f), "From") { froms++; } }
     for fi in fields.len {
         if count >= o.max_signatures { break; }
         if !mail::eq_fold(field_name(msg, fields[fi]), "DKIM-Signature") { continue; }
@@ -936,6 +940,7 @@ fn verify<F>(msg_in: const u8[:], out: Result[>..]&, o: VerifyOptions = VerifyOp
         var r = Result { .. };
         var sp = Sig { .. };
         var e = check_sig(msg, fields, fi, o, sp, r);
+        if e == mail::OK && froms != 1 { set_reason(r, "not exactly one From field"); e = mail::ERR_FORMAT; }
         if e == mail::OK {
             var rec: u8[>..] = [];
             F(r.d[..], r.s[..], rec);

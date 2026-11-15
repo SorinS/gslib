@@ -420,6 +420,15 @@ fn key_bytes(der: const u8[:], t: asn1::Tlv) -> u8[>..], bool {
 
 let ANY_POLICY: const u8[:] = "2.5.29.32.0";
 
+// A GeneralName's tag: context class, [0] to [8], constructed for
+// otherName, x400Address, directoryName and ediPartyName and primitive
+// for the rest. Name checks go by number, so nothing else may pass.
+fn general_name_ok(n: asn1::Tlv) -> bool {
+    if n.cls != asn1::CLASS_CONTEXT || n.number > 8 { return false; }
+    let cons = n.number == 0 || n.number == 3 || n.number == 4 || n.number == 5;
+    return n.constructed == cons;
+}
+
 // GeneralSubtrees: each a SEQUENCE of a GeneralName and no minimum or
 // maximum (RFC 5280 says they must be absent for the name forms in use).
 fn subtrees_ok(der: const u8[:], t: asn1::Tlv) -> bool {
@@ -427,7 +436,7 @@ fn subtrees_ok(der: const u8[:], t: asn1::Tlv) -> bool {
     if !ok || subs.len == 0 { return false; }
     for s in subs {
         let p, okp = asn1::children_of(der, s, asn1::SEQUENCE);
-        if !okp || p.len != 1 || p[0].cls != asn1::CLASS_CONTEXT { return false; }
+        if !okp || p.len != 1 || !general_name_ok(p[0]) { return false; }
     }
     return true;
 }
@@ -566,6 +575,7 @@ fn parse_extensions(c: Cert&, der: const u8[:], t: asn1::Tlv) -> bool {
         } else if asn1::oid_is(der, f[0], "2.5.29.17") {
             let ns, okn = asn1::children_of(der, inner, asn1::SEQUENCE);
             if !oki || inner.end != val.end || !okn || ns.len == 0 { return false; }
+            for n in ns { if !general_name_ok(n) { return false; } }
             c.has_san = true;
             c.san = inner;
         } else if asn1::oid_is(der, f[0], "2.5.29.14") {

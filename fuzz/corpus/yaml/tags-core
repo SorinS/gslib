@@ -1,0 +1,14 @@
+- !!str 1
+- !!int 1
+- !!float 1
+- !!float 1.5
+- !!bool true
+- !!null ~
+- !!str
+- !!int x
+- !!float x
+- !!bool 1
+- !!null x
+- !!int "1"
+- !!float 0x10
+- !!float 9223372036854775808

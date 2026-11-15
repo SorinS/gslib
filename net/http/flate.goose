@@ -9,6 +9,10 @@
 //   let e = http::inflate_feed(d, chunk, out);    // 0, or < 0 for an error
 //   // at the body's end: http::inflate_done(d) says whether the stream was whole
 //
+// A limit on out's length (inflate_feed's `limit`) stops a small input
+// that inflates a thousandfold from being decoded whole before anyone
+// looks: past it, decoding stops with FLATE_ERR_LIMIT.
+//
 // Huffman codes are decoded a bit at a time, as zlib's puff.c does: correct
 // first. Input that ends inside a symbol (or a block's header) is kept
 // until more comes, in a buffer of fixed size: input is taken a slice at a
@@ -29,6 +33,7 @@ let FLATE_ERR_HEADER: i64 = -1;     // not a gzip or zlib header
 let FLATE_ERR_DATA: i64 = -2;       // the DEFLATE data is not valid
 let FLATE_ERR_CHECK: i64 = -3;      // a CRC-32, Adler-32 or length that does not match
 let FLATE_ERR_TRAILING: i64 = -4;   // bytes after the stream that are not another gzip member
+let FLATE_ERR_LIMIT: i64 = -5;      // the output passed inflate_feed's limit
 
 let FS_HEADER: u8 = 0;
 let FS_BLOCK: u8 = 1;               // at a block's header
@@ -68,6 +73,7 @@ struct Inflate {
     gh_flags: u8,
     gh_left: i64,                   // FEXTRA's bytes still to skip
     gh_crc: u32,                    // CRC-32 of the header so far (for FHCRC)
+    limit: i64,                     // the most out may hold (inflate_feed's), or -1
     pending: u8[..2048],            // input not used yet, from pending[0] bit `bit`
 }
 
@@ -78,7 +84,7 @@ fn new_inflate(format: u8) -> Inflate {
         format: format, state: if format == FLATE_RAW { FS_BLOCK } else { FS_HEADER }, last: false, stored_left: 0,
         bit: 0, lencode: new_huffman(), distcode: new_huffman(), window: [0; 32768], wpos: 0, wfull: false,
         crc: 0xffffffff, adler: 1, size: 0, members: 0,
-        gh: GH_FIXED, gh_flags: 0, gh_left: 0, gh_crc: 0, pending: [],
+        gh: GH_FIXED, gh_flags: 0, gh_left: 0, gh_crc: 0, limit: -1, pending: [],
     }
 }
 
@@ -301,6 +307,7 @@ fn block_header(d: Inflate&) -> i64 {
 // error.
 fn codes(d: Inflate&, out: u8[>..]&) -> i64 {
     while true {
+        if d.limit >= 0 && out.len > d.limit { return FLATE_ERR_LIMIT; }
         var b = bits_start(d);
         let sym = decode_symbol(d, b, d.lencode);
         if !b.ok { return 0; }
@@ -439,9 +446,12 @@ fn trailer(d: Inflate&) -> i64 {
 }
 
 // Decodes what of `input` it can, appending to `out`: 0, or an error
-// (< 0, after which the decoder takes nothing more).
-fn inflate_feed(d: Inflate&, input: const u8[:], out: u8[>..]&) -> i64 {
+// (< 0, after which the decoder takes nothing more). With a `limit`
+// (>= 0), FLATE_ERR_LIMIT once out holds more than that: it may then hold
+// up to a match (258 bytes) or what is buffered of a stored block more.
+fn inflate_feed(d: Inflate&, input: const u8[:], out: u8[>..]&, limit: i64 = -1) -> i64 {
     if d.state == FS_FAILED { return FLATE_ERR_DATA; }
+    d.limit = limit;
     var at = 0;
     while true {
         let room = FLATE_PENDING - d.pending.len;
@@ -492,6 +502,7 @@ fn inflate_run(d: Inflate&, out: u8[>..]&) -> i64 {
             d.state = FS_HEADER;
             r = 1;
         }
+        if r >= 0 && d.limit >= 0 && out.len > d.limit { r = FLATE_ERR_LIMIT; }
         if r < 0 { d.state = FS_FAILED; return r; }
         if r == 0 { return 0; }
     }

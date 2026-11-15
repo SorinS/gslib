@@ -318,6 +318,7 @@ struct Conn {
     x25519_sk: u8[32], ec_sk: u8[..66], mlkem_seed: u8[64],
     hrr: bool, ccs_sent: bool, cert_requested: bool, cr_context: u8[..255],
     ccs_seen: bool,                   // TLS 1.3: the peer's one change_cipher_spec came
+    wiped: bool,                      // the secrets are forgotten (wipe)
     useless: i64,                     // records in a row that carried nothing (warnings, empty data)
     skip_early: bool, early_skipped: i64,  // the server skips the 0-RTT data it refused, and how much
     ch1_digest: u8[32],               // the server's: what of the first ClientHello the second must repeat
@@ -368,7 +369,7 @@ fn new_conn(is_server: bool, seed: u64) -> Conn {
         read: record_keys(s, zero), write: record_keys(s, zero), read_protected: false, write_protected: false,
         drbg_k: [0; 32], drbg_v: [1; 32], random: [0; 32], session_id: [],
         group: 0, group2: 0, x25519_sk: [0; 32], ec_sk: [], mlkem_seed: [0; 64], hrr: false, ccs_sent: false, cert_requested: false,
-        ccs_seen: false, useless: 0, skip_early: false, early_skipped: 0, ch1_digest: [0; 32], client_version: 0,
+        ccs_seen: false, wiped: false, useless: 0, skip_early: false, early_skipped: 0, ch1_digest: [0; 32], client_version: 0,
         cr_context: [], cert_scheme: 0, peer_verified: false, peer_schemes: [], alpn: [], sni: [], tickets: 0, key_updates: 0,
         psk_offered: false, resumed: false, psk_dhe: false, peer_not_after: 0, has_session: false, session: no_session(),
         ech_offered: false, ech_seen: false, ech_confirm: false, ech_accepted: false, ech_backend: false,
@@ -544,6 +545,30 @@ fn send_ccs(c: Conn&, out: u8[>..]&) {
     c.ccs_sent = true;
 }
 
+fn zero(b: u8[:]) { for i in b.len { b[i] = 0; } }
+
+// The read keys, forgotten: the peer sent close_notify (the
+// close_notify back still needs the write keys).
+fn wipe_read(c: Conn&) {
+    var zs: u8[32] = [0; 32];
+    c.read = record_keys(c.suite, zs);
+}
+
+// Every secret the connection holds, forgotten once it can neither send
+// nor receive (failed, or closed by close): the key schedule, the record
+// keys, the key exchange's private keys, TLS 1.2's master secret, ECH's
+// HPKE context and the DRBG. The session (tls::session) stays.
+fn wipe(c: Conn&) {
+    zero(c.sch.early); zero(c.sch.handshake); zero(c.sch.master); zero(c.sch.c_hs); zero(c.sch.s_hs);
+    zero(c.sch.c_ap); zero(c.sch.s_ap); zero(c.sch.exporter); zero(c.sch.resumption);
+    zero(c.x25519_sk); zero(c.ec_sk); zero(c.mlkem_seed); zero(c.master); zero(c.drbg_k); zero(c.drbg_v);
+    var zs: u8[32] = [0; 32];
+    c.read = record_keys(c.suite, zs);
+    c.write = record_keys(c.suite, zs);
+    c.ech_ctx = bignum::hpke_empty_context();
+    c.wiped = true;
+}
+
 // Fails the connection: the alert goes out (protected when keys exist).
 fn fail(c: Conn&, desc: u8, out: u8[>..]&) -> i64 {
     if c.state == ST_FAILED { return -1; }
@@ -552,6 +577,7 @@ fn fail(c: Conn&, desc: u8, out: u8[>..]&) -> i64 {
     else { out.append(plain_record(CT_ALERT, a)); }
     c.alert = desc;
     c.state = ST_FAILED;
+    wipe(c);
     return -1;
 }
 
@@ -562,12 +588,14 @@ fn send(c: Conn&, data: const u8[:], out: u8[>..]&) -> bool {
     return true;
 }
 
-// close_notify; the connection sends nothing after it.
+// close_notify; the connection sends nothing after it, and once closed
+// forgets its secrets.
 fn close(c: Conn&, out: u8[>..]&) {
-    if !c.write_protected || c.state == ST_FAILED { return; }
+    if !c.write_protected || c.state == ST_FAILED || c.wiped { return; }
     let a = alert(ALERT_WARNING, ALERT_CLOSE_NOTIFY);
     out.append(seal_record(c.write, CT_ALERT, a));
     if c.state == ST_CONNECTED { c.state = ST_CLOSED; }
+    if c.state == ST_CLOSED { wipe(c); }
 }
 
 fn update_write(c: Conn&) {
@@ -882,14 +910,39 @@ fn cert_alert(e: i64) -> u8 {
 
 // --- The client -------------------------------------------------------------
 
+// The public value of the client's share for a group it made one for
+// (make_share), again: ML-KEM's key from its seed, ECDH's from its key.
+fn share_public(c: const Conn&, group: u16) -> u8[>..] {
+    let k = mlkem_k(group);
+    if k == 0 { return ecdh_public(c, group); }
+    let ek, dk = bignum::mlkem_keys_from_seed(k, c.mlkem_seed);
+    let g = ecdh_part(group);
+    var e: u8[>..] = [];
+    if g != 0 { e = ecdh_public(c, g); }
+    return hybrid_join(group, ek, e);
+}
+
 // The client's key_share list: a share for `share_group`, and beside a
 // hybrid a share of its ECDH part with the same key (as Go sends), for
 // servers without ML-KEM; not after a HelloRetryRequest, which allows only
-// the share it asked for.
+// the share it asked for. `share_group` 0, after a HelloRetryRequest that
+// named no group (a cookie alone), repeats the first ClientHello's shares
+// as they were (§4.1.2).
 fn client_shares(c: Conn&, cfg: const ClientConfig&, share_group: u16) -> u8[>..] {
     var b: u8[>..] = [];
     if !c.offer13 { return b; }
     let kl = begin_vec(b, 2);
+    if share_group == 0 {
+        for g in [c.group, c.group2] {
+            if g == 0 { continue; }
+            let pub = share_public(c, g);
+            put_u16(b, g);
+            put_u16(b, pub.len as! u16);
+            b.append(pub);
+        }
+        patch_len(b, kl, 2);
+        return b;
+    }
     put_u16(b, share_group);
     let pubkey = make_share(c, share_group);
     put_u16(b, pubkey.len as! u16);
@@ -1126,7 +1179,11 @@ fn client_start(c: Conn&, cfg: const ClientConfig&, out: u8[>..]&) {
     c.offer13 = cfg.max_version >= VERSION_TLS13 && cfg.min_version <= VERSION_TLS13 && cfg.suites.len > 0;
     c.offer12 = cfg.min_version <= VERSION_TLS12 && cfg.max_version >= VERSION_TLS12 && cfg.suites12.len > 0 &&
                 cfg.ech_config_list.len == 0;
-    if !c.offer13 && !c.offer12 || (cfg.ech_config_list.len > 0 && !c.offer13) {
+    // Checking the certificate needs a name to check it for: with none,
+    // the client refuses to start, as Go does ("either ServerName or
+    // InsecureSkipVerify must be specified").
+    if !c.offer13 && !c.offer12 || (cfg.ech_config_list.len > 0 && !c.offer13) ||
+       (cfg.verify && cfg.server_name.len == 0) {
         c.alert = ALERT_INTERNAL_ERROR;
         c.state = ST_FAILED;
         return;
@@ -1229,6 +1286,7 @@ fn client_server_hello(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: 
     var share_group = -1;
     var share = Rd { pos: 0, end: 0, bad: false };
     var cookie = Rd { pos: 0, end: 0, bad: false };
+    var has_cookie = false;
     var psk_selected = -1;
     var ech_hrr = empty_rd();
     var has_ech_hrr = false;
@@ -1243,6 +1301,7 @@ fn client_server_hello(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: 
             if !is_hrr { share = get_vec(e, m, 2); }
         } else if ty == EXT_COOKIE && is_hrr {
             cookie = get_vec(e, m, 2);
+            has_cookie = !cookie.bad && cookie.end > cookie.pos;
         } else if ty == EXT_PRE_SHARED_KEY && !is_hrr && c.psk_offered {
             psk_selected = get_u16(e, m);
         } else if ty == EXT_ENCRYPTED_CLIENT_HELLO && is_hrr && c.ech_offered {
@@ -1256,9 +1315,14 @@ fn client_server_hello(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: 
     if version != 0x0304 { return fail(c, ALERT_PROTOCOL_VERSION, out); }
     c.version = VERSION_TLS13;
     if is_hrr {
+        // A group to retry with, one offered but not shared; or none, the
+        // shares staying as they were, when it brings a cookie (a server
+        // that keeps no state, OpenSSL's -stateless); a retry that would
+        // change nothing is refused (§4.1.4).
         var known = false;
         for g in cfg.groups { if g == share_group && group13(g) { known = true; } }
-        if c.hrr || !known || share_group == c.group || share_group == c.group2 {
+        let cookie_only = share_group < 0 && has_cookie;
+        if c.hrr || (!known && !cookie_only) || share_group == c.group || share_group == c.group2 {
             return fail(c, ALERT_ILLEGAL_PARAMETER, out);
         }
         c.hrr = true;
@@ -1292,7 +1356,7 @@ fn client_server_hello(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: 
         send_ccs(c, out);
         var ck: u8[>..] = [];
         ck.append(m[cookie.pos..cookie.end]);
-        let ch2, inner2 = build_client_hello(c, cfg, share_group as! u16, ck);
+        let ch2, inner2 = build_client_hello(c, cfg, if cookie_only { 0 } else { share_group as! u16 }, ck);
         send_hs(c, ch2, out);
         if c.ech_offered { transcript_add(c.th_inner, inner2); }
         return 0;
@@ -1474,6 +1538,7 @@ fn check_server_chain(c: Conn&, cfg: const ClientConfig&, out: u8[>..]&) -> i64 
         // (§6.1.7).
         var name: u8[>..] = [];
         name.append(if c.ech_offered && !c.ech_accepted { c.ech_public_name[..] } else { cfg.server_name[..] });
+        if name.len == 0 { return fail(c, ALERT_INTERNAL_ERROR, out); }
         let e = server_chain_error(cfg, c.chain, name);
         if e != x509::OK {
             c.error = e;
@@ -1529,6 +1594,9 @@ fn client_certificate_request(c: Conn&, cfg: const ClientConfig&, m: const u8[:]
     let ctx = get_vec(b, m, 1);
     var exts = get_vec(b, m, 2);
     if !done(b) { return fail(c, ALERT_DECODE_ERROR, out); }
+    // In the handshake its context is empty (§4.3.2); a context is for
+    // post-handshake authentication, which this client does not offer.
+    if ctx.end != ctx.pos { return fail(c, ALERT_ILLEGAL_PARAMETER, out); }
     var schemes: u16[..64] = [];
     var has_schemes = false;
     var cas = empty_rd();
@@ -1539,6 +1607,8 @@ fn client_certificate_request(c: Conn&, cfg: const ClientConfig&, m: const u8[:]
         if exts.bad { return fail(c, ALERT_DECODE_ERROR, out); }
         if ty == EXT_SIGNATURE_ALGORITHMS {
             var l = get_vec(e, m, 2);
+            // A whole, non-empty list of two-byte schemes (§4.2.3).
+            if l.end == l.pos || (l.end - l.pos) % 2 != 0 { return fail(c, ALERT_DECODE_ERROR, out); }
             while l.pos + 1 < l.end {
                 let v = get_u16(l, m);
                 if schemes.len < schemes.cap { schemes.push(v as! u16); }
@@ -1821,12 +1891,18 @@ fn parse_hello(m: const u8[:]) -> Hello, bool {
         } else if ty == EXT_KEY_SHARE {
             h.shares = get_vec(e, m, 2);
             h.has_shares = true;
-            // Each entry whole: a group and a non-empty key.
+            // Each entry whole: a group and a non-empty key; no group
+            // twice (§4.2.8: illegal_parameter).
             var l = h.shares;
+            var groups: u64[1024] = [0; 1024];
             while l.pos < l.end {
                 let g = get_u16(l, m);
                 let k = get_vec(l, m, 2);
                 if k.end == k.pos { l.bad = true; }
+                if l.bad { break; }
+                let bit: u64 = 1 << (g & 63);
+                if groups[g >> 6] & bit != 0 { h.alert = ALERT_ILLEGAL_PARAMETER; return h, false; }
+                groups[g >> 6] = groups[g >> 6] | bit;
             }
             if l.bad { return h, false; }
         } else if ty == EXT_SIGNATURE_ALGORITHMS {
@@ -1843,6 +1919,9 @@ fn parse_hello(m: const u8[:]) -> Hello, bool {
                 let kind = get_u8(l, m);
                 let name = get_vec(l, m, 2);
                 if l.bad || name.end == name.pos { return h, false; }
+                // A host name longer than a DNS name can be (and than the
+                // 255 bytes kept of it) is refused, not cut.
+                if kind == 0 && name.end - name.pos > 255 { return h, false; }
                 if kind == 0 {
                     names++;
                     h.sni = name;
@@ -2183,14 +2262,15 @@ fn server_client_hello(c: Conn&, cfg: const ServerConfig&, m: const u8[:], out: 
     let scheme = pick_scheme(cfg.key, c.peer_schemes);
     if select_alpn(c, cfg, h, m, out) != 0 { return -1; }
     c.sni.clear();
-    if h.sni.end - h.sni.pos <= 255 { c.sni.append(m[h.sni.pos..h.sni.end]); }
+    c.sni.append(m[h.sni.pos..h.sni.end]);       // at most 255 bytes (parse_hello)
     if !second {
         c.session_id.clear();
         c.session_id.append(m[h.sid.pos..h.sid.end]);
         c.th = transcript(s.hash);
     }
     // Resumption: the first identity that is a ticket of ours, unexpired,
-    // for a suite of this hash; its binder must then be right.
+    // for a suite of this hash and the name the session was made for
+    // (another name gets a full handshake); its binder must then be right.
     var psk: u8[>..] = [];
     var psk_identity = -1;
     c.psk_dhe = h.psk_dhe;
@@ -2205,7 +2285,7 @@ fn server_client_hello(c: Conn&, cfg: const ServerConfig&, m: const u8[:], out: 
             let t, okt = open_ticket(cfg.ticket_key, m[id.pos..id.end]);
             let ts, okts = suite(t.suite);
             if okt && okts && t.version == VERSION_TLS13 && ts.hash == s.hash && now >= t.created && now - t.created <= t.lifetime &&
-               ticket_client_ok(cfg, t, now) {
+               t.sni[..] == c.sni[..] && ticket_client_ok(cfg, t, now) {
                 psk_identity = idx;
                 psk.append(t.psk);
                 // The client's certificate, carried over.
@@ -2518,8 +2598,12 @@ fn handle_record(c: Conn&, cfg, rec: const u8[:], out: u8[>..]&, app: u8[>..]&) 
         // TLS 1.2's turns on the peer's keys, at the end of a flight.
         if c.version == VERSION_TLS12 { return change_cipher_spec12(c, out); }
         // Middlebox compatibility: one byte 1, once, only during the
-        // handshake (and not between a handshake message's fragments).
-        if c.state == ST_CONNECTED || c.ccs_seen || c.hs.len > 0 { return fail(c, ALERT_UNEXPECTED_MESSAGE, out); }
+        // handshake, after the first ClientHello (§5: not before the
+        // server has one), and not between a handshake message's
+        // fragments.
+        if c.state == ST_CONNECTED || c.ccs_seen || c.hs.len > 0 || c.state == ST_WAIT_CH || c.state == ST_START {
+            return fail(c, ALERT_UNEXPECTED_MESSAGE, out);
+        }
         c.ccs_seen = true;
         return 0;
     }
@@ -2529,6 +2613,7 @@ fn handle_record(c: Conn&, cfg, rec: const u8[:], out: u8[>..]&, app: u8[>..]&) 
         // protect its alert: a plaintext fatal alert ends the handshake.
         c.alert = rec[6];
         c.state = ST_FAILED;
+        wipe(c);
         return -1;
     }
     if c.read_protected {
@@ -2578,6 +2663,7 @@ fn handle_record(c: Conn&, cfg, rec: const u8[:], out: u8[>..]&, app: u8[>..]&) 
         if c.version == VERSION_TLS12 && payload[0] == ALERT_WARNING && payload[1] != ALERT_CLOSE_NOTIFY { return 0; }
         c.alert = payload[1];
         c.state = if payload[1] == ALERT_CLOSE_NOTIFY { ST_CLOSED } else { ST_FAILED };
+        if c.state == ST_FAILED { wipe(c); } else { wipe_read(c); }
         return if c.state == ST_CLOSED { 0 } else { -1 };
     }
     if ctype == CT_APPLICATION_DATA {

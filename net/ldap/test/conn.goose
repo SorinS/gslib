@@ -339,6 +339,28 @@ fn starttls() {
     let id2 = ldap::start_tls(c2, out);
     let m2, code2 = feed_all(c2, message(id2, ldap::OP_EXTENDED_RESPONSE, result_body(ldap::RESULT_PROTOCOL_ERROR, "", "no", "")));
     check("starttls refused", code2 == 0 && !c2.tls_ready && c2.state == ldap::ST_OPEN && ldap::who_am_i(c2, out) == 2);
+
+    // Bytes in the clear after a successful StartTLS response (an
+    // attacker's: a whole forged BindResponse, then the start of another)
+    // are dropped, not taken as the answer to the bind that follows.
+    var c3 = ldap::client();
+    let id3 = ldap::start_tls(c3, out);
+    var inject: u8[>..] = [];
+    inject.append(message(id3, ldap::OP_EXTENDED_RESPONSE, result_body(0, "", "", name)));
+    let forged = message(2, ldap::OP_BIND_RESPONSE, result_body(0, "", "", ""));
+    inject.append(forged);
+    inject.append(forged[..4]);
+    let m3, code3 = feed_all(c3, inject);
+    var p3 = 0;
+    let r3, ok3 = ldap::next_message(m3, p3);
+    let r3b, ok3b = ldap::next_message(m3, p3);
+    check("injected after starttls: dropped", code3 == 0 && c3.tls_ready && ok3 && r3.id == id3 && !ok3b && c3.inbuf.len == 0);
+    let bid = ldap::bind(c3, "cn=a", "wrong", out);
+    let m4, code4 = feed_all(c3, message(bid, ldap::OP_BIND_RESPONSE, result_body(ldap::RESULT_INVALID_CREDENTIALS, "", "", "")));
+    var p4 = 0;
+    let r4, ok4 = ldap::next_message(m4, p4);
+    check("the real bind response after it", bid == 2 && code4 == 0 && ok4 && r4.id == 2 &&
+          ldap::result_code(m4, r4) == ldap::RESULT_INVALID_CREDENTIALS);
 }
 
 fn failures_close() {

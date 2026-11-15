@@ -70,6 +70,7 @@ root struct Sp {
     allow_cbc:              bool             = false,
     allow_rsa15:            bool             = false,
     clock_skew:             i64              = 120,            // seconds either way
+    logout_max_age:         i64              = 300,            // how old a LogoutRequest's IssueInstant may be (seconds, besides the skew)
     max_message:            i64              = DEFAULT_MAX_MESSAGE,
     name_id_format:         u8[>..]          = [],             // asked for in NameIDPolicy; "" none
     now:                    i64              = 0,              // seconds; 0: the clock (tests set it)
@@ -83,20 +84,22 @@ fn sp_set_key(sp: Sp&, key: const x509::PrivateKey&, cert_der: const u8[:]) {
 }
 
 fn sp_checks(sp: const Sp&, require_signed: bool) -> Checks {
-    Checks { now: now_or(sp.now), skew: sp.clock_skew, allow_sha1: sp.allow_sha1, require_signed: require_signed, max: sp.max_message }
+    Checks { now: now_or(sp.now), skew: sp.clock_skew, allow_sha1: sp.allow_sha1, require_signed: require_signed, max: sp.max_message,
+             max_age: sp.logout_max_age }
 }
 
-// The service provider's metadata as an Entity.
-fn sp_entity(sp: const Sp&, e: Entity&) {
+// The service provider's metadata as an Entity. False (and an endpoint
+// left out) when acs_url or slo_url is not an absolute http(s) URL.
+fn sp_entity(sp: const Sp&, e: Entity&) -> bool {
     reset_entity(e);
     e.entity_id.append(sp.entity_id);
     e.is_sp = true;
     e.authn_requests_signed = sp.sign_requests;
     e.want_assertions_signed = sp.want_assertions_signed;
-    add_endpoint(e, ROLE_SP, EP_ACS, BINDING_POST, sp.acs_url);
+    var ok = add_endpoint(e, ROLE_SP, EP_ACS, BINDING_POST, sp.acs_url);
     if sp.slo_url.len > 0 {
-        add_endpoint(e, ROLE_SP, EP_SLO, BINDING_REDIRECT, sp.slo_url);
-        add_endpoint(e, ROLE_SP, EP_SLO, BINDING_POST, sp.slo_url);
+        ok = add_endpoint(e, ROLE_SP, EP_SLO, BINDING_REDIRECT, sp.slo_url) && ok;
+        ok = add_endpoint(e, ROLE_SP, EP_SLO, BINDING_POST, sp.slo_url) && ok;
     }
     if sp.signer.cert_der.len > 0 { add_cert(e.sp_signing, sp.signer.cert_der); }
     let enc = if sp.has_enc_key { sp.enc_cert_der[..] } else { sp.signer.cert_der[..] };
@@ -110,12 +113,14 @@ fn sp_entity(sp: const Sp&, e: Entity&) {
         }
     }
     if sp.name_id_format.len > 0 { add_cert(e.sp_name_id_formats, sp.name_id_format); }
+    return ok;
 }
 
-// The service provider's metadata, signed when it has a key and `signed` is set.
+// The service provider's metadata, signed when it has a key and `signed`
+// is set; ERR_ENDPOINT for an endpoint URL sp_entity refuses.
 fn sp_metadata(sp: const Sp&, signed: bool, out: u8[>..]&) -> i64 {
     var e = Entity { .. };
-    sp_entity(sp, e);
+    if !sp_entity(sp, e) { return ERR_ENDPOINT; }
     if signed { return write_metadata_signed(e, sp.signer, out); }
     return write_metadata(e, out);
 }
@@ -642,6 +647,14 @@ fn logout_subject_of(a: const Assertion&) -> LogoutSubject, bool {
 fn sp_read_logout_request(sp: const Sp&, idp: const Entity&, m: const Received&, r: Message&) -> i64 {
     let c = sp_checks(sp, true);
     return read_logout_request(m, idp, ROLE_IDP, sp.slo_url, c, r);
+}
+
+// sp_read_logout_request, and then the replay check: F(id, until) says
+// whether the LogoutRequest's ID is new (and remembers it until `until`,
+// seconds); ERR_REPLAY when it is not.
+fn sp_read_logout_request_replay<F>(sp: const Sp&, idp: const Entity&, m: const Received&, r: Message&) -> i64 {
+    let c = sp_checks(sp, true);
+    return read_logout_request_replay(m, idp, ROLE_IDP, sp.slo_url, c, r) { id, until => F(id, until) };
 }
 
 // The LogoutResponse to it.

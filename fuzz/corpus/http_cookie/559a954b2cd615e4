@@ -1,0 +1,4 @@
+cookie-1="quoted"
+cookie-2="quoted with spaces"
+cookie-3="quoted,with,commas"
+cookie-4= ,

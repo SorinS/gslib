@@ -31,6 +31,7 @@ struct ZoneOptions {
     default_ttl: i64 = -1,      // -1: none until a TTL is given
     include: bool = false,      // $INCLUDE allowed
     file: u8[..1024] = "",      // the zone's path, for $INCLUDE's relative paths and errors
+    empty_rdata: bool = false,  // records without rdata allowed (new_rr's dynamic-update deletes)
 }
 
 struct ZoneResult { err: i64, line: i64, msg: u8[..160] }
@@ -287,7 +288,7 @@ fn rdata_parse(t: u16, src: const u8[:], toks: const Tok[:], first: i64, origin:
         msg.append("records of this type do not have a presentation format");
         return ERR_SYNTAX;
     }
-    // Empty rdata is allowed, as miekg allows it (dynamic update's deletes).
+    // Empty rdata: entry_rr decides whether the record may have none.
     if i == toks.len { return OK; }
     for fi in lay.f.len {
         let k = lay.f[fi];
@@ -532,6 +533,8 @@ fn loc_parse(src: const u8[:], toks: const Tok[:], first: i64, rd: u8[>..]&, msg
             let pos = if axis == 0 { "N" } else { "E" };
             let neg = if axis == 0 { "S" } else { "W" };
             if ascii_eq_fold(s, pos) || ascii_eq_fold(s, neg) {
+                // No further than the pole or the antimeridian (RFC 1876 §2).
+                if v > max * 3600000 { msg.append("bad LOC degrees"); return ERR_SYNTAX; }
                 if ascii_eq_fold(s, pos) { v = (1 << 31) + v; } else { v = (1 << 31) - v; }
                 i++;
                 break;
@@ -542,7 +545,7 @@ fn loc_parse(src: const u8[:], toks: const Tok[:], first: i64, rd: u8[>..]&, msg
                 v += mi * 60000;
             } else if parts == 1 {
                 let f, ok = parse_flt(s);
-                if !ok || f < 0.0 || f >= 60.0 { msg.append("bad LOC seconds"); return ERR_SYNTAX; }
+                if !ok || !(f >= 0.0 && f < 60.0) { msg.append("bad LOC seconds"); return ERR_SYNTAX; }
                 v += (f * 1000.0) as! i64;
             } else {
                 msg.append("bad LOC hemisphere");
@@ -557,7 +560,9 @@ fn loc_parse(src: const u8[:], toks: const Tok[:], first: i64, rd: u8[>..]&, msg
     var a = toks[i].text(src);
     if a.len > 0 && (a[a.len - 1] == 'm' || a[a.len - 1] == 'M') { a = a[..a.len - 1]; }
     let alt, ok = parse_flt(a);
-    if !ok { msg.append("bad LOC altitude"); return ERR_SYNTAX; }
+    // RFC 1876 §2: centimetres above 100000 m below the WGS 84 spheroid, in
+    // 32 bits; nothing outside that, and no infinity or NaN.
+    if !ok || !(alt >= -100000.0 && alt <= 42849672.95) { msg.append("bad LOC altitude"); return ERR_SYNTAX; }
     i++;
     var sizes: u8[3] = [0x12, 0x16, 0x13];
     var n = 0;
@@ -741,7 +746,8 @@ struct ZoneState {
 }
 
 // One record from an entry's tokens onto out.
-fn entry_rr(src: const u8[:], toks: const Tok[:], blank: bool, st: ZoneState&, out: u8[>..]&, msg: u8[..160]&) -> i64 {
+fn entry_rr(src: const u8[:], toks: const Tok[:], blank: bool, st: ZoneState&, out: u8[>..]&, msg: u8[..160]&,
+            empty_ok: bool) -> i64 {
     var i = 0;
     var owner: Name = [];
     if blank {
@@ -759,7 +765,7 @@ fn entry_rr(src: const u8[:], toks: const Tok[:], blank: bool, st: ZoneState&, o
     var t: i64 = -1;
     while i < toks.len && t < 0 {
         let s = toks[i].text(src);
-        if ttl < 0 && ascii::is_digit(s[0]) {
+        if ttl < 0 && s.len > 0 && ascii::is_digit(s[0]) {
             ttl = ttl_parse(s);
             if ttl < 0 { msg.append("bad TTL: "); msg.append(clip(s)); return ERR_TTL; }
         } else if type_from_string(s) >= 0 {
@@ -790,6 +796,13 @@ fn entry_rr(src: const u8[:], toks: const Tok[:], blank: bool, st: ZoneState&, o
     let rs = out.len;
     let e = rdata_parse(t as! u16, src, toks, i, st.origin, out, msg);
     if e != OK { out.resize(start); return e; }
+    // No rdata: only where the record may have none (class ANY or NONE, or a
+    // type all of whose fields may be empty), or where the caller allows it.
+    if out.len == rs && !empty_ok && !rdata_empty_ok(t as! u16, class as! u16) {
+        out.resize(start);
+        msg.append("missing rdata");
+        return ERR_SYNTAX;
+    }
     if out.len - rs > 65535 { out.resize(start); msg.append("rdata too long"); return ERR_BUF; }
     set16(out, rs - 2, (out.len - rs) as! u16);
     return OK;
@@ -878,7 +891,7 @@ fn parse_zone(zone: const u8[:], opts: ZoneOptions, out: u8[>..]&) -> ZoneResult
                 frames.push(Frame { start, store.len, 0, 1, origin, st.ttl, st.ttl_directive, path });
                 st.origin = origin;
             } else if ascii_eq_fold(first, "$GENERATE") {
-                let e = generate(src, toks, st, out, gen, gtoks, msg);
+                let e = generate(src, toks, st, out, gen, gtoks, msg, opts.empty_rdata);
                 if e != OK { return zone_fail(e, line, msg); }
             } else {
                 return zone_fail(ERR_SYNTAX, line, "unknown directive");
@@ -886,7 +899,7 @@ fn parse_zone(zone: const u8[:], opts: ZoneOptions, out: u8[>..]&) -> ZoneResult
             continue;
         }
         msg.clear();
-        let e = entry_rr(src, toks, blank, st, out, msg);
+        let e = entry_rr(src, toks, blank, st, out, msg, opts.empty_rdata);
         if e != OK { return zone_fail(e, line, msg); }
     }
     return zone_ok();
@@ -898,7 +911,7 @@ fn parse_zone(zone: const u8[:], opts: ZoneOptions, out: u8[>..]&) -> ZoneResult
 // "\$" a dollar. As in miekg, the generated records are read on their
 // own: an omitted TTL is 3600, not the $TTL in force.
 fn generate(src: const u8[:], toks: const Tok[:], st: ZoneState&, out: u8[>..]&, line: u8[>..]&,
-            ltoks: Tok[>..]&, msg: u8[..160]&) -> i64 {
+            ltoks: Tok[>..]&, msg: u8[..160]&, empty_ok: bool) -> i64 {
     if toks.len < 4 { msg.append("bad $GENERATE"); return ERR_SYNTAX; }
     let range = toks[1].text(src);
     let r0, stepstr, has_step = split_once(range, '/');
@@ -920,7 +933,7 @@ fn generate(src: const u8[:], toks: const Tok[:], st: ZoneState&, out: u8[>..]&,
         let next, lines, blank, le = next_entry(line, 0, ltoks);
         if le != OK { msg.append("bad $GENERATE"); return ERR_SYNTAX; }
         msg.clear();
-        let e = entry_rr(line, ltoks, false, gst, out, msg);
+        let e = entry_rr(line, ltoks, false, gst, out, msg, empty_ok);
         if e != OK { return e; }
         i += step;
     }
@@ -965,8 +978,9 @@ fn gen_expand(out: u8[>..]&, s: const u8[:], n: i64, start: i64, stop: i64) -> c
 }
 
 // One record from its text onto out (miekg's NewRR): origin the root, a
-// default TTL of 3600, $INCLUDE allowed. Text with no record is
-// ERR_SYNTAX.
+// default TTL of 3600, rdata may be left out (as dynamic update's deletes
+// have it), $INCLUDE not allowed (miekg allows it: text from elsewhere
+// would then read files). Text with no record is ERR_SYNTAX.
 fn new_rr(out: u8[>..]&, s: const u8[:]) -> i64 {
     let r = new_rr_result(out, s);
     return r.err;
@@ -975,7 +989,7 @@ fn new_rr(out: u8[>..]&, s: const u8[:]) -> i64 {
 fn new_rr_result(out: u8[>..]&, s: const u8[:]) -> ZoneResult {
     var opts = ZoneOptions { .. };
     opts.default_ttl = 3600;
-    opts.include = true;
+    opts.empty_rdata = true;
     let start = out.len;
     let r = parse_zone(s, opts, out);
     if r.err != OK { return r; }

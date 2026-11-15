@@ -218,6 +218,8 @@ fn reply_text(r: Reply&, status: i64, text: const u8[:]) {
 // An Outgoing message as the browser should get it: a redirect, or the page that posts.
 fn reply_outgoing(r: Reply&, o: const saml::Outgoing&) {
     if o.binding == saml::BINDING_REDIRECT {
+        // saml checks endpoint URLs; a header is still never split here.
+        for c in o.url { if c == '\r' || c == '\n' || c == 0 { reply_text(r, 500, "a redirect URL with a line break"); return; } }
         r.status = 302;
         r.location.append(o.url);
         r.ctype.append("text/plain");
@@ -355,6 +357,15 @@ fn load_peer(o: const Options&, path: const u8[:], e: saml::Entity&) -> i32 {
 
 // The InResponseTo of a Response, unverified: which of our requests it
 // claims to answer (process_response then checks it).
+// A replay cache's check: whether id is new, remembered if it is.
+fn remember(seen: u8[][>..]&, id: const u8[:]) -> bool {
+    for s in seen { if s == id { return false; } }
+    var x: u8[>..] = [];
+    x.append(id);
+    seen.push(copy(x));
+    return true;
+}
+
 fn claimed_in_response_to(xml_text: const u8[:]) -> u8[>..] {
     var d = xml::Doc { .. };
     var out: u8[>..] = [];
@@ -449,7 +460,7 @@ fn run_sp(o: const Options&) -> i32 {
             if re != saml::OK { reply_text(r, 400, str("bad SAML message: ", m.message)); }
             else if m.is_request {
                 var msg = saml::Message { .. };
-                let e = saml::sp_read_logout_request(sp, idp, m, msg);
+                let e = saml::sp_read_logout_request_replay(sp, idp, m, msg) { id, until => remember(seen, id) };
                 var line: u8[>..] = [];
                 line.append("{\"event\":\"logout-request\"");
                 json_field(line, "result", saml::error_text(e));
@@ -538,6 +549,7 @@ fn run_idp(o: const Options&) -> i32 {
     if fd < 0 { return fail("cannot listen"); }
     let session = saml::new_id();
     var pending_logout: u8[>..] = [];
+    var seen_logout: u8[][>..] = [];   // LogoutRequest IDs taken (a test tool: kept for the run)
     loop {
         let c = dns::dnsnet_accept(fd, 1000);
         if c < 0 { continue; }
@@ -578,7 +590,7 @@ fn run_idp(o: const Options&) -> i32 {
                 }
             } else if m.is_request {
                 var msg = saml::Message { .. };
-                let e = saml::idp_read_logout_request(idp, sp, m, msg);
+                let e = saml::idp_read_logout_request_replay(idp, sp, m, msg) { id, until => remember(seen_logout, id) };
                 var line: u8[>..] = [];
                 line.append("{\"event\":\"logout-request\"");
                 json_field(line, "result", saml::error_text(e));

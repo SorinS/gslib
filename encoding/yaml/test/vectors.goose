@@ -282,6 +282,24 @@ fn dump(text: const u8[:]) -> u8[>..] {
 }
 
 fn main() {
+    // The dumps of the cases where this package parts from yaml.v3 on
+    // purpose (the README lists where), in goyaml.txt's form.
+    var ours: u8[>..] = [];
+    guard read_file("vectors/differences.txt", ours) else { abort("cannot read test/vectors/differences.txt"); }
+    var differs = dictionary<const u8[:], const u8[:]> {};
+    var at = 0;
+    while at < ours.len {
+        let nl = find(ours[at..], "\n");
+        assert(nl >= 0 && starts_with(ours[at..], "case "));
+        let dname = ours[at + 5..at + nl];
+        let body = at + nl + 1;
+        let end = find(ours[body..], "\nend\n");
+        assert(end >= 0);
+        differs.insert(dname, ours[body..body + end + 1]);
+        at = body + end + 5;
+    }
+    var parted = 0;
+    var met = 0;
     var data: u8[>..] = [];
     guard read_file("vectors/goyaml.txt", data) else { abort("cannot read test/vectors/goyaml.txt"); }
     var name: u8[>..] = [];
@@ -307,7 +325,17 @@ fn main() {
             cases++;
             checks++;
             let got = vector_form(dump(input));
-            if got != want {
+            let alt = differs.get(name[..]);
+            if alt {
+                met++;
+                if got == alt && got != want {
+                    parted++;
+                } else {
+                    failures++;
+                    print("FAIL ", name, if got == want { " (as yaml.v3 now)" } else { "" });
+                    if failures <= 20 { print("  want:\n", alt, "  got:\n", got); }
+                }
+            } else if got != want {
                 failures++;
                 print("FAIL ", name);
                 if failures <= 20 { print("  want:\n", want, "  got:\n", got); }
@@ -317,6 +345,7 @@ fn main() {
             want.push('\n');
         }
     };
-    print("vectors: ", cases, " cases, ", failures, " failed");
+    print("vectors: ", cases, " cases, ", failures, " failed (", parted, " as vectors/differences.txt has them)");
+    if met != differs.count { print("vectors/differences.txt has cases that are not in vectors/goyaml.txt"); exit(1); }
     if failures > 0 { exit(1); }
 }

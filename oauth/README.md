@@ -59,8 +59,19 @@ name with a line end is left empty, never cut, with
 Signatures are checked with the algorithm the client allows, not the one
 the token names: `c.algs`, or when it is empty RS*, PS*, ES* and EdDSA.
 "none" is never allowed, and HMAC (with the client secret, OIDC Core
-§10.1) only when listed. An ID token with typ at+jwt is refused, and an
-access token must have it.
+§10.1) only when listed. An ID token typed as another kind of JWT
+(at+jwt, logout+jwt, any "+jwt"), or carrying a logout token's `events`,
+is refused (`ERR_TYP`), and an access token must have typ at+jwt.
+
+Requests go over https only: `discover` refuses an http:// issuer or
+metadata naming an http:// endpoint (the authorization and end-session
+ones the browser is sent to too), and the token, PAR, device,
+introspection and revocation endpoints, the jwks_uri and
+`resource_request`'s URL are refused when http:// (`ERR_INSECURE`), each
+except to localhost or a loopback address. Metadata set by hand (from
+`read_metadata`) is the caller's to check (`url_allowed`). Set
+`c.allow_http = true` to allow plain http anywhere (a test server on
+another host).
 
 ## Using it
 
@@ -138,7 +149,9 @@ options: `--ca-file` (the server's CAs instead of the system's),
 `--scope`, `--resource` (repeatable, RFC 8707), `--audience`,
 `--dpop-key FILE` (a JWK, made P-256 and 0600 when it is not there),
 `--par`, `--port N` (login's loopback port, 0 by default: any),
-`--timeout S`, `--save FILE`, `--hint`.
+`--timeout S`, `--save FILE`, `--hint`, and `--allow-http` (sets
+`allow_http`: plain http:// to any host, for a test server; without it,
+http:// is refused except to a loopback host).
 
 `login` listens on 127.0.0.1, prints the URL to open on stderr, waits for
 the browser's redirect to `/callback`, checks its state and issuer,
@@ -203,8 +216,12 @@ the examples. Without a server:
   another nonce, expired (and within the leeway, not), iat and nbf ahead,
   max_age passed, a tampered signature, another key with the same kid, an
   unknown kid, alg none, HS256 when not allowed (and with another secret
-  when allowed), an alg outside the client's list, typ at+jwt, at_hash and
-  c_hash mismatches.
+  when allowed), an alg outside the client's list, typ at+jwt, logout+jwt
+  and other "+jwt" types and a logout token's events (with no nonce
+  asked for), at_hash and c_hash mismatches.
+- https only: http:// to a non-loopback host refused for discovery, the
+  jwks_uri, the token endpoint and a resource; loopback hosts allowed,
+  and anything with `allow_http`.
 - JWT access tokens (RFC 9068): typ at+jwt and application/at+jwt, typ
   JWT refused, another audience, a missing scope, no jti, expired; cnf
   x5t#S256 and jkt checked against a certificate and RFC 9449's proof.

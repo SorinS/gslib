@@ -1,0 +1,2 @@
+A=; domain=google.com; max-age=-1
+A=; path=/foo; domain=google.com; max-age=-1

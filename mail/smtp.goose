@@ -214,7 +214,9 @@ fn auth(c: Client&, mech: i64, user: const u8[:], secret: const u8[:]) -> i64 {
     }
     if mail::auth_plaintext(m) && !c.secure && !is_local(c.host) { return mail::ERR_AUTH; }
     if mail::has_crlf(user) { return mail::ERR_LINE; }
+    if !mail::sasl_fits(user, secret) { return mail::ERR_AUTH; }
     var s = mail::sasl_new(m, user, secret);
+    if m == mail::AUTH_NTLM { mail::link_sasl_target(c, s, "SMTPSVC"); }
     var resp: u8[>..] = [];
     var line: u8[>..] = [];
     line.append("AUTH ");

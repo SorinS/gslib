@@ -73,31 +73,35 @@ fn keys(kr: openpgp::Keyring&) {
     for name in ["ed.sec", "prot.sec", "rsa.sec"] {
         tv::check_int(str("add ", name), openpgp::add_keys(kr, vec(name)), openpgp::OK);
     }
-    tv::check_int("all keys", kr.keys.len, 12);
-    tv::check("ed secret open", kr.keys[6].has_secret && !kr.keys[6].locked && !kr.keys[7].locked);
-    tv::check("prot locked", kr.keys[8].locked && kr.keys[9].locked && kr.keys[10].locked);
-    tv::check_int("find prefers secret", openpgp::find_key(kr, "test@example.com"), 6);
-    tv::check_int("signing key", openpgp::signing_key(kr, 6), 6);
-    tv::check_int("wrong passphrase", openpgp::unlock(kr, 8, "not the passphrase"), openpgp::ERR_PASSPHRASE);
-    tv::check("still locked", kr.keys[8].locked);
+    // Each secret key merges into its public copy (same fingerprints).
+    tv::check_int("all keys", kr.keys.len, 6);
+    tv::check_int("user IDs merged", kr.uids.len, 3);
+    tv::check("ed secret open", kr.keys[0].has_secret && !kr.keys[0].locked && !kr.keys[1].locked);
+    tv::check("prot locked", kr.keys[2].locked && kr.keys[3].locked && kr.keys[4].locked);
+    tv::check_int("find prefers secret", openpgp::find_key(kr, "test@example.com"), 0);
+    tv::check_int("signing key", openpgp::signing_key(kr, 0), 0);
+    tv::check_int("wrong passphrase", openpgp::unlock(kr, 2, "not the passphrase"), openpgp::ERR_PASSPHRASE);
+    tv::check("still locked", kr.keys[2].locked);
     let pass = passphrase();
-    tv::check_int("unlock prot", openpgp::unlock(kr, 8, pass), openpgp::OK);
-    tv::check_int("unlock rsa", openpgp::unlock(kr, 10, pass), openpgp::OK);
-    tv::check("unlocked", !kr.keys[8].locked && !kr.keys[9].locked && !kr.keys[10].locked && !kr.keys[11].locked);
-    tv::check_int("unlock no secret", openpgp::unlock(kr, 0, pass), openpgp::ERR_KEY);
+    tv::check_int("unlock prot", openpgp::unlock(kr, 2, pass), openpgp::OK);
+    tv::check_int("unlock rsa", openpgp::unlock(kr, 4, pass), openpgp::OK);
+    tv::check("unlocked", !kr.keys[2].locked && !kr.keys[3].locked && !kr.keys[4].locked && !kr.keys[5].locked);
+    var kn = openpgp::Keyring { .. };
+    let ekn = openpgp::add_keys(kn, vec("ed.pub"));
+    tv::check_int("unlock no secret", openpgp::unlock(kn, 0, pass), openpgp::ERR_KEY);
 
     // Exports read back to the same keys; gpg's own public export is
     // what export_public gives of the secret key.
     var pub: u8[>..] = [];
-    tv::check_int("export public", openpgp::export_public(kr, 6, pub), openpgp::OK);
+    tv::check_int("export public", openpgp::export_public(kr, 0, pub), openpgp::OK);
     tv::check_eq("export public is gpg's", pub, vec("ed.pub"));
     var sec: u8[>..] = [];
-    tv::check_int("export secret", openpgp::export_secret(kr, 10, sec, true, "another test passphrase", 96), openpgp::OK);
+    tv::check_int("export secret", openpgp::export_secret(kr, 4, sec, true, "another test passphrase", 96), openpgp::OK);
     var kr2 = openpgp::Keyring { .. };
     tv::check_int("re-read", openpgp::add_keys(kr2, sec), openpgp::OK);
-    tv::check("re-read locked", kr2.keys.len == 2 && kr2.keys[0].locked && kr2.keys[0].fpr[..] == kr.keys[10].fpr[..]);
+    tv::check("re-read locked", kr2.keys.len == 2 && kr2.keys[0].locked && kr2.keys[0].fpr[..] == kr.keys[4].fpr[..]);
     tv::check_int("re-read unlock", openpgp::unlock(kr2, 0, "another test passphrase"), openpgp::OK);
-    tv::check("re-read same secret", kr2.keys[0].d[..] == kr.keys[10].d[..] && kr2.keys[1].p[..] == kr.keys[11].p[..]);
+    tv::check("re-read same secret", kr2.keys[0].d[..] == kr.keys[4].d[..] && kr2.keys[1].p[..] == kr.keys[5].p[..]);
 }
 
 fn read(kr: const openpgp::Keyring&, name: const u8[:], want: const u8[:], encrypted: bool, signed: bool) {
@@ -130,7 +134,7 @@ fn messages(kr: const openpgp::Keyring&) {
     o.passphrase.append(passphrase());
     let e = openpgp::read_message(kr, vec("enc_ed.gpg"), m, o);
     tv::check("gpg's OCB packet", e == openpgp::OK && m.integrity == openpgp::INTEGRITY_AEAD && m.aead == openpgp::AEAD_OCB
-              && m.cipher == openpgp::CIPHER_AES256 && m.decrypted_with == 7);
+              && m.cipher == openpgp::CIPHER_AES256 && m.decrypted_with == 1);
     var m1 = openpgp::Message { .. };
     let e1 = openpgp::read_message(kr, vec("sym.gpg"), m1, o);
     tv::check("SEIPD v1", e1 == openpgp::OK && m1.integrity == openpgp::INTEGRITY_MDC && m1.decrypted_with == -1);
@@ -205,7 +209,7 @@ fn rfc9580() {
     tv::check("A.3 v6 Ed25519 and X25519", k6.keys[0].version == 6 && k6.keys[0].algo == openpgp::PK_ED25519
               && k6.keys[1].algo == openpgp::PK_X25519 && k6.keys[0].valid && k6.keys[1].valid);
     tv::check_int("A.4 secret", openpgp::add_keys(k6, vec("rfc9580_a4_secret.asc")), openpgp::OK);
-    tv::check("A.4 open", k6.keys[2].has_secret && !k6.keys[2].locked && !k6.keys[3].locked);
+    tv::check("A.4 open", k6.keys.len == 2 && k6.keys[0].has_secret && !k6.keys[0].locked && !k6.keys[1].locked);
     // A.6 and A.7: v6 signatures, cleartext and inline.
     var mc = openpgp::Message { .. };
     tv::check_int("A.6 cleartext", openpgp::verify_cleartext(k6, vec("rfc9580_a6_cleartext.asc"), mc), openpgp::OK);
@@ -216,14 +220,14 @@ fn rfc9580() {
     // v6 signing and encryption to the v6 key, read back.
     var out: u8[>..] = [];
     var w = openpgp::WriteOptions { .. };
-    tv::check_int("v6 sign", openpgp::sign_detached(k6, 2, "v6 data", out, w), openpgp::OK);
+    tv::check_int("v6 sign", openpgp::sign_detached(k6, 0, "v6 data", out, w), openpgp::OK);
     var mv = openpgp::Message { .. };
     tv::check_int("v6 verify", openpgp::verify_detached(k6, "v6 data", out, mv), openpgp::OK);
     out.clear();
-    tv::check_int("X25519 encrypt", openpgp::encrypt(k6, [0], "", "to X25519", out, w, 2), openpgp::OK);
+    tv::check_int("X25519 encrypt", openpgp::encrypt(k6, [0], "", "to X25519", out, w, 0), openpgp::OK);
     var me = openpgp::Message { .. };
     tv::check_int("X25519 decrypt", openpgp::read_message(k6, out, me, openpgp::ReadOptions { .. }), openpgp::OK);
-    tv::check("X25519 data", me.data[..] == "to X25519" && openpgp::signature_status(me) == openpgp::OK && me.decrypted_with == 3);
+    tv::check("X25519 data", me.data[..] == "to X25519" && openpgp::signature_status(me) == openpgp::OK && me.decrypted_with == 1);
 }
 
 // gpg's P-384 key: its ECDSA signature and ECDH message read, and ours

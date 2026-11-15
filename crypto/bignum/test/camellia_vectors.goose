@@ -83,7 +83,16 @@ fn mode_ok<K>(k: const K&, mode: const u8[:], iv: const u8[:], pt: const u8[:], 
 
 fn cmac_ok<K>(k: const K&, msg: const u8[:], tag: const u8[:]) -> bool {
     if bignum::cmac(k, msg) != tag { return false; }
-    if !bignum::cmac_verify(k, msg, tag) || !bignum::cmac_verify(k, msg, tag[..4]) { return false; }
+    if !bignum::cmac_verify(k, msg, tag) || !bignum::cmac_verify(k, msg, tag[..8]) { return false; }
+    // Below 8 bytes the tag's own length is not trusted: one byte would be
+    // 256 guesses. An explicit length takes a short tag, and only that.
+    if bignum::cmac_verify(k, msg, tag[..7]) || bignum::cmac_verify(k, msg, tag[..1]) { return false; }
+    if !bignum::cmac_verify_len(k, msg, tag[..4], 4) || bignum::cmac_verify_len(k, msg, tag[..4], 8) { return false; }
+    if bignum::cmac_verify_len(k, msg, tag, 4) || bignum::cmac_verify_len(k, msg, "", 0) { return false; }
+    for b in 256 {
+        let one: u8[1] = [b as! u8];
+        if bignum::cmac_verify(k, msg, one) { return false; }
+    }
     // An altered tag, a tag too long or empty, an altered message.
     var bad: u8[>..] = [];
     bad.append(tag);

@@ -25,7 +25,7 @@ import .fs;
 
 var verbose = false;
 
-fn log(s: const u8[:]) { if verbose { sysnet::eprint(str("goose-sftp-server: ", s, "\n")); } }
+fn log(s: const u8[:]) { if verbose { sysnet::eprint(str("goose-sftp-server: ", sysnet::safe_text(s), "\n")); } }
 
 let MAX_HANDLES: i64 = 64;
 let NAMES_PER_READDIR: i64 = 100;      // as OpenSSH's sftp-server
@@ -34,8 +34,8 @@ let H_FREE: i64 = 0;
 let H_FILE: i64 = 1;
 let H_DIR: i64 = 2;
 
-// An open file (fd) or directory (fs.c's slot, and its path, for its
-// entries' attributes). A handle on the wire is its index and generation,
+// An open file (fd) or directory (fs.c's slot), and the path it was
+// opened by (for a directory's entries' attributes, and copy-data's check). A handle on the wire is its index and generation,
 // so a closed one never names the slot's next use.
 struct Handle { kind: i64, fd: i32, gen: u32, append: bool, path: u8[..4096] }
 
@@ -234,14 +234,23 @@ fn readdir_reply(s: Server&, out: u8[>..]&, id: u32, slot: i64) {
 }
 
 // copy-data: the read handle's bytes from roff (rlen of them, or to its end
-// for 0) written to the write handle at woff; 0 or -errno.
-fn copy_data(s: const Server&, rs: i64, roff: u64, rlen: u64, ws: i64, woff: u64) -> i64 {
+// for 0) written to the write handle at woff; 0 or -errno. "To its end" is
+// to where it ends now: a copy into the same file (another handle on it)
+// that runs ahead of the reads would never reach an end.
+fn copy_data(s: const Server&, rs: i64, roff: u64, rlen0: u64, ws: i64, woff: u64) -> i64 {
+    var rlen = rlen0;
+    if rlen == 0 {
+        let st, e = fs::fstat(s.handles[rs].fd);
+        if e < 0 { return e; }
+        if st.size <= roff { return 0; }
+        rlen = st.size - roff;
+    }
     var buf: u8[>..] = [];
     buf.resize(65536, 0);
     var done: u64 = 0;
     loop {
         var want: u64 = 65536;
-        if rlen != 0 && rlen - done < want { want = rlen - done; }
+        if rlen - done < want { want = rlen - done; }
         if want == 0 { break; }
         let n = fs::fs_pread(s.handles[rs].fd, buf[..want as! i64], roff + done);
         if n < 0 { return n; }
@@ -322,7 +331,13 @@ fn extended(s: Server&, out: u8[>..]&, m: const u8[:], id: u32, r: ssh::Rd&) {
         if r.bad { ssh::sftp_status(out, id, ssh::FX_BAD_MESSAGE); return; }
         let rs = find_handle(s, ssh::bytes(m, rh), H_FILE);
         let ws = find_handle(s, ssh::bytes(m, wh), H_FILE);
-        if rs < 0 || ws < 0 { ssh::sftp_status(out, id, ssh::FX_FAILURE); return; }
+        // One handle both ways, or two opened by the same path, refused as
+        // by OpenSSH's (another path to the same file is bounded in
+        // copy_data).
+        if rs < 0 || ws < 0 || rs == ws || s.handles[rs].path[..] == s.handles[ws].path[..] {
+            ssh::sftp_status(out, id, ssh::FX_FAILURE);
+            return;
+        }
         status(out, id, copy_data(s, rs, roff, rlen, ws, woff));
     } else if n == "users-groups-by-id@openssh.com" {
         let uids = ssh::get_string(r, m);
@@ -351,7 +366,7 @@ fn request(s: Server&, m: const u8[:], msg: const ssh::SftpMsg&, out: u8[>..]&) 
         log(str("open ", ssh::bytes(m, p), " flags ", pflags));
         let fd = fs::fs_open(ssh::bytes(m, p), pflags, mode);
         if fd < 0 { status(out, id, fd); return; }
-        let h = new_handle(s, H_FILE, fd, (pflags & ssh::FXF_APPEND) != 0, "");
+        let h = new_handle(s, H_FILE, fd, (pflags & ssh::FXF_APPEND) != 0, ssh::bytes(m, p));
         if h.len == 0 { let x = fs::fs_close(fd); ssh::sftp_status(out, id, ssh::FX_FAILURE); return; }
         ssh::sftp_handle(out, id, h);
     } else if k == ssh::FXP_CLOSE {
@@ -494,6 +509,12 @@ fn main() {
             if msg.kind == ssh::FXP_INIT { log("a second INIT"); stop = true; code = 1; break; }
             s.now = time_ns() / 1000000000;
             request(s, pkt, msg, out);
+            // Replies go as they pile up: a read of 64 KB may hold
+            // thousands of READs, each answered with up to SFTP_MAX_DATA.
+            if out.len >= 1048576 {
+                if sysnet::net_write(1, out) < 0 { stop = true; break; }
+                out.clear();
+            }
         }
         if out.len > 0 {
             if sysnet::net_write(1, out) < 0 { break; }

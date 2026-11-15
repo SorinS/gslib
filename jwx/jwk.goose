@@ -326,16 +326,26 @@ fn bytes_member(n: json::Node&, name: const u8[:], out: u8[>..]&) -> bool, i64 {
     return true, jwx::OK;
 }
 
+// Where a member's name is in a buffer of names.
+struct NameAt { at: i64, len: i64 }
+
 // Whether two members of the object share a name (RFC 7517 §4 leaves that
-// to the parser; refusing is the safe reading).
+// to the parser; refusing is the safe reading). The names sorted, so a
+// header of many members costs n log n, not n².
 fn has_duplicates(n: json::Node&) -> bool {
-    var dup = false;
-    json::each(n) { a =>
-        var seen = 0;
-        json::each(n) { b => if b.key == a.key { seen++; } };
-        if seen > 1 { dup = true; }
+    var names: u8[>..] = [];
+    var at: NameAt[>..] = [];
+    json::each(n) { m =>
+        at.push(NameAt { at: names.len, len: m.key.len });
+        names.append(m.key);
     };
-    return dup;
+    sort(at) { a, b => compare(names[a.at..a.at + a.len], names[b.at..b.at + b.len]) < 0 };
+    for i in at.len {
+        if i > 0 && names[at[i - 1].at..at[i - 1].at + at[i - 1].len] == names[at[i].at..at[i].at + at[i].len] {
+            return true;
+        }
+    }
+    return false;
 }
 
 // A fixed-capacity field from a base64url member, which must be exactly

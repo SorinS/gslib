@@ -399,15 +399,29 @@ fn parts_of(body: const u8[:], boundary: const u8[:], spans: i64[>..]&) -> bool 
     var at = 0;
     var start: i64 = -1;
     while at <= body.len {
-        // A delimiter starts a line: at the body's start or after CRLF.
+        // A delimiter line: at the body's start or after CRLF, the
+        // boundary, "--" for the last, then only white space to the line's
+        // end. A line the boundary only starts is not one.
         var hit = -1;
+        var last = false;
+        var next = 0;
         var p = at;
         loop {
             let i = find(body[p..], delim);
             if i < 0 { break; }
             let q = p + i;
-            if q == 0 || (q >= 2 && body[q - 2] == '\r' && body[q - 1] == '\n') { hit = q; break; }
             p = q + 1;
+            if q != 0 && !(q >= 2 && body[q - 2] == '\r' && body[q - 1] == '\n') { continue; }
+            var after = q + delim.len;
+            let close = after + 2 <= body.len && body[after..after + 2] == "--";
+            if close { after += 2; }
+            while after < body.len && (body[after] == ' ' || body[after] == '\t') { after++; }
+            let eol = after + 2 <= body.len && body[after..after + 2] == "\r\n";
+            if !eol && !(close && after == body.len) { continue; }
+            hit = q;
+            last = close;
+            next = if eol { after + 2 } else { after };
+            break;
         }
         if hit < 0 { return false; }
         if start >= 0 {
@@ -416,11 +430,8 @@ fn parts_of(body: const u8[:], boundary: const u8[:], spans: i64[>..]&) -> bool 
             spans.push(start);
             spans.push(end);
         }
-        let after = hit + delim.len;
-        if after + 2 <= body.len && body[after..after + 2] == "--" { return spans.len > 0; }
-        let nl = find(body[after..], "\r\n");
-        if nl < 0 { return false; }
-        start = after + nl + 2;
+        if last { return spans.len > 0; }
+        start = next;
         at = start;
     }
     return false;
@@ -514,6 +525,15 @@ fn open_layer(ent: const u8[:], kr: const openpgp::Keyring&, pass: const u8[:], 
 // until an entity that is neither. ERR_FORMAT if the message is not
 // PGP/MIME at all.
 fn open(msg: const u8[:], kr: const openpgp::Keyring&, pass: const u8[:], r: Opened&) -> i64 {
+    // r as a fresh Opened has it: nothing of a message opened before.
+    r.entity.clear();
+    r.message.clear();
+    r.signed = false;
+    r.encrypted = false;
+    r.signer = -1;
+    r.signer_fpr.clear();
+    r.signed_at = 0;
+    r.pgp_error = 0;
     var m: u8[>..] = [];
     crlf(m, msg);
     var outer: u8[>..] = [];

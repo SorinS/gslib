@@ -124,7 +124,11 @@ struct Pac {
     requestor: u8[],          // the requestor's SID
 }
 
-fn filetime_to_unix(ft: u64) -> i64 { (ft as! i64 - 116444736000000000) / 10000000 }
+// In u64 from 1970 on, so that a FILETIME past 2^63 does not overflow.
+fn filetime_to_unix(ft: u64) -> i64 {
+    if ft < 116444736000000000 { return (ft as! i64 - 116444736000000000) / 10000000; }
+    return ((ft - 116444736000000000) / 10000000) as! i64;
+}
 fn unix_to_filetime(t: i64) -> u64 { (t * 10000000 + 116444736000000000) as! u64 }
 
 fn le16(b: const u8[:], at: i64) -> u32 {
@@ -542,16 +546,36 @@ fn pac_from_authz(authz: const AuthData[:]) -> u8[>..], bool {
     return out, false;
 }
 
+// How many AD-WIN2K-PACs authorization data holds, at the top or inside
+// AD-IF-RELEVANT: a ticket with more than one is refused (as MIT does),
+// lest the KDC's PAC and one added beside it be read differently.
+fn pac_count(authz: const AuthData[:]) -> i64 {
+    var n = 0;
+    for a in authz {
+        if a.ad_type == AD_WIN2K_PAC { n++; }
+        if a.ad_type == AD_IF_RELEVANT {
+            let inner, err = decode_authdata(a.data);
+            if err != OK { continue; }
+            for x in inner { if x.ad_type == AD_WIN2K_PAC { n++; } }
+        }
+    }
+    return n;
+}
+
 // A service's check of the PAC of a ticket it accepted (MS-KILE 3.4.5.3,
 // MIT's krb5_pac_verify): the server signature with the service key, and
 // the client info against the ticket's authtime and client name (the
 // name's components joined, without the realm, or the principal with
-// it, as MIT accepts). Returns the decoded PAC.
+// it, as MIT accepts). Returns the decoded PAC; ERR_PAC for more than one.
 fn pac_verify(ctx: const ApContext&, service_key: Key) -> Pac, bool, i64 {
     let raw, found = pac_from_authz(ctx.authz);
     if !found {
         let e, err = decode_pac("");
         return e, false, OK;
+    }
+    if pac_count(ctx.authz) > 1 {
+        let e, err = decode_pac("");
+        return e, true, ERR_PAC;
     }
     let p, err = decode_pac(raw);
     if err != OK { return p, true, err; }

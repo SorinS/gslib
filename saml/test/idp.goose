@@ -232,6 +232,46 @@ fn logout(sp: saml::Sp&, idp: saml::Idp&, spe: saml::Entity&, idpe: saml::Entity
     idp.now = tv::NOW + 3600;
     tv::check_code("an expired LogoutRequest", saml::idp_read_logout_request(idp, spe, m, r), saml::ERR_EXPIRED, r.message);
     idp.now = tv::NOW;
+    // Without NotOnOrAfter: IssueInstant no older than logout_max_age and the skew.
+    let sign_now = sp.now;
+    saml::logout_request_to(sp.entity_id, sp.signer, true, idpe, saml::ROLE_IDP, saml::BINDING_POST, who, sign_now, 0, "", o);
+    carry(o, m);
+    tv::check_code("a LogoutRequest without NotOnOrAfter", saml::idp_read_logout_request(idp, spe, m, r), saml::OK, r.message);
+    tv::check("  remembered for max age and skew", r.not_on_or_after == 0 && r.replay_until == sign_now + 300 + idp.clock_skew);
+    idp.now = sign_now + 300 + idp.clock_skew + 1;
+    tv::check_code("  replayed much later", saml::idp_read_logout_request(idp, spe, m, r), saml::ERR_EXPIRED, r.message);
+    idp.now = tv::NOW;
+    // Replayed: the caller's cache refuses its ID the second time.
+    saml::sp_logout_request(sp, idpe, saml::BINDING_POST, who, "", o);
+    carry(o, m);
+    var seen: u8[][>..] = [];
+    var kept_until: i64 = 0;
+    for i in 2 {
+        let e = saml::idp_read_logout_request_replay(idp, spe, m, r) { id, until =>
+            var known = false;
+            for s in seen { if s == id { known = true; } }
+            if !known { seen.push(str(id)); kept_until = until; }
+            !known
+        };
+        if i == 0 {
+            tv::check_code("a LogoutRequest, replay checked", e, saml::OK, r.message);
+            tv::check("  kept until its NotOnOrAfter and the skew", kept_until == r.not_on_or_after + idp.clock_skew);
+        } else {
+            tv::check_code("  the same again: refused", e, saml::ERR_REPLAY, r.message);
+        }
+    }
+    saml::idp_logout_request(idp, spe, saml::BINDING_REDIRECT, who, "", o);
+    carry(o, m);
+    var seen2: u8[][>..] = [];
+    for i in 2 {
+        let e = saml::sp_read_logout_request_replay(sp, idpe, m, r) { id, until =>
+            var known = false;
+            for s in seen2 { if s == id { known = true; } }
+            if !known { seen2.push(str(id)); }
+            !known
+        };
+        tv::check_code(if i == 0 { "the SP's replay check: new" } else { "  replayed" }, e, if i == 0 { saml::OK } else { saml::ERR_REPLAY }, r.message);
+    }
     // Another IdP's SLO URL.
     var other = saml::Entity { .. };
     saml::idp_entity(idp, other);

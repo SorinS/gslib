@@ -129,6 +129,38 @@ fn digest_checks(kind: const u8[:], k: const x509::PrivateKey&, alg: i64, h: i64
     check(str(kind, " short digest refused"), x509::verify_digest(c, alg, h, salt, short, s2) == x509::ERR_BAD_SIGNATURE);
 }
 
+// A CRL as create_crl makes it, re-signed with an issuingDistributionPoint
+// whose fullName is the one URI.
+fn crl_with_idp(crl: const u8[:], key: const x509::PrivateKey&, uri: const u8[:]) -> u8[>..] {
+    let top, okt = asn1::parse(crl);
+    let parts, okp = asn1::children(crl, top);
+    let f, okf = asn1::children(crl, parts[0]);
+    let wrap, okw = asn1::explicit(crl, f[f.len - 1]);
+    assert(okt && okp && okf && okw);
+    var name: u8[>..] = [];
+    asn1::put(name, asn1::ctx(6, false), uri);
+    var full: u8[>..] = [];
+    asn1::put(full, asn1::ctx(0, true), name);
+    var dpn: u8[>..] = [];
+    asn1::put(dpn, asn1::ctx(0, true), full);
+    var idp: u8[>..] = [];
+    asn1::put(idp, asn1::SEQUENCE, dpn);
+    var exts: u8[>..] = [];
+    exts.append(crl[wrap.off..wrap.end]);
+    x509::put_ext(exts, "2.5.29.28", true, idp);
+    var extseq: u8[>..] = [];
+    asn1::put(extseq, asn1::SEQUENCE, exts);
+    var tbs: u8[>..] = [];
+    for i in f.len - 1 { tbs.append(crl[f[i].start..f[i].end]); }
+    asn1::put(tbs, asn1::ctx(0, true), extseq);
+    var tbs_seq: u8[>..] = [];
+    asn1::put(tbs_seq, asn1::SEQUENCE, tbs);
+    let alg, h = x509::default_sig(key.kind);
+    let out, ok = x509::signed(tbs_seq, crl[parts[1].start..parts[1].end], key, alg, h);
+    assert(ok);
+    return out;
+}
+
 fn main() {
     // Keys: parse and marshal against openssl's bytes.
     for kind in ["rsa", "p256", "p384", "p521", "ed25519", "p224"] {
@@ -280,6 +312,38 @@ fn main() {
     decoy_last.append(decoy);
     check("excluded name, decoy first", x509::verify_chain(bleaf, decoy_first, root, NOW, "") == x509::ERR_NAME_CONSTRAINTS);
     check("excluded name, decoy last", x509::verify_chain(bleaf, decoy_last, root, NOW, "") == x509::ERR_NAME_CONSTRAINTS);
+    // A wildcard reaches into the excluded subtree under it.
+    var wt, okwt = x509::template("", NOW - 10, NOW + YEAR);
+    x509::add_dns(wt.san, "*.example.com");
+    let wleaf, ewl = x509::create_certificate(wt, x509::marshal_public_key(bk), inter, int_key);
+    check("wildcard over excluded", ewl == x509::OK && x509::verify_chain(wleaf, inter, root, NOW, "") == x509::ERR_NAME_CONSTRAINTS);
+    var wt2, okwt2 = x509::template("", NOW - 10, NOW + YEAR);
+    x509::add_dns(wt2.san, "*.good.example.com");
+    let wleaf2, ewl2 = x509::create_certificate(wt2, x509::marshal_public_key(bk), inter, int_key);
+    check("wildcard beside excluded", ewl2 == x509::OK && x509::verify_chain(wleaf2, inter, root, NOW, "") == x509::OK);
+    // SAN entries that are not context-class GeneralNames, patched into a
+    // made certificate in place (parse does not check the signature): a
+    // high tag number 130 (one octet would make it [2]), universal 2 and a
+    // constructed [2].
+    var pt0, okpt0 = x509::template("", NOW - 10, NOW + YEAR);
+    x509::add_dns(pt0.san, "xxevil.com");
+    let good_leaf, egl = x509::create_certificate(pt0, x509::marshal_public_key(bk), inter, int_key);
+    var at = -1;
+    for k in good_leaf.len - 12 {
+        if good_leaf[k] == 0x82 && good_leaf[k + 1] == 0x0a && good_leaf[k + 2] == 'x' && good_leaf[k + 3] == 'x' { at = k; }
+    }
+    check("san to patch", egl == x509::OK && at >= 0);
+    for form in 3 {
+        var bad = copy(good_leaf);
+        if form == 0 {
+            bad[at] = 0x1f; bad[at + 1] = 0x81; bad[at + 2] = 0x02; bad[at + 3] = 0x08;
+        } else {
+            bad[at] = if form == 1 { 0x02 } else { 0xa2 };
+        }
+        let hc, ehc = x509::parse(bad);
+        check(str("san not a GeneralName ", form), ehc == x509::ERR_MALFORMED
+              && x509::verify_chain(bad, inter, root, NOW, "evil.com") != x509::OK);
+    }
     // A leaf cannot issue.
     var lf: u8[>..] = [];
     for l in leaves { if lf.len == 0 { lf = copy(l); } }
@@ -305,6 +369,28 @@ fn main() {
     tampered[20] ^= 1;
     let tr, etr = x509::parse_csr(tampered);
     check("csr tampered", etr != x509::OK || x509::check_csr(tr) != x509::OK);
+    // A DSA request from openssl (1024-bit, SHA-256): its key's parameters
+    // are in the SubjectPublicKeyInfo.
+    var dsa_hex: u8[>..] = [];
+    dsa_hex.append("30820237308201e3020100301a3118301606035504030c0f6473612e6578616d706c652e636f6d308201be3082013306");
+    dsa_hex.append("072a8648ce3804013082012602818100dcaa986eaae798859a132321684202a1cd238ca4c3998fc079cfff305bd94ab8");
+    dsa_hex.append("6d07826625d53fd838f1f4404134255d0d76280f68d10903e73e29e386c14e11b1e1b43963cf9ff86d8e61d8edcb8605");
+    dsa_hex.append("f524cc695cf603e37ac0c20706a34fad0b8b3dd0207f26f3da29eba1e151c5137ff0f0ea6fc03b177540cd618f54b35f");
+    dsa_hex.append("021d00ed9e3e41d7d44231fdab4a3c0f967f6e702838cd4479f6f70b4cb5f702818039e783735158a8fff3126007fea0");
+    dsa_hex.append("7027a52e519d2503f74c9e12efb69ed7f6c289560e13053c0647bfbe2588e73213d66bd7b053cf1a11616954975408e3");
+    dsa_hex.append("ed0d9a505bfbea6db5dab33f4bae8d72bc26e859f06376103206ebd429024e7deead28c4c99c31f2e18e91aeeeeff19c");
+    dsa_hex.append("94197354b314e8cfac4c0f9372e014e53044038184000281803317e4ad3e660854083e902f3b253dc8154a5a42e59d63");
+    dsa_hex.append("abbbaacdde347f12578aeb967e6e361be7d91da8ffbfb175edf5fb66919eb895e0a165092a954d39b0c04f9c407cc7dc");
+    dsa_hex.append("5aaeb66613967cbfaf3570b3ddea6f5f771afe935d8869faa3024aec58484fc19a2efec0b3b341bc6db223e21a1e85c7");
+    dsa_hex.append("21c87b89e91e0fc5b2a000300b0609608648016503040302034100303e021d00e3592e6daad75b5ae31ea2f05a49f469");
+    dsa_hex.append("84f7e247445d97b15ff28616021d00c3100b30f92a885aa39aad02117e211e6f3ed797673880d72170f5a1");
+    let dsa_csr = unhex(dsa_hex);
+    let dr, edr = x509::parse_csr(dsa_csr);
+    check("dsa csr", edr == x509::OK && dr.key_type == x509::KEY_DSA && x509::check_csr(dr) == x509::OK);
+    var dsa_bad = copy(dsa_csr);
+    dsa_bad[30] ^= 1;
+    let dbr, edbr = x509::parse_csr(dsa_bad);
+    check("dsa csr tampered", edbr != x509::OK || x509::check_csr(dbr) != x509::OK);
     var ct, okct = x509::template("", NOW - 10, NOW + YEAR);
     ct.subject.clear();
     ct.subject.append(cr.der[cr.subject.start..cr.subject.end]);
@@ -335,6 +421,33 @@ fn main() {
     copts.crl_check = x509::CRL_ALL;
     check("revoked", x509::verify_chain_with(lf, inter, root, crls, NOW, "", copts) == x509::ERR_REVOKED);
     check("not revoked", x509::verify_chain_with(from_csr, inter, root, crls, NOW, "", copts) == x509::OK);
+
+    // Partitioned CRLs: one whose issuingDistributionPoint names another
+    // partition does not cover a leaf, nor does one with a name a leaf
+    // without CRL distribution points cannot match.
+    var pt, okpt = x509::template("CN=part.example.com", NOW - 10, NOW + YEAR);
+    x509::add_dns(pt.san, "part.example.com");
+    pt.crl_urls.append("http://crl.example.com/b.crl");
+    let pk = x509::generate_key(x509::KEY_EC_P256);
+    let pleaf, epl = x509::create_certificate(pt, x509::marshal_public_key(pk), inter, int_key);
+    let pcert, epc2 = x509::parse(pleaf);
+    var pentries: x509::Revoked[>..] = [];
+    var pserial:  u8[..20]           = [];
+    pserial.append(pcert.der[pcert.serial.off..pcert.serial.end]);
+    pentries.push(x509::Revoked { serial: pserial, time: NOW - 100, reason: -1 });
+    let base_b, eb1 = x509::create_crl(inter, int_key, pentries, NOW - 3600, NOW + 86400, 8);
+    let base_a, eb2 = x509::create_crl(inter, int_key, empty, NOW - 3600, NOW + 86400, 9);
+    let crl_b = crl_with_idp(base_b, int_key, "http://crl.example.com/b.crl");
+    let crl_a = crl_with_idp(base_a, int_key, "http://crl.example.com/a.crl");
+    let pa, epa = x509::parse_crl(crl_a);
+    let pb, epb = x509::parse_crl(crl_b);
+    check("idp crls", epl == x509::OK && eb1 == x509::OK && eb2 == x509::OK && epa == x509::OK && epb == x509::OK
+          && pa.has_dp && x509::check_crl(pa, ic, NOW) == x509::OK && !x509::crl_covers(pa, pcert) && x509::crl_covers(pb, pcert));
+    var lopts = x509::options();
+    lopts.crl_check = x509::CRL_LEAF;
+    check("idp right partition", x509::verify_chain_with(pleaf, inter, root, crl_b, NOW, "", lopts) == x509::ERR_REVOKED);
+    check("idp other partition", x509::verify_chain_with(pleaf, inter, root, crl_a, NOW, "", lopts) == x509::ERR_REVOCATION_UNKNOWN);
+    check("idp, leaf without crl dp", x509::verify_chain_with(from_csr, inter, root, crl_b, NOW, "", lopts) == x509::ERR_REVOCATION_UNKNOWN);
 
     // Names from text.
     let n1, ok1 = x509::name_der("CN=a+OU=b,O=c");

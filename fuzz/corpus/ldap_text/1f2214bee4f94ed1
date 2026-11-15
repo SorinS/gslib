@@ -1,0 +1,13 @@
+dn: cn=a,dc=x
+changetype: delete
+
+dn: cn=a,dc=x
+changetype: modrdn
+newrdn: cn=b
+deleteoldrdn: 1
+newsuperior: ou=y,dc=x
+
+dn:: Y249w6ksZGM9eA==
+changetype: moddn
+newrdn: cn=c
+deleteoldrdn: 0

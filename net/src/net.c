@@ -82,10 +82,21 @@ static int in_progress(void) { return WSAGetLastError() == WSAEWOULDBLOCK; }
 static int would_block(void) { return WSAGetLastError() == WSAEWOULDBLOCK; }
 #else
 static void start(void) {}
+/* A signal cuts poll short; it is resumed with what is left of the
+   timeout, not the whole of it again (signals coming often enough would
+   otherwise hold it for ever). */
 static int sock_poll(sock_t s, short events, int timeout_ms) {
     struct pollfd p = { s, events, 0 };
+    int64_t end = timeout_ms > 0 ? now_ms() + timeout_ms : 0;
     int r;
-    do { r = poll(&p, 1, timeout_ms); } while (r < 0 && errno == EINTR);
+    for (;;) {
+        r = poll(&p, 1, timeout_ms);
+        if (r >= 0 || errno != EINTR) break;
+        if (end) {
+            int64_t l = end - now_ms();
+            timeout_ms = l <= 0 ? 0 : (int)l;
+        }
+    }
     return r;
 }
 static void set_nonblocking(sock_t s, int on) {
@@ -121,7 +132,10 @@ static int left(int64_t deadline) {
 
 /* A connection to host:port, each of its addresses tried in turn until
    timeout_ms (0: none) has passed. The host is a name or a numeric
-   address, without brackets. */
+   address, without brackets. getaddrinfo is not bounded by the timeout
+   (it has none, and a thread to abandon it to would need -lpthread on
+   older glibc and GetAddrInfoEx on Windows); the deadline is set before
+   it, so the lookup's time comes off the time left to connect. */
 int64_t gsnet_dial(gsnet_slice host, int32_t port, int32_t timeout_ms) {
     char h[256], p[16];
     if (host.len <= 0 || host.len >= (int64_t)sizeof h || port <= 0 || port > 65535) return GSNET_EARG;

@@ -44,11 +44,15 @@ package is needed.
   `is_null`, `as_i64`, `as_f64`, `as_bool`, `as_string`. All accept a null
   node, so lookups chain. A merge (`<<`) gives a mapping the pairs of the
   mappings it names after its own, the earlier of two that share a key
-  winning, as yaml.v3 decodes it.
+  winning, as yaml.v3 decodes it. A mapping merged twice is walked once,
+  so a merge of the mapping it is in (which yaml.v3 refuses, and `check`
+  with it) ends, and merges stacked on merges cost a step a mapping: the
+  accessors are safe on a document `check` has not seen.
 - **`check(d)`**: what yaml.v3's decoder refuses in a document it reads
   into an `interface{}`, with its message: a scalar its tag does not fit,
   `!!binary` that is not base64, an alias whose anchor contains it, a
-  mapping whose keys repeat (every pair of them, line by line), a merge of
+  mapping whose keys repeat (every pair of them, line by line, up to 100
+  a mapping and then how many more), a merge of
   something other than mappings, a collection as a key, and the alias bomb
   ("billion laughs"), by yaml.v3's own count of nodes decoded inside
   aliases against nodes decoded.
@@ -100,6 +104,13 @@ parser and composer are loops with stacks of their own; `check` recurses
 as yaml.v3's decoder does, which 10000 levels allow (yaml.v3's limit
 tests, a megabyte each, are among the vectors).
 
+`parse(text, doc, decoded, limits)` takes limits yaml.v3 does not have:
+`max_size` bytes of text (16 MiB by default) and `max_nodes` nodes in the
+stream (1 << 20), past which it fails with "yaml: input too large" or
+"yaml: too many nodes" (and, for the nodes, the line and column), where
+yaml.v3 reads until memory runs out. `parse(text, doc, decoded)` takes
+`yaml::limits()`, the defaults.
+
 Where this package and yaml.v3 part:
 - comments are passed over as yaml.v3 passes them over, but not kept:
   nodes have no head, line or foot comment, and the writer writes none
@@ -143,7 +154,20 @@ Where yaml.v3, and so this package, is not YAML 1.2.2:
   loses the first character of every line until its buffer moves; this
   package does the same;
 - the decoder's limits (the alias ratio, 10000 levels) are yaml.v3's, not
-  the spec's.
+  the spec's; the parser's limits on size and nodes are this package's;
+- `check` reports the first 100 pairs of repeated keys of a mapping and
+  then "and N more pairs of repeated keys", where yaml.v3 reports every
+  pair, n(n-1)/2 lines for a key written n times;
+- the writer refuses a tag that is not UTF-8 ("yaml: tag is not valid
+  UTF-8"), where yaml.v3 runs off the end of it; it writes << as a string
+  quoted, which yaml.v3 writes plain and so as a merge key; and it writes
+  in double quotes text that yaml.v3 writes as a block scalar that does
+  not read back: text that starts with a line break or a tab. A block
+  scalar that starts with a space gets as its indentation indicator the
+  indentation its lines have (2 for a sequence's item, where yaml.v3
+  says 4), and a folded one no blank line before a more indented line,
+  or after a more indented first line (yaml.v3 looks at the first line
+  for both);
 
 Parsing a 6 MB document of 840000 nodes takes 187 ms here (built
 natively, on an arm64 Mac) and 323 ms in yaml.v3; writing it back, 76 ms
@@ -154,7 +178,7 @@ and 490 ms.
 In gslib's `examples/yaml/`, run from gslib's top as `goose examples/yaml/<name>.goose`
 (or from that folder); each checks its own results.
 
-- `read_config.goose`: a service's configuration through the tree accessors, with a `<<` merge key; a file of your own as its argument.
+- `read_config.goose`: a service's configuration through the tree accessors, with a `<<` merge key; a file of your own as its argument, refused if `check` refuses it.
 - `decode_struct.goose`: YAML into the program's own structs with a Reader, and yaml.v3's "unmarshal errors" report.
 - `write_yaml.goose`: a tree built and written as yaml.Marshal does, read back, changed and written again; a two-document stream.
 - `validate.goose`: syntax errors with their line and column, and what `check` refuses: repeated keys, bad tags and merges, an alias bomb.
@@ -197,12 +221,19 @@ own test inputs.
   yaml.v3's tests (723, `test/corpus-yamlv3.txt`) and yaml.v2's (502),
   inputs, outputs and messages alike. A dump of more than 100 lines is
   kept as its first 100 and a hash of the rest.
-- `unit`: without Go (92 checks): the tree and its accessors, merges, the
+  Where this package parts from yaml.v3 on purpose (the list above:
+  `check`'s cap on repeated keys, block scalars that do not read back),
+  the case's dump is in `test/vectors/differences.txt` instead (11 cases),
+  and a case there whose dump is yaml.v3's again fails, so that the file
+  stays current.
+- `unit`: without Go (274 checks): the tree and its accessors, merges, the
   core schema, the text of every kind of scalar, tags and directives,
   streams, UTF-16, errors and the line and column they give, the
-  decoder's checks (the billion laughs among them), and reading into a
-  struct.
-- `write`: the writer on trees built by hand (11 checks), against what
+  decoder's checks (the billion laughs among them), the limits, merges
+  of the mapping itself and merges stacked 60 deep, reading into a
+  struct, and text that yaml.v3 writes so that it does not read back,
+  written and read back.
+- `write`: the writer on trees built by hand (13 checks), against what
   yaml.v3's `Marshal` writes of the same trees: the tags it leaves out,
   the quoting, `!!binary`, flow and empty collections, complex keys,
   aliases, block scalars, and the trees it refuses; it never parses.

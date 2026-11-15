@@ -181,6 +181,26 @@ fn refusals() {
                                   m.parts.len == 0 && m.files.len == 0);
 }
 
+// An Address made by hand (or from a server's ENVELOPE) with CR or LF in
+// it: write refuses it rather than let it start a header.
+fn hand_made_addresses() {
+    for i in 3 {
+        var m = mail::Msg { .. };
+        fixed(m);
+        check_rc("hand-made: from", mail::set_from(m, "me@example.com"), mail::OK);
+        check_rc("hand-made: body", mail::set_body(m, mail::TEXT_PLAIN, "ok\n"), mail::OK);
+        var a = mail::Address { .. };
+        a.name.append("Eve");
+        a.addr.append("eve@example.com");
+        if i == 0 { a.addr.append(">\r\nX-Injected: 1"); }
+        if i == 1 { a.name.append("\nX-Injected: 1"); }
+        if i == 2 { a.addr.push(0); }
+        mail::add_to(m, a);
+        var out: u8[>..] = [];
+        check_rc("hand-made: refused", mail::write(m, out), mail::ERR_ADDRESS);
+    }
+}
+
 fn fields() {
     var m = mail::Msg { .. };
     fixed(m);
@@ -343,6 +363,7 @@ fn encodings() {
 }
 
 fn main() {
+    hand_made_addresses();
     let a = args();
     update = a.len > 1 && a[1] == "update";
     expected_messages();

@@ -66,6 +66,7 @@ let ERR_BOUNDARY_LENGTH: i64 = 47;           // "mime: invalid boundary length"
 let ERR_BOUNDARY_CHARACTER: i64 = 48;        // "mime: invalid boundary character"
 let ERR_FINISHED_PART: i64 = 49;             // "multipart: can't write to finished part"
 let ERR_FILE: i64 = 50;                      // a temporary file could not be written or read
+let ERR_HEADER_FIELD: i64 = 51;              // a part's header key or value the writer refuses (CR, LF, NUL; a bad key)
 
 // Go's text for an error code, without the detail that some carry.
 fn error_text(code: i64) -> const u8[:] {
@@ -104,6 +105,7 @@ fn error_text(code: i64) -> const u8[:] {
         ERR_BOUNDARY_CHARACTER => "mime: invalid boundary character",
         ERR_FINISHED_PART => "multipart: can't write to finished part",
         ERR_FILE => "multipart: temporary file error",
+        ERR_HEADER_FIELD => "multipart: header field with CR, LF or NUL, or a bad key",
         _ => "mime: unknown error",
     }
 }
@@ -112,6 +114,13 @@ fn error_text(code: i64) -> const u8[:] {
 // file names and mime.types depend on it.
 extern fn mime_path_windows() -> i64;
 fn is_windows() -> bool { mime_path_windows() != 0 }
+
+// Creates path, which must not exist (O_EXCL, a symbolic link not
+// followed), readable and writable by its owner only (0600), holding
+// data (mime/src/path.c): 0, 1 when something is there, -1 otherwise.
+extern fn mime_create_private(path: const u8[:], data: const u8[:]) -> i32;
+// The permission bits of path (a symbolic link not followed), -1 for none.
+extern fn mime_file_mode(path: const u8[:]) -> i64;
 
 // --- Grammar (RFC 2045 §5.1) -------------------------------------------------
 

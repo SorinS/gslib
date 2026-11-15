@@ -109,6 +109,8 @@ fn main() {
         let t, r = pkcs11::get_token_info(c, s);
         if r == pkcs11::CKR_OK && t.flags & pkcs11::CKF_TOKEN_INITIALIZED == 0 { free_slot = s; }
     }
+    hsm::check_rv("label past 32 bytes", pkcs11::init_token(c, free_slot, "87654321", "a label of thirty-three bytes ..."),
+                  pkcs11::ERR_ENCODING);
     hsm::ok("C_InitToken", pkcs11::init_token(c, free_slot, "87654321", "second token"));
     let t2, rt2 = pkcs11::get_token_info(c, free_slot);
     // SoftHSM moves the new token to a slot of its own; find it by label.

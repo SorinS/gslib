@@ -604,9 +604,12 @@ fn zip_read_directory(r: ZipReader&, buf: const u8[:], check_paths: bool) -> i64
     return 0;
 }
 
-// The bytes of an archive span, from the buffer the reader was opened on.
+// The bytes of an archive span, from the buffer the reader was opened on;
+// "" for a span the buffer does not hold (a reader that failed to open,
+// another buffer).
 fn zip_span(r: const ZipReader&, buf: const u8[:], pos: i64, len: i64) -> const u8[:] {
     let p = pos - r.buf_start;
+    if p < 0 || len < 0 || p > buf.len || len > buf.len - p { return ""; }
     return buf[p..p + len];
 }
 
@@ -860,16 +863,17 @@ fn zip_file_read_mem(f: ZipFile&, archive: const u8[:], r: const ZipReader&, out
 }
 
 // Appends a file's data to out: 0, or the error (ERR_LIMIT past `limit`
-// bytes, < 0 for none).
+// bytes appended, < 0 for none).
 fn zip_extract(r: const ZipReader&, archive: const u8[:], e: const ZipEntry&, out: u8[>..]&, limit: i64 = -1) -> i64 {
     var f = zip_file_open(r, archive, e);
     if f.err != 0 { return f.err; }
+    let base = out.len;
     loop {
         let start = out.len;
         out.resize(start + 65536, 0);
         let made, st = zip_file_read_mem(f, archive, r, out[start..]);
         out.resize(start + made);
-        if limit >= 0 && out.len > limit { return ERR_LIMIT; }
+        if limit >= 0 && out.len - base > limit { return ERR_LIMIT; }
         if st == STREAM_END { return 0; }
         if st < 0 { return st; }
         if made == 0 { return ERR_TRUNCATED; }
@@ -1260,15 +1264,17 @@ fn zip_copy(w: ZipWriter&, r: const ZipReader&, archive: const u8[:], e: const Z
         compressed_size64: e.compressed_size64, uncompressed_size64: e.uncompressed_size64,
         external_attrs: e.external_attrs,
     };
+    // OpenRaw: the compressed bytes the archive has. Go copies what there
+    // is of them; a file whose data the archive (or the part of it in
+    // memory) does not have whole is refused here, before anything is
+    // written.
+    let dir = zip_is_dir_name(h.name);
+    let p = f.data_pos - r.buf_start;
+    if !dir && (p < 0 || p > archive.len || e.compressed_size64 > ((archive.len - p) as! u64)) { return ERR_TRUNCATED; }
     let e2 = zip_create_raw(w, h, out);
     if e2 != 0 { return e2; }
-    if zip_is_dir_name(h.name) { return 0; }
-    // OpenRaw: the compressed bytes the archive has.
-    let dp = f.data_pos;
-    var n: i64 = 0;
-    if dp >= 0 && dp < r.size { n = min(r.size - dp, min(e.compressed_size64, 0x7fffffffffffffff) as! i64); }
-    let p = dp - r.buf_start;
-    return zip_write(w, archive[p..p + n], out);
+    if dir { return 0; }
+    return zip_write(w, archive[p..p + (e.compressed_size64 as! i64)], out);
 }
 
 // Ends the archive: the last file, the central directory, ZIP64's end

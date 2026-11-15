@@ -341,8 +341,91 @@ fn fragments() {
     check("failed fragments link nothing", out2 == out);
 }
 
+// The review's: DOCTYPE literals by character, US-ASCII declared and
+// kept, namespace URIs with white space, and a builder that cannot write
+// what parses back to another namespace.
+fn review_fixes() {
+    var o = xml::options();
+    o.allow_doctype = true;
+    check("DOCTYPE SYSTEM literal with a two-byte character", code_of("<!DOCTYPE a SYSTEM \"\xc3\xa9\"><a/>", o) == xml::OK);
+    check("  PUBLIC with a three-byte one", code_of("<!DOCTYPE a PUBLIC \"\xe2\x82\xac\" \"x\"><a/>", o) == xml::OK);
+    check("  a bad byte in it still refused", code_of("<!DOCTYPE a SYSTEM \"\xc3\"><a/>", o) == xml::ERR_CHAR);
+    refused("US-ASCII declared, a UTF-8 byte in it", "<?xml version=\"1.0\" encoding=\"us-ascii\"?><a>\xc3\xa9</a>", xml::ERR_ENCODING);
+    refused("  ascii, in an attribute", "<?xml version=\"1.0\" encoding=\"ASCII\"?><a b=\"\xc3\xa9\"/>", xml::ERR_ENCODING);
+    accepted("  US-ASCII that is", "<?xml version=\"1.0\" encoding=\"US-ASCII\"?><a>e</a>");
+    accepted("  UTF-8 declared, non-ASCII", "<?xml version=\"1.0\" encoding=\"UTF-8\"?><a>\xc3\xa9</a>");
+    refused("a prefix bound to a space", "<a xmlns:p=\" \"/>", xml::ERR_NAMESPACE);
+    refused("the default namespace a space", "<a xmlns=\" \"/>", xml::ERR_NAMESPACE);
+    refused("a namespace URI with a space in it", "<a xmlns:p=\"urn:a b\"/>", xml::ERR_NAMESPACE);
+    refused("  a tab, as a reference", "<a xmlns=\"urn:a&#9;\"/>", xml::ERR_NAMESPACE);
+    accepted("  xmlns=\"\" still undeclares", "<a xmlns=\"urn:a\"><b xmlns=\"\"/></a>");
+
+    // Builder: an unprefixed xmlns attribute would declare a namespace.
+    var d = xml::Doc { .. };
+    xml::new_document(d);
+    let root = xml::element(d, 0, "", "a", "urn:a");
+    let ch = xml::element(d, root, "", "b", "urn:a");
+    check("set_attr xmlns refused", !xml::set_attr(d, ch, "xmlns", "urn:evil"));
+    check("set_attr xmlns, the long form", !xml::set_attr(d, ch, "", "xmlns", "", "urn:evil"));
+    check("an element in a namespace with a space", xml::element(d, root, "", "c", "urn:a b") < 0);
+    check("declare_ns of a URI with a space", !xml::declare_ns(d, root, "q", "urn:a b"));
+    // A prefix the element, an attribute or a descendant uses: not rebound.
+    var d3 = xml::Doc { .. };
+    xml::new_document(d3);
+    let r3 = xml::element(d3, 0, "p", "a", "urn:one");
+    check("set_attr p:x in another namespace than the element's p", !xml::set_attr(d3, r3, "p", "x", "urn:two", "v"));
+    check("  in its own", xml::set_attr(d3, r3, "p", "x", "urn:one", "v"));
+    check("declare_ns rebinding the element's prefix", !xml::declare_ns(d3, r3, "p", "urn:two"));
+    check("  the same binding again", xml::declare_ns(d3, r3, "p", "urn:one"));
+    let k3 = xml::element(d3, r3, "", "k", "");
+    check("  a default namespace over an element in none", !xml::declare_ns(d3, r3, "", "urn:d"));
+    let c3 = xml::element(d3, k3, "q", "c", "urn:q");
+    check("  a descendant's prefix", !xml::declare_ns(d3, r3, "q", "urn:other"));
+    let l3 = xml::element(d3, r3, "", "l", "");
+    check("  an attribute's prefix on a descendant", xml::set_attr(d3, l3, "s", "y", "urn:s", "1") && !xml::declare_ns(d3, r3, "s", "urn:t"));
+    check("  a prefix nobody uses", xml::declare_ns(d3, r3, "z", "urn:z"));
+    var out3: u8[>..] = [];
+    xml::write(d3, 0, out3);
+    var d4 = xml::Doc { .. };
+    let pe = xml::parse(d4, out3);
+    let r4 = xml::root_element(d4);
+    check(str("what was built parses back the same: ", out3), pe.code == xml::OK && xml::ns_uri(d4, r4) == "urn:one" &&
+          xml::ns_uri(d4, xml::first_element(d4, xml::first_element(d4, r4))) == "urn:q");
+
+    // move_to under a scope that binds p (and the default) otherwise: the
+    // moved element declares what its names need, so they keep their
+    // namespaces when written and parsed back.
+    var d5 = xml::Doc { .. };
+    xml::parse(d5, "<r xmlns:p=\"urn:one\"><p:a p:x=\"1\"><p:b/><c/><p:e xmlns:p=\"urn:own\"/></p:a><s xmlns:p=\"urn:two\" xmlns=\"urn:d\"/></r>");
+    let r5 = xml::root_element(d5);
+    let a5 = xml::first_element(d5, r5);
+    let s5 = xml::next_element(d5, a5);
+    check("move_to under a rebinding scope", xml::move_to(d5, a5, s5, -1));
+    var out5: u8[>..] = [];
+    xml::write(d5, 0, out5);
+    check(str("  written: ", out5), out5 == "<r xmlns:p=\"urn:one\"><s xmlns:p=\"urn:two\" xmlns=\"urn:d\"><p:a p:x=\"1\" xmlns:p=\"urn:one\" xmlns=\"\"><p:b/><c/><p:e xmlns:p=\"urn:own\"/></p:a></s></r>");
+    var d6 = xml::Doc { .. };
+    let pe6 = xml::parse(d6, out5);
+    let a6 = xml::first_element(d6, xml::first_element(d6, xml::root_element(d6)));
+    let b6 = xml::first_element(d6, a6);
+    let c6 = xml::next_element(d6, b6);
+    let e6 = xml::next_element(d6, c6);
+    let x6, hx6 = xml::attr(d6, a6, "urn:one", "x");
+    check("  parses back with the namespaces it had", pe6.code == xml::OK && xml::ns_uri(d6, a6) == "urn:one" && hx6 &&
+          xml::ns_uri(d6, b6) == "urn:one" && xml::ns_uri(d6, c6) == "" && xml::ns_uri(d6, e6) == "urn:own");
+    // Moved where the scope already binds the same: nothing declared.
+    var d7 = xml::Doc { .. };
+    xml::parse(d7, "<r xmlns:p=\"urn:one\"><p:a/><p:s/></r>");
+    let a7 = xml::first_element(d7, xml::root_element(d7));
+    check("move_to under the same binding", xml::move_to(d7, a7, xml::next_element(d7, a7), -1));
+    var out7: u8[>..] = [];
+    xml::write(d7, 0, out7);
+    check(str("  declares nothing: ", out7), out7 == "<r xmlns:p=\"urn:one\"><p:s><p:a/></p:s></r>");
+}
+
 fn main() {
     well_formed();
+    review_fixes();
     hostile();
     normalization();
     building();

@@ -96,6 +96,13 @@ fn main() {
     cfg.addr.append("127.0.0.1");
     cfg.port = port as! i32;
     cfg.max_requests = max_requests;
+    // The limits, at their defaults: no UDP reply over 1232 bytes, whatever
+    // the client's EDNS0 says (a forged query draws no large reply); 8 s for
+    // each query on a TCP connection, all of its bytes, and 128 of them on
+    // one connection, so a slow client holds up only itself.
+    cfg.max_udp_size = 1232;
+    cfg.idle_ms = 8000;
+    cfg.tcp_queries = 128;
     var srv = dns::server_open(cfg);
     guard srv.err == dns::OK else { print("serve: cannot listen on port ", port); exit(1); }
     print("serving ", dns::name_text(origin), " (", dns::rr_count(zone), " records) on 127.0.0.1:", srv.port);

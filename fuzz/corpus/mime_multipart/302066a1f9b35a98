@@ -1,0 +1,8 @@
+MyBoundary
+
+--MyBoundary
+Content-Disposition: form-data; name="texta"
+Content-Type: text/plain
+
+foo
+--MyBoundary

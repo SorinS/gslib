@@ -567,7 +567,20 @@ fn pq_openssl() {
     check_rc("openssl pq sign-encrypt", smime::check_signer(r, pool, NOW, smime::from_address(se)), mail::OK);
 }
 
+// A line that starts with the boundary but goes on is not a delimiter
+// (RFC 2046 §5.1.1): only white space, or "--" for the close, may follow.
+fn delimiters() {
+    let body = "pre\r\n--bb\r\nA\r\n--bbX\r\nB\r\n--bb \r\nS\r\n--bb--\r\n";
+    let a, b, c, d, ok = smime::split_signed(body, "bb");
+    check("delimiter: split", ok);
+    check("delimiter: longer boundary is content", ok && body[a..b] == "A\r\n--bbX\r\nB");
+    check("delimiter: second part", ok && body[c..d] == "S");
+    let a2, b2, c2, d2, ok2 = smime::split_signed("--bbX\r\nA\r\n--bbX--\r\n", "bb");
+    check("delimiter: only longer ones", !ok2);
+}
+
 fn main() {
+    delimiters();
     signing();
     signer_checks();
     opaque();

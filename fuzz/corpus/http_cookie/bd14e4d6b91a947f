@@ -1,0 +1,4 @@
+A=6
+A=7; path=/foo
+A=8; domain=.google.com
+A=9; path=/foo; domain=.google.com

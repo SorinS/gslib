@@ -6,6 +6,7 @@
 // one error; decrypted content checked against its Type and the
 // document's IDs; and SAML's whole path: sign, encrypt, decrypt, verify.
 import std;
+import os;
 import base64;
 import gslib from "../../..";
 import gslib.encoding.xml;
@@ -347,8 +348,38 @@ fn saml_flow() {
     check("the response's Issuer is not", !xml::is_signed(r, v, xml::first_element(r, xml::root_element(r))));
 }
 
+// Many candidate keys before any signature is checked: the search stops
+// past max_keys, and RetrievalMethods' IDs are looked up in one pass (one
+// scan of the document each before: quadratic).
+fn many_keys() {
+    let rm = "<ds:RetrievalMethod Type=\"http://www.w3.org/2001/04/xmlenc#EncryptedKey\" URI=\"#_ek1\"/>";
+    let at = find(V_OAEP_MIXED, rm);
+    check("the vector has a RetrievalMethod", at > 0);
+    var many: u8[>..] = [];
+    many.append(V_OAEP_MIXED[..at]);
+    for i in 20000 { many.append(rm); }
+    many.append(V_OAEP_MIXED[at..]);
+    let t0 = clock();
+    expect_code("20000 RetrievalMethods", dcode(many, RSA_KEY), xml::ERR_LIMIT);
+    check("  quickly", clock() - t0 < 5.0);
+    expect_code("a RetrievalMethod to no ID", dcode(replaced(V_OAEP_MIXED, "URI=\"#_ek1\"", "URI=\"#_nothing\""), RSA_KEY), xml::ERR_ENC_MALFORMED);
+    expect_code("a RetrievalMethod to another element", dcode(replaced(V_OAEP_MIXED, "URI=\"#_ek1\"", "URI=\"#_resp1\""), RSA_KEY), xml::ERR_ENC_MALFORMED);
+    // Siblings: SAML's EncryptedAssertion's EncryptedKey, 20000 times.
+    let t = crafted("<saml:Assertion/>", xml::URI_TYPE_ELEMENT);
+    let ek_at = find(t, "<xenc:EncryptedKey ");
+    let ek_end = find(t, "</xenc:EncryptedKey>") + 20;
+    var sib: u8[>..] = [];
+    sib.append(t[..ek_end]);
+    for i in 20000 { sib.append(t[ek_at..ek_end]); }
+    sib.append(t[ek_end..]);
+    let t1 = clock();
+    expect_code("20000 sibling EncryptedKeys", dcode(sib, RSA_KEY), xml::ERR_LIMIT);
+    check("  quickly", clock() - t1 < 5.0);
+}
+
 fn main() {
     round_trips();
+    many_keys();
     vectors();
     failures_and_content();
     saml_flow();

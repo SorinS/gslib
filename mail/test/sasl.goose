@@ -8,6 +8,11 @@ import gslib.mail;
 import gslib.mail.sasl;
 import gslib.ntlm;
 import gslib.ntlm.server;
+import gslib.ntlm.http;
+import gslib.encoding.asn1;
+
+let ALICE_PEM = embed_file("smime/alice.pem");
+let BOB_PEM = embed_file("smime/bob.pem");
 
 var failures = 0;
 
@@ -57,7 +62,60 @@ fn ntlm_exchange(password: const u8[:]) -> bool {
     return e == ntlm::OK;
 }
 
+fn der_of(pem: const u8[:]) -> u8[>..] {
+    var out: u8[>..] = [];
+    let ders, ok = asn1::pem_decode(pem, "CERTIFICATE");
+    for d in ders { if out.len == 0 { out.append(d); } }
+    return out;
+}
+
+// NTLM's target: the SPN service/host and the TLS server certificate's
+// tls-server-end-point, checked by an acceptor that requires both.
+fn ntlm_target(host: const u8[:], client_cert: const u8[:], server_cert: const u8[:]) -> bool {
+    var s = mail::sasl_new(mail::AUTH_NTLM, "EXAMPLE\\carol", "pencil");
+    mail::sasl_target(s, "SMTPSVC", host, client_cert);
+    if s.bad { return false; }
+    var t1: u8[>..] = [];
+    if !mail::sasl_initial(s, t1) { return false; }
+    var srv = ntlm::acceptor("MAIL", "EXAMPLE", "", "");
+    if ntlm::set_acceptor_spn(srv, "SMTPSVC/mail.example.com", true) != ntlm::OK { return false; }
+    let cb, okc = ntlm::tls_server_end_point(server_cert);
+    if !okc { return false; }
+    ntlm::set_acceptor_bindings(srv, cb, ntlm::CB_REQUIRED);
+    var t2: u8[>..] = [];
+    let now = time_ns() / 1000000000;
+    if ntlm::accept_negotiate(srv, t1, now, t2) != ntlm::OK { return false; }
+    var t3: u8[>..] = [];
+    if mail::sasl_step(s, t2, t3) != mail::OK { return false; }
+    let e = ntlm::accept_authenticate(srv, t3, now) { user, domain, h =>
+        let nt, ok = ntlm::nt_hash("pencil");
+        for i in 16 { h[i] = nt[i]; }
+        user == "carol" && domain == "EXAMPLE"
+    };
+    return e == ntlm::OK;
+}
+
 fn main() {
+    // Too long a user or secret: refused, never cut.
+    var long_secret: u8[>..] = [];
+    for i in 8193 { long_secret.push('p'); }
+    check("fits: limits", mail::sasl_fits("u", "p") && !mail::sasl_fits("u", long_secret));
+    var ls = mail::sasl_new(mail::AUTH_PLAIN, "user", long_secret);
+    var lo: u8[>..] = [];
+    check("fits: initial refused", !mail::sasl_initial(ls, lo) && lo.len == 0);
+    check("fits: step refused", mail::sasl_step(ls, "", lo) == mail::ERR_AUTH && lo.len == 0);
+    var long_user: u8[>..] = [];
+    for i in 513 { long_user.push('u'); }
+    var lu = mail::sasl_new(mail::AUTH_LOGIN, long_user, "p");
+    check("fits: user refused", mail::sasl_step(lu, "Username:", lo) == mail::ERR_AUTH);
+    // NTLM bound to the service and the TLS channel.
+    let alice = der_of(ALICE_PEM);
+    let bob = der_of(BOB_PEM);
+    check("ntlm target: certs", alice.len > 0 && bob.len > 0);
+    check("ntlm target: SPN and channel", ntlm_target("mail.example.com", alice, alice));
+    check("ntlm target: another host", !ntlm_target("relay.example.net", alice, alice));
+    check("ntlm target: another certificate", !ntlm_target("mail.example.com", bob, alice));
+    check("ntlm target: no channel binding", !ntlm_target("mail.example.com", "", alice));
     check("ntlm: name", mail::auth_name(mail::AUTH_NTLM) == "NTLM" && !mail::auth_plaintext(mail::AUTH_NTLM));
     check("ntlm: not chosen unasked", mail::auth_choose("NTLM") == mail::AUTH_AUTO);
     check("ntlm: exchange", ntlm_exchange("pencil"));

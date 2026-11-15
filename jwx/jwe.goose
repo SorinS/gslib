@@ -45,6 +45,10 @@ import compress.deflate;
 let MIN_P2C: i64 = 1000;
 let MAX_P2C: i64 = 1000000;
 let MAX_INFLATE: i64 = 10485760;
+// The most recipients a JSON JWE may have when decrypting: each may cost
+// an RSA or ECDH operation. (PBES2 counts are charged together against
+// max_p2c.)
+let MAX_RECIPIENTS: i64 = 16;
 // The PBES2 counts used when encrypting, unless one is given: OWASP 2023's
 // for PBKDF2, as jwx v4 has them (HS384 and HS512 need fewer for their
 // longer output).
@@ -806,13 +810,17 @@ fn decode_into(out: u8[>..]&, s: const u8[:], cap: i64) -> bool {
     return true;
 }
 
-// Parses headers from text into h. RFC 7516 §7.2.1 has the protected,
-// shared and per-recipient headers disjoint; Go's jwx repeats "alg" in the
-// protected header and the recipient's, so a parameter may appear twice
-// when both hold the same value. `seen` keeps each name and its value as
-// JSON, NUL-separated, so a name holding a NUL is malformed: it would
-// shift the names and values after it, and hide a clash.
-fn merge(h: Header&, seen: u8[>..]&, text: const u8[:], protected: bool) -> i64 {
+// A header member's name and its value as JSON, in Seen's text.
+struct Member { name_at: i64, name_len: i64, value_at: i64, value_len: i64 }
+
+// The members of a recipient's headers so far.
+root struct Seen {
+    text: u8[>..] = [],
+    members: Member[>..] = [],
+}
+
+// Parses headers from text into h, and their members onto seen.
+fn merge(h: Header&, seen: Seen&, text: const u8[:], protected: bool) -> i64 {
     if text.len == 0 { return jwx::OK; }
     var doc: json::Node[>..] = [];
     var decoded: u8[>..] = [];
@@ -822,37 +830,51 @@ fn merge(h: Header&, seen: u8[>..]&, text: const u8[:], protected: bool) -> i64 
         Obj => {},
         _ => { return jwx::ERR_MALFORMED; },
     }
-    var clash = false;
+    var nul = false;
     json::each(root) { m =>
-        if contains(m.key, 0) { clash = true; }
-        var value: u8[>..] = [];
-        jws::write_node(value, m);
-        var is_name = true;
-        var matched = false;
-        for part in split(seen, 0) {
-            if is_name { matched = part == m.key; }
-            else if matched && part != value[..] { clash = true; }
-            is_name = !is_name;
-        }
+        if contains(m.key, 0) { nul = true; }
+        let at = seen.text.len;
+        seen.text.append(m.key);
+        jws::write_node(seen.text, m);
+        seen.members.push(Member { name_at: at, name_len: m.key.len, value_at: at + m.key.len,
+                                   value_len: seen.text.len - at - m.key.len });
     };
-    if clash { return jwx::ERR_MALFORMED; }
-    json::each(root) { m =>
-        seen.append(m.key);
-        seen.push(0);
-        jws::write_node(seen, m);
-        seen.push(0);
-    };
+    if nul { return jwx::ERR_MALFORMED; }    // a name holding a NUL: refused, as jws does
     return read_header(root, h, protected);
+}
+
+// Whether the headers merged give a parameter two values. RFC 7516 §7.2.1
+// has the protected, shared and per-recipient headers disjoint; Go's jwx
+// repeats "alg" in the protected header and the recipient's, so a
+// parameter may appear twice when both hold the same value. Sorted by
+// name, so many members cost n log n.
+fn clashes(seen: Seen&) -> bool {
+    let t = seen.text[..];
+    sort(seen.members) { a, b =>
+        compare(t[a.name_at..a.name_at + a.name_len], t[b.name_at..b.name_at + b.name_len]) < 0
+    };
+    let ms = seen.members[..];
+    for i in ms.len {
+        if i == 0 { continue; }
+        let a = ms[i - 1];
+        let b = ms[i];
+        if t[a.name_at..a.name_at + a.name_len] == t[b.name_at..b.name_at + b.name_len]
+           && t[a.value_at..a.value_at + a.value_len] != t[b.value_at..b.value_at + b.value_len] {
+            return true;
+        }
+    }
+    return false;
 }
 
 fn add_recipient(m: Message&, protected_json: const u8[:], shared: const u8[:], own: const u8[:],
                  ek_b64: const u8[:]) -> i64 {
     var r = ParsedRecipient { header: Header { .. }, ek: [] };
-    var seen: u8[>..] = [];
+    var seen = Seen { .. };
     var e = merge(r.header, seen, protected_json, true);
     if e == jwx::OK { e = merge(r.header, seen, shared, false); }
     if e == jwx::OK { e = merge(r.header, seen, own, false); }
     if e != jwx::OK { return e; }
+    if clashes(seen) { return jwx::ERR_MALFORMED; }
     if r.header.alg == jwa::UNKNOWN || r.header.enc == jwa::UNKNOWN { return jwx::ERR_MALFORMED; }
     var ek: u8[>..] = [];
     if !decode_into(ek, ek_b64, 1024) { return jwx::ERR_MALFORMED; }
@@ -909,7 +931,7 @@ fn object_of(n: json::Node?, name: const u8[:], out: u8[>..]&) -> bool {
     return true;
 }
 
-fn parse_json(m: Message&, token: const u8[:]) -> i64 {
+fn parse_json(m: Message&, token: const u8[:], max_recipients: i64) -> i64 {
     var doc: json::Node[>..] = [];
     var decoded: u8[>..] = [];
     let root, msg = json::parse(token, doc, decoded);
@@ -950,6 +972,9 @@ fn parse_json(m: Message&, token: const u8[:]) -> i64 {
             Arr => {},
             _ => { return jwx::ERR_MALFORMED; },
         }
+        var count = 0;
+        json::each(list) { r => count++; };
+        if count > max_recipients { return jwx::ERR_LIMIT; }
         var err = jwx::OK;
         json::each(list) { r =>
             var own: u8[>..] = [];
@@ -969,10 +994,11 @@ fn parse_json(m: Message&, token: const u8[:]) -> i64 {
     return add_recipient(m, hjson, shared, own, ek);
 }
 
-// Parses a JWE, compact or JSON, into m (a fresh Message).
-fn parse(m: Message&, token: const u8[:]) -> i64 {
+// Parses a JWE, compact or JSON, into m (a fresh Message). ERR_LIMIT for
+// more than max_recipients recipients.
+fn parse(m: Message&, token: const u8[:], max_recipients: i64 = MAX_RECIPIENTS) -> i64 {
     let t = trim(token);
-    if t.len > 0 && t[0] == '{' { return parse_json(m, t); }
+    if t.len > 0 && t[0] == '{' { return parse_json(m, t, max_recipients); }
     return parse_compact(m, t);
 }
 
@@ -1010,20 +1036,35 @@ fn decrypt_recipient(m: const Message&, i: i64, alg: i64, key: const jwk::Key&, 
 
 fn worse(a: i64, b: i64) -> i64 {
     if a == jwx::ERR_ALG_MISMATCH || a == jwx::ERR_NO_KEY { return b; }
+    if b == jwx::ERR_LIMIT { return b; }       // a limit reached says more than a failure before it
     return a;
 }
 
+// The PBES2 count recipient i's key decryption spent, charged against
+// max_p2c across all recipients tried when PBKDF2 ran (it opened, or
+// failed to open, the key).
+fn p2c_cost(m: const Message&, i: i64) -> i64 {
+    if jwa::is_pbes2(m.recipients[i].header.alg) { return m.recipients[i].header.p2c; }
+    return 0;
+}
+
 // The plaintext of a JWE for `key` by the key management algorithm alg:
-// that of the first recipient whose alg it is and whose key it opens.
+// that of the first recipient whose alg it is and whose key it opens. The
+// PBES2 counts of the recipients tried may add up to max_p2c; ERR_LIMIT
+// for more, or for more than max_recipients recipients.
 fn decrypt(token: const u8[:], alg: i64, key: const jwk::Key&, max_p2c: i64 = MAX_P2C,
-           max_inflate: i64 = MAX_INFLATE, min_p2c: i64 = MIN_P2C) -> u8[>..], i64 {
+           max_inflate: i64 = MAX_INFLATE, min_p2c: i64 = MIN_P2C,
+           max_recipients: i64 = MAX_RECIPIENTS) -> u8[>..], i64 {
     var m = Message { .. };
     var out: u8[>..] = [];
-    let e = parse(m, token);
+    let e = parse(m, token, max_recipients);
     if e != jwx::OK { return out, e; }
     var err = jwx::ERR_ALG_MISMATCH;
+    var spent = 0;
     for i in m.recipients.len {
-        let pt, r = decrypt_recipient(m, i, alg, key, max_p2c, max_inflate, min_p2c);
+        if m.recipients[i].header.alg != alg { continue; }
+        let pt, r = decrypt_recipient(m, i, alg, key, max_p2c - spent, max_inflate, min_p2c);
+        if r == jwx::OK || r == jwx::ERR_DECRYPT { spent += p2c_cost(m, i); }
         if r == jwx::OK {
             out.append(pt);
             return out, jwx::OK;
@@ -1036,13 +1077,19 @@ fn decrypt(token: const u8[:], alg: i64, key: const jwk::Key&, max_p2c: i64 = MA
 // The plaintext of a JWE for a key of the set: the key whose "kid" is a
 // recipient's, or every key when the recipient names none. The algorithm
 // is the key's "alg", or with `infer` the recipient's if the key fits it.
+// As decrypt, the PBES2 counts tried may add up to max_p2c; and at most
+// keys.len + max_recipients keys are tried in all (recipients naming no
+// "kid" would otherwise cost one try per key each).
 fn decrypt_set(token: const u8[:], keys: const jwk::Key[:], infer: bool = false, max_p2c: i64 = MAX_P2C,
-               max_inflate: i64 = MAX_INFLATE, min_p2c: i64 = MIN_P2C) -> u8[>..], i64 {
+               max_inflate: i64 = MAX_INFLATE, min_p2c: i64 = MIN_P2C,
+               max_recipients: i64 = MAX_RECIPIENTS) -> u8[>..], i64 {
     var m = Message { .. };
     var out: u8[>..] = [];
-    let e = parse(m, token);
+    let e = parse(m, token, max_recipients);
     if e != jwx::OK { return out, e; }
     var err = jwx::ERR_NO_KEY;
+    var spent = 0;
+    var tries = 0;
     for i in m.recipients.len {
         let h = m.recipients[i].header;
         for &k in keys {
@@ -1054,7 +1101,14 @@ fn decrypt_set(token: const u8[:], keys: const jwk::Key[:], infer: bool = false,
                 if !infer || !jwk::fits(k, h.alg) { continue; }
                 alg = h.alg;
             }
-            let pt, r = decrypt_recipient(m, i, alg, k, max_p2c, max_inflate, min_p2c);
+            if alg != h.alg {
+                err = worse(err, jwx::ERR_ALG_MISMATCH);
+                continue;
+            }
+            if tries == keys.len + max_recipients { return out, jwx::ERR_LIMIT; }
+            tries++;
+            let pt, r = decrypt_recipient(m, i, alg, k, max_p2c - spent, max_inflate, min_p2c);
+            if r == jwx::OK || r == jwx::ERR_DECRYPT { spent += p2c_cost(m, i); }
             if r == jwx::OK {
                 out.append(pt);
                 return out, jwx::OK;

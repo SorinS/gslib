@@ -1,0 +1,41 @@
+<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_resp1" Version="2.0" IssueInstant="2026-01-01T00:00:00Z" Destination="https://sp.example.test/acs" InResponseTo="_req1"><saml:Issuer>https://idp.example.test/metadata</saml:Issuer><samlp:Status><samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></samlp:Status><saml:Assertion ID="_assert1" Version="2.0" IssueInstant="2026-01-01T00:00:00Z"><saml:Issuer>https://idp.example.test/metadata</saml:Issuer><ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+<ds:SignedInfo>
+<ds:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>
+<ds:SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"/>
+<ds:Reference URI="#_assert1">
+<ds:Transforms>
+<ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/>
+<ds:Transform Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>
+</ds:Transforms>
+<ds:DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"/>
+<ds:DigestValue>k+JvibB7fH4JifaMTiR5CkR8gb8=</ds:DigestValue>
+</ds:Reference>
+</ds:SignedInfo>
+<ds:SignatureValue>Jq7d6GJleWSci3Xp/PnB/QK1ZctomIde0A10AJhNyOcuOJO1cDvMPyWdBZGCclUr
+osWI+r3BGie4y7YsIa3GqrbeGMqUEWytGMQ1g+Br6jfsPppxdTAaO10WJrNo4HV6
+2II/GNHYKMNyj+ObvYH7+Cl9Jx9sBGCVNJRyulFSV8hcv+tl4gfSonKjhLMBOTjb
+kcSpdtJF/0WtAjip5fH8hJ+rSW5bDslfHlPR25+YkiGM8CK9WG72UyUhzPKgY0Fl
+j+mUMcuENivMVWVHpHcNJ31nXkQxU9Q97lZl5fmU8968YwcI0vTG3FF53xwtuW6s
+tqduB2mOy7cCmJqU5BHVzw==</ds:SignatureValue>
+<ds:KeyInfo>
+<ds:X509Data>
+<ds:X509Certificate>
+MIICxDCCAaygAwIBAgIUSKa7WL6SBRhqWg6tyJLFrm9GgQQwDQYJKoZIhvcNAQEL
+BQAwGzEZMBcGA1UEAwwQaWRwLmV4YW1wbGUudGVzdDAgFw0yNTAxMDEwMDAwMDBa
+GA8yMDU0MTIyNTAwMDAwMFowGzEZMBcGA1UEAwwQaWRwLmV4YW1wbGUudGVzdDCC
+ASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAKVlUxTg2RLYXiJXSH/4eMad
+OXlLO83Ik37LAhjmxXfdgba7HLmJYDY5epmyS6fr7CsRvJgWcqFsBRFDC/Iz/LDG
+w5sduTxQ9663RkhNu0z2Qdn6/L1tjzn7UpziSwm6HToqUB1Be/zUZE6mxT5JW+KT
+TIO2gmtB/qmAK3pw4PSoesCvOOX+X0Zsz2fH4UWVuMgGcpGIU12l+E67Rn/lciR8
+HR7oKkeV4LDSXcwJ0iObgVg024uuz3AHBr7wYvvwUcGHiCZg9CDsPPJEDywQwZHJ
+eiUjhifX8o0J0TrZnW+RAAWsYj+nSIdQxnIcZT7+AZWcYH3Y4htjReqBNzaovqkC
+AwEAATANBgkqhkiG9w0BAQsFAAOCAQEAJU5QC7MYIbMlw4uvzLrMtIuG36E/XTdd
+BmtvYUXlFGEYQ4yc8uutijlZrKcAMlo3j2gAndKCxT+5lBan2Qe+DydGrZlAV5S5
+G/po/gcx0WaQ3lQeXXe8EYNG+AfGAcl5gijw2WssPgJvXpZ+8WIC2ZbHm0ihPd0Y
+ViMsv7M1Fj2Pa/8FMJ5cp+laM2kAjvPY5Ybr5X/oMAXJQIVslvLs3IphfX1J3Bno
++89G+HhKrA0Mbl3v+4p71xEIy3lC9P0PPMnIJVCrYF0jIXY/CEDvjKD/xOcRca8E
+c1k1vnHSMeQtSUD13gUn+ubR8H9GHPKYWZp/McFORXFRT7CzXVtb1w==
+</ds:X509Certificate>
+</ds:X509Data>
+</ds:KeyInfo>
+</ds:Signature><saml:Subject><saml:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress">alice@example.test</saml:NameID><saml:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer"><saml:SubjectConfirmationData NotOnOrAfter="2026-01-01T00:05:00Z" Recipient="https://sp.example.test/acs" InResponseTo="_req1"/></saml:SubjectConfirmation></saml:Subject><saml:Conditions NotBefore="2025-12-31T23:59:00Z" NotOnOrAfter="2026-01-01T00:05:00Z"><saml:AudienceRestriction><saml:Audience>https://sp.example.test/metadata</saml:Audience></saml:AudienceRestriction></saml:Conditions><saml:AuthnStatement AuthnInstant="2026-01-01T00:00:00Z" SessionIndex="_s1"><saml:AuthnContext><saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport</saml:AuthnContextClassRef></saml:AuthnContext></saml:AuthnStatement></saml:Assertion></samlp:Response>

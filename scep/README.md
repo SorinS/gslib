@@ -30,7 +30,9 @@ authenticated attribute there once with one value; on SUCCESS the
 envelope must decrypt with the request's key and hold certs-only, and the
 issued certificate must carry the CSR's key. FAILURE leaves its failInfo
 in `c.fail_info` (`fail_name` gives badRequest and the rest) and any
-failInfoText in `c.fail_text`. Replies are read up to `c.max_body`
+failInfoText in `c.fail_text` (a reply whose failInfoText is past 2048
+bytes, or whose transactionID is not a PrintableString, is malformed:
+refused, not cut short). Replies are read up to `c.max_body`
 (1 MiB), past which the request fails rather than a body cut short being
 read.
 

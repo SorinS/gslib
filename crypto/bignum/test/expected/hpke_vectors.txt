@@ -1,1 +1,1 @@
-hpke vectors: 4347 checks, 0 failed
+hpke vectors: 4351 checks, 0 failed

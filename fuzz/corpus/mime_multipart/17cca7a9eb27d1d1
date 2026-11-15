@@ -1,0 +1,9 @@
+
+MyBoundary
+
+--MyBoundary
+Content-Disposition: form-data; name="hiddenfile"; filename=""
+Content-Type: text/plain
+
+Another test file.
+--MyBoundary--

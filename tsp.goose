@@ -666,8 +666,9 @@ fn names_hold(d: const u8[:], gns: asn1::Tlv, name: const u8[:]) -> bool {
 }
 
 // Whether ESSCertID or ESSCertIDv2 `id` names certificate c: its hash, and
-// its issuer and serial number if they are there.
-fn cert_id_names(d: const u8[:], id: asn1::Tlv, v2: bool, c: const x509::Cert&) -> bool {
+// its issuer and serial number if they are there. An ESSCertIDv2 by SHA-1
+// only with allow_sha1 (ESSCertID is SHA-1 by definition, RFC 3161's).
+fn cert_id_names(d: const u8[:], id: asn1::Tlv, v2: bool, c: const x509::Cert&, allow_sha1: bool) -> bool {
     let p, ok = asn1::children_of(d, id, asn1::SEQUENCE);
     if !ok || p.len < 1 || p.len > 3 { return false; }
     var i = 0;
@@ -676,7 +677,7 @@ fn cert_id_names(d: const u8[:], id: asn1::Tlv, v2: bool, c: const x509::Cert&) 
         h = SHA256;                                      // hashAlgorithm DEFAULT sha256
         if p[0].tag == asn1::SEQUENCE {
             h = x509::cms_digest_of(d, p[0]);
-            if hash_len(h) == 0 { return false; }
+            if hash_len(h) == 0 || (h == SHA1 && !allow_sha1) { return false; }
             i = 1;
         }
     }
@@ -698,7 +699,7 @@ fn cert_id_names(d: const u8[:], id: asn1::Tlv, v2: bool, c: const x509::Cert&) 
 
 // The signingCertificateV2 (or, without it, signingCertificate) attribute
 // names the signer's certificate in its first ESSCertID: OK or ERR_SIGNER.
-fn check_signing_cert(sd: const x509::SignedData&, c: const x509::Cert&) -> i64 {
+fn check_signing_cert(sd: const x509::SignedData&, c: const x509::Cert&, allow_sha1: bool) -> i64 {
     let d = sd.der[..];
     let attrs, ok = signed_attrs(sd);
     if !ok { return ERR_SIGNER; }
@@ -723,7 +724,7 @@ fn check_signing_cert(sd: const x509::SignedData&, c: const x509::Cert&) -> i64 
     if !oks || sc.len < 1 || sc.len > 2 { return ERR_SIGNER; }
     let ids, oki = asn1::children_of(d, sc[0], asn1::SEQUENCE);
     if !oki || ids.len == 0 { return ERR_SIGNER; }
-    return if cert_id_names(d, ids[0], v2, c) { OK } else { ERR_SIGNER };
+    return if cert_id_names(d, ids[0], v2, c, allow_sha1) { OK } else { ERR_SIGNER };
 }
 
 // Whether a certificate is a TSA's (RFC 3161 §2.3): an extended key usage
@@ -793,7 +794,7 @@ fn verify_parsed(sd: const x509::SignedData&, info: const TstInfo&, h: i64, d: c
     if ce != x509::OK { return ERR_SIGNATURE, ce; }
     let sent = x509::cms_certs(sd);
     if need_cert && !sent_holds(sent, signer.der) { return ERR_CERT_REQ, 0; }
-    let se = check_signing_cert(sd, signer);
+    let se = check_signing_cert(sd, signer, o.allow_sha1);
     if se != OK { return se, 0; }
     if !is_tsa_cert(signer) { return ERR_TSA_CERT, 0; }
     if info.tsa.len > 0 && !tsa_name_matches(info.tsa, signer) { return ERR_TSA_NAME, 0; }
@@ -1054,9 +1055,11 @@ fn is_reply_type(ct: const u8[:]) -> bool {
 
 // Sends a request's DER to a TSA (POST, application/timestamp-query) and
 // returns the reply's DER: OK, or ERR_HTTP with the client's error or the
-// HTTP status in the third value.
-fn post(hc: http::Client&, url: const u8[:], req_der: const u8[:]) -> u8[>..], i64, i64 {
+// HTTP status in the third value. A reply past max_body (1 MiB) is
+// refused (http::ERR_TOO_LARGE), not cut short.
+fn post(hc: http::Client&, url: const u8[:], req_der: const u8[:], max_body: i64 = 1 << 20) -> u8[>..], i64, i64 {
     var out: u8[>..] = [];
+    if hc.opt.max_body > max_body { hc.opt.max_body = max_body; }
     let r = http::post(hc, url, "application/timestamp-query", req_der);
     if r.err != http::ERR_NONE { return out, ERR_HTTP, r.err; }
     if r.status != 200 { return out, ERR_HTTP, r.status; }

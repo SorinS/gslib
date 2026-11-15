@@ -175,11 +175,11 @@ fn gcm_encrypt(g: const AesGcm&, nonce: const u8[:], aad: const u8[:], data: u8[
 
 // Checks the tag, then decrypts data in place; returns false, with data
 // zeroed, when the tag does not match (a tag of another length never
-// does) or data is longer than GCM_MAX. The comparison is constant time.
+// does), data is longer than GCM_MAX or the nonce is empty. The
+// comparison is constant time.
 fn gcm_decrypt(g: const AesGcm&, nonce: const u8[:], aad: const u8[:], data: u8[:],
                tag: const u8[:]) -> bool {
-    assert(nonce.len > 0);
-    if !gcm_fits(data.len) {
+    if nonce.len == 0 || !gcm_fits(data.len) {
         for &x in data { x = 0; }
         return false;
     }
@@ -210,7 +210,8 @@ fn aes_gcm_seal(key: const u8[:], nonce: const u8[:], aad: const u8[:],
 fn aes_gcm_open(key: const u8[:], nonce: const u8[:], aad: const u8[:],
                 sealed: const u8[:]) -> u8[>..], bool {
     var out: u8[>..] = [];
-    if sealed.len < 16 || !gcm_fits(sealed.len - 16) { return out, false; }
+    if key.len != 16 && key.len != 24 && key.len != 32 { return out, false; }
+    if nonce.len == 0 || sealed.len < 16 || !gcm_fits(sealed.len - 16) { return out, false; }
     let g = gcm_init(key);
     let n = sealed.len - 16;
     out.append(sealed[..n]);

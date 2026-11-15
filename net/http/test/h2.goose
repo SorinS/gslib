@@ -435,6 +435,8 @@ fn client_errors() {
     }
     client_case("no :status", resp("x\t1\n", 5), "RST_STREAM 1 0 4 1\n", "R 1 1 local\n");
     client_case("a bad :status", resp(":status\t2x0\n", 5), "RST_STREAM 1 0 4 1\n", "R 1 1 local\n");
+    // A long run of digits is refused by its length, before it can overflow.
+    client_case("a 30-digit :status", resp(":status\t999999999999999999999999999999\n", 5), "RST_STREAM 1 0 4 1\n", "R 1 1 local\n");
     client_case("a request pseudo-header", resp(":status\t200\n:path\t/\n", 5), "RST_STREAM 1 0 4 1\n", "R 1 1 local\n");
     client_case("a 1xx ending the stream", resp(":status\t100\n", 5), "RST_STREAM 1 0 4 1\n", "R 1 1 local\n");
     client_case("a 200", resp(":status\t200\n", 5), "", "H 1 es: :status: 200|\n");

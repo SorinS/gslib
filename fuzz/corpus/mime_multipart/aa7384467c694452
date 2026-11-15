@@ -1,0 +1,2 @@
+MyBoundary
+multipart/alternative; boundary="foo--"

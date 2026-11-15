@@ -428,9 +428,12 @@ fn hpke_suite(kem: i64, kdf: i64, aead: i64) -> u8[10] {
 
 // The mode a sender's or recipient's inputs call for, or -1 when they are
 // inconsistent (a PSK without its id, or the other way) or not allowed
-// (authentication without a DHKEM, PSK modes with a one-stage KDF).
-fn hpke_mode(kem: i64, kdf: i64, psk: const u8[:], psk_id: const u8[:], auth: bool) -> i64 {
+// (authentication without a DHKEM, PSK modes with a one-stage KDF, or for
+// a one-stage KDF an info, PSK or PSK id of 64 KiB or more, whose length
+// prefixes are 16 bits).
+fn hpke_mode(kem: i64, kdf: i64, psk: const u8[:], psk_id: const u8[:], auth: bool, info: const u8[:] = "") -> i64 {
     if (psk.len == 0) != (psk_id.len == 0) { return -1; }
+    if hpke_one_stage(kdf) && (info.len > 0xffff || psk.len > 0xffff || psk_id.len > 0xffff) { return -1; }
     if auth && !hpke_is_dh(kem) { return -1; }
     let mode = if psk.len > 0 { if auth { HPKE_MODE_AUTH_PSK } else { HPKE_MODE_PSK } }
                else { if auth { HPKE_MODE_AUTH } else { HPKE_MODE_BASE } };
@@ -488,7 +491,7 @@ fn hpke_sender_with(kem: i64, kdf: i64, aead: i64, pk: const u8[:], info: const 
                     psk: const u8[:] = "", psk_id: const u8[:] = "", sk_s: const u8[:] = "") -> u8[>..], HpkeContext, bool {
     var none: u8[>..] = [];
     if !hpke_kem_ok(kem) || !hpke_kdf_ok(kdf) || !hpke_aead_ok(aead) { return none, hpke_empty_context(), false; }
-    let mode = hpke_mode(kem, kdf, psk, psk_id, sk_s.len > 0);
+    let mode = hpke_mode(kem, kdf, psk, psk_id, sk_s.len > 0, info);
     if mode < 0 { return none, hpke_empty_context(), false; }
     let ss, enc, ok = hpke_encap(kem, pk, rand, sk_s);
     if !ok { return none, hpke_empty_context(), false; }
@@ -507,7 +510,7 @@ fn hpke_sender(kem: i64, kdf: i64, aead: i64, pk: const u8[:], info: const u8[:]
 fn hpke_recipient(kem: i64, kdf: i64, aead: i64, sk: const u8[:], enc: const u8[:], info: const u8[:],
                   psk: const u8[:] = "", psk_id: const u8[:] = "", pk_s: const u8[:] = "") -> HpkeContext, bool {
     if !hpke_kem_ok(kem) || !hpke_kdf_ok(kdf) || !hpke_aead_ok(aead) { return hpke_empty_context(), false; }
-    let mode = hpke_mode(kem, kdf, psk, psk_id, pk_s.len > 0);
+    let mode = hpke_mode(kem, kdf, psk, psk_id, pk_s.len > 0, info);
     if mode < 0 { return hpke_empty_context(), false; }
     let ss, ok = hpke_decap(kem, enc, sk, pk_s);
     if !ok { return hpke_empty_context(), false; }
@@ -546,14 +549,18 @@ fn hpke_open(c: HpkeContext&, aad: const u8[:], ct: const u8[:]) -> u8[>..], boo
     return pt, ok;
 }
 
-// Export (§5.3): n bytes for the exporter context.
-fn hpke_export(c: const HpkeContext&, exporter_context: const u8[:], n: i64) -> u8[>..] {
-    assert(n >= 0 && n <= 0xffff);
+// Export (§5.3): n bytes for the exporter context, or false, with
+// nothing, when n is out of range: above 255 * Nh for an HKDF (HKDF's
+// limit), above 65535 for a one-stage KDF (n is a 16-bit prefix).
+fn hpke_export(c: const HpkeContext&, exporter_context: const u8[:], n: i64) -> u8[>..], bool {
+    var none: u8[>..] = [];
     if hpke_one_stage(c.kdf) {
+        if n < 0 || n > 0xffff { return none, false; }
         return hpke_labeled_derive(if c.kdf == HPKE_SHAKE128 { 128 } else { 256 }, c.suite, c.exporter, "sec",
-                                   exporter_context, n);
+                                   exporter_context, n), true;
     }
-    return hpke_labeled_expand(hpke_kdf_bits(c.kdf), c.suite, c.exporter, "sec", exporter_context, n);
+    if !hpke_kdf_ok(c.kdf) || n < 0 || n > 255 * hpke_nh(c.kdf) { return none, false; }
+    return hpke_labeled_expand(hpke_kdf_bits(c.kdf), c.suite, c.exporter, "sec", exporter_context, n), true;
 }
 
 // Single-shot base mode, as Go's hpke.Seal and hpke.Open: the

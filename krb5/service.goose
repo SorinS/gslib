@@ -25,7 +25,9 @@ import krb5.ccache;
 
 // A replay cache (MIT's rcache2 idea): the hash of each authenticator's
 // ciphertext and when its entry may go. Kept by the caller, one per
-// service; entries go once older than twice the skew.
+// service; entries go once older than twice the skew. An authenticator
+// accepted at `now` may be as new as now + skew and is then good until
+// now + 2 * skew inclusive, so its entry stays that second too.
 struct ReplayEntry { expires: i64, hash: u8[32] }
 
 fn replay_check(rc: ReplayEntry[>..]&, cipher: const u8[:], now: i64, skew: i64) -> bool {
@@ -33,7 +35,7 @@ fn replay_check(rc: ReplayEntry[>..]&, cipher: const u8[:], now: i64, skew: i64)
     // Drop what has expired, keeping the order.
     var keep = 0;
     for i in rc.len {
-        if rc[i].expires > now {
+        if rc[i].expires >= now {
             rc[keep] = rc[i];
             keep++;
         }
@@ -141,6 +143,13 @@ fn verify_ap_req(apreq: const u8[:], kt: const KeytabEntry[:], any_name: bool, r
     let start = if tp.has_starttime { tp.starttime } else { tp.authtime };
     if start - skew > now || tp.flags & flag(TKT_INVALID) != 0 { return empty_ap_context(), KRB_AP_ERR_TKT_NYV; }
     if now - skew > tp.endtime { return empty_ap_context(), KRB_AP_ERR_TKT_EXPIRED; }
+    // The realms a cross-realm ticket came through: we keep no capaths to
+    // check them against, so only a path the KDC checked
+    // (TRANSITED-POLICY-CHECKED, which MIT's KDC sets) or none
+    // (direct trust) is taken; MIT's rd_req checks capaths instead.
+    if tp.transited.len > 0 && tp.flags & flag(TKT_TRANSITED_POLICY_CHECKED) == 0 {
+        return empty_ap_context(), KRB_AP_PATH_NOT_ACCEPTED;
+    }
     if !replay_check(rc, ap.authenticator.cipher, now, skew) { return empty_ap_context(), KRB_AP_ERR_REPEAT; }
     return ApContext {
         client: copy(tp.cname.name), client_realm: copy(tp.crealm), client_type: tp.cname.name_type,

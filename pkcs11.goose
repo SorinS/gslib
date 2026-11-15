@@ -79,9 +79,10 @@ extern fn p11_cancel_function(ctx: u64, sh: u64) -> u64;
 // Failures of pkcs11's own, before the module is reached; above every CKR_.
 let ERR_LOAD: u64 = 0x100000001;          // the module would not load
 let ERR_SYMBOL: u64 = 0x100000002;        // it has no C_GetFunctionList
-let ERR_ENCODING: u64 = 0x100000003;      // a malformed template or mechanism
+let ERR_ENCODING: u64 = 0x100000003;      // a malformed template or mechanism, or a value too big for it
 let ERR_MEMORY: u64 = 0x100000004;
 let ERR_NO_MODULE: u64 = 0x100000005;     // a Ctx that was destroyed or never loaded
+let ERR_MODULE: u64 = 0x100000006;        // the module said it wrote past the buffer it was given
 
 // The name of a value in one of constants' tables, or "".
 fn lookup(values: const u64[:], names: const u8[:][:], v: u64) -> const u8[:] {
@@ -97,6 +98,7 @@ fn ckr_name(rv: u64) -> const u8[:] {
     if rv == ERR_ENCODING { return "malformed template or mechanism"; }
     if rv == ERR_MEMORY { return "out of memory"; }
     if rv == ERR_NO_MODULE { return "no module loaded"; }
+    if rv == ERR_MODULE { return "the module answered past its buffer"; }
     return lookup(CKR_VALUES, CKR_NAMES, rv);
 }
 fn ckm_name(m: u64) -> const u8[:] { lookup(CKM_VALUES, CKM_NAMES, m) }
@@ -319,7 +321,7 @@ fn get_mechanism_info(c: Ctx, slot: u64, mech: u64) -> MechanismInfo, u64 {
     return MechanismInfo { min_key_size: get64(b, 0), max_key_size: get64(b, 8), flags: get64(b, 16) }, rv;
 }
 
-// The label goes in blank-padded to 32 bytes.
+// The label goes in blank-padded to 32 bytes; a longer one is ERR_ENCODING.
 fn init_token(c: Ctx, slot: u64, so_pin: const u8[:], label: const u8[:]) -> u64 {
     return p11_init_token(c.handle, slot, so_pin, label);
 }
@@ -387,6 +389,8 @@ fn attr(t: u8[>..]&, kind: u64, value: bool) {
 
 fn attr(t: u8[>..]&, kind: u64, value: u64) {
     let n = ulong_size();
+    // A 4-byte CK_ULONG (Windows) cannot hold more: not cut short.
+    assert(n == 8 || value <= 0xffffffff);
     put64(t, kind);
     put64(t, n as u64);
     for i in n { t.push((value >> (8 * i as u64)) as! u8); }

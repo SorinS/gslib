@@ -223,6 +223,23 @@ fn main() {
     var long_pw: u8[73] = [0x61; 73];
     let hl, okl = bignum::bcrypt_hash_with(long_pw, 4, none);
     check("bcrypt 73 bytes", !okl);
+    // bcrypt reads 72 bytes, so a longer password would match the hash of
+    // its first 72: verify refuses it, as hashing does.
+    let h72, ok72 = bignum::bcrypt_hash_with(long_pw[..72], 4, none);
+    check("bcrypt verify 72 bytes", ok72 && bignum::bcrypt_verify(h72, long_pw[..72]));
+    check("bcrypt verify 73 bytes", !bignum::bcrypt_verify(h72, long_pw));
+    // A key or nonce of the wrong length fails rather than aborting.
+    let k32: u8[32] = [1; 32];
+    let n24: u8[24] = [2; 24];
+    let sb = bignum::secretbox_seal("msg", n24, k32);
+    let sb1, oksb1 = bignum::secretbox_open(sb, n24, k32);
+    let sb2, oksb2 = bignum::secretbox_open(sb, "short", k32);
+    let sb3, oksb3 = bignum::secretbox_open(sb, n24, k32[..16]);
+    check("secretbox bad lengths", oksb1 && sb1 == "msg" && !oksb2 && !oksb3 && sb2.len == 0);
+    let bx1, okbx1 = bignum::box_open(sb, n24, k32[..31], k32);
+    let bx2, okbx2 = bignum::box_open(sb, n24, k32, "");
+    let bx3, okbx3 = bignum::box_open(sb, n24[..12], k32, k32);
+    check("box bad lengths", !okbx1 && !okbx2 && !okbx3);
     let hc, okc = bignum::bcrypt_hash_with("pw", 32, none);
     check("bcrypt cost 32", !okc);
     let hd, okd = bignum::bcrypt_hash_with("pw", 2, none);

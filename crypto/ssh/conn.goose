@@ -110,16 +110,17 @@ let MAX_CHANNELS: i64 = 64;
 struct ClientConfig {
     user: u8[..255], host: u8[..255], port: i64,
     keys: PrivateKey[..4], password: u8[..256], has_password: bool,
-    host_key_check: i64, known_hosts: u8[..65536], fixed_host_key: u8[..2200],
+    host_key_check: i64, fixed_host_key: u8[..2200],
     kex: u8[..1024], host_key_algs: u8[..512], ciphers: u8[..512], macs: u8[..512],
     version: u8[..255], rekey_bytes: i64,
+    known_hosts: u8[>..],                     // the whole file, however long
 }
 
 fn client_config(user: const u8[:], host: const u8[:], port: i64 = 22) -> ClientConfig {
     var c = ClientConfig {
         user: [], host: [], port: port, keys: [], password: [], has_password: false,
-        host_key_check: HOST_KEY_KNOWN_HOSTS, known_hosts: [], fixed_host_key: [],
-        kex: [], host_key_algs: [], ciphers: [], macs: [], version: [], rekey_bytes: 1073741824,
+        host_key_check: HOST_KEY_KNOWN_HOSTS, fixed_host_key: [],
+        kex: [], host_key_algs: [], ciphers: [], macs: [], version: [], rekey_bytes: 1073741824, known_hosts: [],
     };
     c.user.append(user);
     c.host.append(host);
@@ -150,15 +151,16 @@ fn set_password(cfg: ClientConfig&, pw: const u8[:]) {
 // version and when to rekey.
 struct ServerConfig {
     host_keys: PrivateKey[..4],
-    authorized_keys: u8[..65536], passwords: u8[..8192], auth_user: u8[..255], no_client_auth: bool,
+    passwords: u8[..8192], auth_user: u8[..255], no_client_auth: bool,
     max_auth_tries: i64, banner: u8[..1024],
     kex: u8[..1024], ciphers: u8[..512], macs: u8[..512], version: u8[..255], rekey_bytes: i64,
+    authorized_keys: u8[>..],                 // the whole file, however long
 }
 
 fn server_config() -> ServerConfig {
     var s = ServerConfig {
-        host_keys: [], authorized_keys: [], passwords: [], auth_user: [], no_client_auth: false, max_auth_tries: 6,
-        banner: [], kex: [], ciphers: [], macs: [], version: [], rekey_bytes: 1073741824,
+        host_keys: [], passwords: [], auth_user: [], no_client_auth: false, max_auth_tries: 6,
+        banner: [], kex: [], ciphers: [], macs: [], version: [], rekey_bytes: 1073741824, authorized_keys: [],
     };
     s.kex.append(KEX_DEFAULT);
     s.ciphers.append(CIPHERS);
@@ -222,6 +224,7 @@ struct Conn {
     rx_bytes: i64, rx_packets: i64,        // received under the current keys
     user: u8[..255],
     auth_step: i64, key_index: i64, password_tried: bool, kbd_tried: bool, auth_tries: i64, kbd_pending: bool,
+    auth_requests: i64,                        // server: USERAUTH_REQUESTs so far
     banner_sent: bool,
     password: u8[..256], has_password: bool,   // the client's, from the config or client_password
     // HOST_KEY_ASK: the exchange held for the application, with what
@@ -243,7 +246,7 @@ fn new_conn(is_server: bool) -> Conn {
         peer_ext_info: false, server_sig_algs: [], in_kex: false, sent_kexinit: false, sent_newkeys: false,
         kex_count: 0, ignore_next: false, tx: no_cipher(), rx: no_cipher(), tx_next: no_cipher(), rx_next: no_cipher(),
         tx_bytes: 0, tx_packets: 0, rx_bytes: 0, rx_packets: 0, user: [], auth_step: AUTH_NONE, key_index: 0, password_tried: false, kbd_tried: false,
-        auth_tries: 0, kbd_pending: false, banner_sent: false, password: [], has_password: false, host_key_wait: false, held_k: [], held_h: [],
+        auth_tries: 0, kbd_pending: false, auth_requests: 0, banner_sent: false, password: [], has_password: false, host_key_wait: false, held_k: [], held_h: [],
         auth_methods: [], global_replies: 0, channels: [], deferred: [], inbuf: [],
     };
     for i in MAX_CHANNELS { c.channels.push(free_channel()); }
@@ -789,12 +792,13 @@ fn on_newkeys(c: Conn&, m: const u8[:], out: u8[>..]&) -> i64 {
 // --- Host keys ------------------------------------------------------------------------
 
 // The name known_hosts has for the client's host: "host", or "[host]:port"
-// off port 22.
+// off port 22; lowercase, as OpenSSH's (a hashed entry is matched, and
+// written, for that name only: LOCALHOST is localhost's entry).
 fn known_host_name(cfg: const ClientConfig&) -> u8[>..] {
     var out: u8[>..] = [];
-    if cfg.port == 22 { out.append(cfg.host); return out; }
-    out.push('[');
-    out.append(cfg.host);
+    if cfg.port != 22 { out.push('['); }
+    for ch in cfg.host { out.push(lower(ch)); }
+    if cfg.port == 22 { return out; }
     out.append("]:");
     format_int(out, cfg.port, 10, 0, ' ');
     return out;
@@ -1187,6 +1191,7 @@ fn server_auth(c: Conn&, cfg: const ServerConfig&, m: const u8[:], out: u8[>..]&
     if bytes(m, service) != "ssh-connection" { return fail(c, DISCONNECT_SERVICE_NOT_AVAILABLE, "unknown service", out); }
     var u: u8[>..] = [];
     u.append(bytes(m, user));
+    c.auth_requests++;
     if cfg.banner.len > 0 && !c.banner_sent {
         var b: u8[>..] = [];
         b.push(MSG_USERAUTH_BANNER);
@@ -1196,9 +1201,11 @@ fn server_auth(c: Conn&, cfg: const ServerConfig&, m: const u8[:], out: u8[>..]&
         c.banner_sent = true;
     }
     let meth = bytes(m, method);
+    // Every failed request counts toward max_auth_tries, as in OpenSSH: a
+    // key offered and refused too, and "none" but as the first.
     if meth == "none" {
         if cfg.no_client_auth && user_ok(cfg, u) { return auth_success(c, u, out, events); }
-        return auth_failure(c, cfg, false, out);
+        return auth_failure(c, cfg, c.auth_requests > 1, out);
     }
     if meth == "publickey" {
         let has_sig = get_bool(r, m);
@@ -1212,7 +1219,7 @@ fn server_auth(c: Conn&, cfg: const ServerConfig&, m: const u8[:], out: u8[>..]&
         let usable = okk && sig_fits(k.kind, a) && has_name(USER_SIG_ALGS, a) && user_ok(cfg, u) &&
                      key_authorized(cfg, bytes(m, blob));
         if !has_sig {
-            if !usable { return auth_failure(c, cfg, false, out); }
+            if !usable { return auth_failure(c, cfg, true, out); }
             var b: u8[>..] = [];
             b.push(MSG_USERAUTH_PK_OK);
             put_string(b, a);
@@ -1248,7 +1255,7 @@ fn server_auth(c: Conn&, cfg: const ServerConfig&, m: const u8[:], out: u8[>..]&
         send_packet(c, b, out);
         return 0;
     }
-    return auth_failure(c, cfg, false, out);
+    return auth_failure(c, cfg, true, out);
 }
 
 // --- Channels ---------------------------------------------------------------------------

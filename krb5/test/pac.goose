@@ -3,8 +3,9 @@
 // the two must agree line for line (test/vectors/pac_oracle.txt). Then the
 // server signature of go-krb5's test PAC checked with sysHTTP's key (and
 // refused when anything changes), the KDC signature checked with a wrong
-// key refused, extended UPN_DNS_INFO and PAC_REQUESTOR made here, and
-// malformed PACs.
+// key refused, extended UPN_DNS_INFO and PAC_REQUESTOR made here,
+// malformed PACs, a PAC whose server signature is unkeyed (refused), and a
+// ticket with two PACs (refused).
 
 import std;
 import os;
@@ -16,6 +17,8 @@ import gslib.krb5.keytab;
 import gslib.krb5.ndr;
 import gslib.krb5.pac;
 import gslib.krb5.claims;
+import gslib.krb5.ccache;
+import gslib.krb5.service;
 import tv;
 
 fn groups(out: u8[>..]&, g: const krb5::GroupMembership[:]) {
@@ -331,11 +334,87 @@ fn compressed_claims() {
     tv::check("truncated xpress refused", cerr != krb5::OK);
 }
 
+let NOW = 1800000000;
+
+fn le64(out: u8[>..]&, v: u64) { for i in 8 { out.push((v >> ((8 * i) as! u64)) as! u8); } }
+
+// A PAC of CLIENT_INFO (alice at NOW) and a server signature of sig_type
+// made with `key` (ignored by the unkeyed types, which anyone can make).
+fn signed_pac(key: krb5::Key, sig_type: i32) -> u8[>..] {
+    let n = krb5::cksum_len(sig_type);
+    var p: u8[>..] = [];
+    le32(p, 2); le32(p, 0);
+    le32(p, 10); le32(p, 20); le64(p, 40);
+    le32(p, 6); le32(p, 4 + n); le64(p, 64);
+    le64(p, krb5::unix_to_filetime(NOW));
+    le16(p, 10);
+    utf16(p, "alice");
+    while p.len < 64 { p.push(0); }
+    le32(p, sig_type);
+    for i in n { p.push(0); }
+    var sum: u8[>..] = [];
+    tv::check_int(str("sign with ", sig_type), krb5::checksum(key, sig_type, krb5::USAGE_KERB_NON_KERB_CKSUM_SALT, p, sum),
+                  krb5::OK);
+    for i in n { p[68 + i] = sum[i]; }
+    return p;
+}
+
+fn context_with(authz: const krb5::AuthData[:], svc: krb5::Key) -> krb5::ApContext {
+    return krb5::ApContext {
+        client: "alice", client_realm: "EXAMPLE.COM", client_type: 1, server: "HTTP/web.example", server_realm: "EXAMPLE.COM",
+        session_key: krb5::no_key(), has_subkey: false, subkey: krb5::no_key(), has_seq_number: false, seq_number: 0,
+        ap_options: 0, ticket_flags: 0, authtime: NOW, endtime: NOW + 3600, ctime: NOW, cusec: 0, has_cksum: false,
+        cksum: krb5::no_checksum(), authz: authz, kvno: 3, service_key: svc,
+    };
+}
+
+fn forged() {
+    let svc = krb5::random_key(18);
+    // Signed with the service's key: taken.
+    let good = signed_pac(svc, krb5::CKSUM_HMAC_SHA1_96_AES256);
+    let one: krb5::AuthData[] = [krb5::AuthData { ad_type: krb5::AD_WIN2K_PAC, data: copy(good) }];
+    let c_one = context_with(one, svc);
+    let p, found, err = krb5::pac_verify(c_one, svc);
+    tv::check("keyed server signature", found && err == krb5::OK);
+    // An unkeyed checksum in place of the signature: anyone's forgery.
+    for t in [krb5::CKSUM_RSA_MD5, krb5::CKSUM_SHA1] {
+        let bad = signed_pac(svc, t);
+        let ad: krb5::AuthData[] = [krb5::AuthData { ad_type: krb5::AD_WIN2K_PAC, data: copy(bad) }];
+        let c_ad = context_with(ad, svc);
+    let q, qf, qerr = krb5::pac_verify(c_ad, svc);
+        tv::check_int(str("unkeyed server signature ", t), qerr, krb5::ERR_PAC_SIGNATURE);
+    }
+    // Two PACs, both good: which one counts is ambiguous, so neither.
+    let two: krb5::AuthData[] = [krb5::AuthData { ad_type: krb5::AD_WIN2K_PAC, data: copy(good) },
+                                 krb5::AuthData { ad_type: krb5::AD_WIN2K_PAC, data: copy(good) }];
+    let c_two = context_with(two, svc);
+    let p2, f2, e2 = krb5::pac_verify(c_two, svc);
+    tv::check_int("two PACs", e2, krb5::ERR_PAC);
+    var inner: u8[>..] = [];
+    krb5::encode_authdata(inner, one);
+    let nested: krb5::AuthData[] = [krb5::AuthData { ad_type: krb5::AD_WIN2K_PAC, data: copy(good) },
+                                    krb5::AuthData { ad_type: krb5::AD_IF_RELEVANT, data: copy(inner) }];
+    let c_nested = context_with(nested, svc);
+    let p3, f3, e3 = krb5::pac_verify(c_nested, svc);
+    tv::check_int("a second PAC inside AD-IF-RELEVANT", e3, krb5::ERR_PAC);
+}
+
+// FILETIMEs to Unix seconds at the ends of u64, past 2^63 too.
+fn filetimes() {
+    tv::check_int("filetime 0", krb5::filetime_to_unix(0), -11644473600);
+    tv::check_int("filetime 1970", krb5::filetime_to_unix(116444736000000000), 0);
+    tv::check_int("filetime 2^63", krb5::filetime_to_unix(0x8000000000000000), 910692730085);
+    tv::check_int("filetime max", krb5::filetime_to_unix(0xFFFFFFFFFFFFFFFF), 1833029933770);
+    tv::check_int("filetime round trip", krb5::filetime_to_unix(krb5::unix_to_filetime(1700000000)), 1700000000);
+}
+
 fn main() {
+    filetimes();
     against_oracle();
     compressed_claims();
     signatures();
     upn_extended();
     malformed();
+    forged();
     tv::done("pac");
 }

@@ -88,6 +88,7 @@ struct ReadOptions {
     allow_unprotected: bool      = false,   // decrypt packet 9 (no MDC), as gpg does only when told to
     max_size:          i64       = 1 << 30, // of decompressed data
     now:               i64       = 0,       // the time keys must be valid at; 0 is each signature's time
+                                            // (a signature's own expiry: at now, 0 the clock)
 }
 
 struct WriteOptions {
@@ -101,6 +102,24 @@ struct WriteOptions {
     mtime:       i64       = 0,
     created:     i64       = 0,      // the signature's time; 0 is now
     s2k_coded:   i64       = 255,    // SKESK's iteration count, coded
+}
+
+// m as a fresh Message has it: each of read_message, verify_detached and
+// verify_cleartext starts so, so a Message used again holds nothing of
+// the one before.
+fn reset(m: Message&) {
+    m.data.clear();
+    m.filename.clear();
+    m.format = 'b';
+    m.mtime = 0;
+    m.encrypted = false;
+    m.integrity = INTEGRITY_NONE;
+    m.cipher = 0;
+    m.aead = 0;
+    m.decrypted_with = -1;
+    m.compression = COMP_NONE;
+    m.sigs.clear();
+    m.sig_packets.clear();
 }
 
 fn signature_status(m: const Message&) -> i64 {
@@ -148,7 +167,9 @@ fn check_signature(kr: const Keyring&, body: const u8[:], data: const u8[:], can
     let t = if now > 0 { now } else { s.created };
     if k.revoked || kr.keys[k.primary].revoked { r.err = ERR_REVOKED; return r; }
     if !k.valid || !kr.keys[k.primary].valid { r.err = ERR_KEY; return r; }
-    if s.expires > 0 && now > 0 && s.created + s.expires <= now { r.err = ERR_EXPIRED; return r; }
+    // The signature's own expiry, at now (0: the clock).
+    let clock = if now > 0 { now } else { time_ns() / 1000000000 };
+    if s.expires > 0 && s.created + s.expires <= clock { r.err = ERR_EXPIRED; return r; }
     if !usable(kr, idx, FLAG_SIGN, t) {
         let pk = kr.keys[k.primary];
         let expired = (k.expires > 0 && k.created + k.expires <= t) || (pk.expires > 0 && pk.created + pk.expires <= t);
@@ -179,20 +200,31 @@ fn check_signatures(kr: const Keyring&, m: Message&, now: i64, inline: bool = fa
 // A session key found: its cipher, the key, and whether a passphrase gave it.
 struct Session { cipher: i64 = 0, key: u8[..32] = [], from_pass: bool = false, by: i64 = -1 }
 
-// The session key of a PKESK, if a secret key of the keyring opens it.
+// How many private-key and passphrase (S2K) operations reading one
+// message may take: a message can carry any number of session key packets,
+// wildcard ones (no key ID) among them, and each costs one of these.
+let MAX_KEY_TRIES:  i64 = 8;
+let MAX_PASS_TRIES: i64 = 4;
+
+struct Tries { key: i64 = 0, pass: i64 = 0 }
+
+// The session key of a PKESK, if a secret key of the keyring opens it:
+// the first one from kr.keys[from..] that does, and the index after it
+// (to go on from there when the data does not open with it).
 // v3: key ID, algorithm, fields; v6 (RFC 9580 §5.1.2): the length of the
 // key version and fingerprint that follow (0: anyone's), the algorithm,
 // fields, and no cipher: SEIPD v2 names it.
-fn open_pkesk(kr: const Keyring&, body: const u8[:], ss: Session[>..]&) -> i64 {
-    if body.len < 10 { return ERR_MALFORMED; }
-    if body[0] != 3 && body[0] != 6 { return ERR_UNSUPPORTED; }
+fn open_pkesk(kr: const Keyring&, body: const u8[:], from: i64, tries: Tries&) -> Session, i64, i64 {
+    var none = Session { .. };
+    if body.len < 10 { return none, kr.keys.len, ERR_MALFORMED; }
+    if body[0] != 3 && body[0] != 6 { return none, kr.keys.len, ERR_UNSUPPORTED; }
     let v6 = body[0] == 6;
     var at = 9;
     var id = body[1..9];
     if v6 {
         let n: i64 = body[1];
-        if n != 0 && n != 21 && n != 33 { return ERR_MALFORMED; }
-        if 2 + n >= body.len { return ERR_MALFORMED; }
+        if n != 0 && n != 21 && n != 33 { return none, kr.keys.len, ERR_MALFORMED; }
+        if 2 + n >= body.len { return none, kr.keys.len, ERR_MALFORMED; }
         id = body[3..2 + n];
         at = 2 + n;
         if n == 0 { id = body[..0]; }
@@ -201,12 +233,14 @@ fn open_pkesk(kr: const Keyring&, body: const u8[:], ss: Session[>..]&) -> i64 {
     let mat = body[at + 1..];
     let wildcard = id.len == 0 || id == "\x00\x00\x00\x00\x00\x00\x00\x00";
     var result = ERR_NO_KEY;
-    for i in kr.keys.len {
+    for i in from..kr.keys.len {
         let k = kr.keys[i];
         if !k.has_secret || k.stub { continue; }
         if !wildcard && (if id.len == 8 { k.keyid[..] != id } else { k.fpr[..] != id || k.version != body[2] }) { continue; }
         if k.algo != algo && !(is_rsa(k.algo) && is_rsa(algo)) { continue; }
         if k.locked { result = ERR_PASSPHRASE; continue; }
+        if tries.key >= MAX_KEY_TRIES { return none, kr.keys.len, ERR_LIMIT; }
+        tries.key++;
         var m: u8[>..] = [];
         let e = decrypt_session(k, mat, m, v6);
         if e != OK { if result == ERR_NO_KEY { result = e; } continue; }
@@ -222,44 +256,43 @@ fn open_pkesk(kr: const Keyring&, body: const u8[:], ss: Session[>..]&) -> i64 {
         if e2 != OK { if result == ERR_NO_KEY { result = e2; } continue; }
         var s = Session { cipher: cipher, by: i };
         s.key.append(key);
-        ss.push(s);
-        return OK;
+        return s, i + 1, OK;
     }
-    return result;
+    return none, kr.keys.len, result;
 }
 
 // The session key of an SKESK v4 and a passphrase.
-fn open_skesk(body: const u8[:], pass: const u8[:], ss: Session[>..]&) -> i64 {
-    if body.len < 2 { return ERR_MALFORMED; }
-    if body[0] != 4 { return ERR_UNSUPPORTED; }
+fn open_skesk(body: const u8[:], pass: const u8[:], tries: Tries&) -> Session, i64 {
+    var s = Session { from_pass: true };
+    if body.len < 2 { return s, ERR_MALFORMED; }
+    if body[0] != 4 { return s, ERR_UNSUPPORTED; }
     let cipher: i64 = body[1];
     let ks = cipher_key_size(cipher);
-    if ks == 0 { return ERR_UNSUPPORTED; }
+    if ks == 0 { return s, ERR_UNSUPPORTED; }
     let s2k, at, err = read_s2k(body, 2);
-    if err != OK { return err; }
-    if s2k.kind == S2K_GNU_DUMMY || s2k.kind == S2K_SIMPLE { return ERR_UNSUPPORTED; }
+    if err != OK { return s, err; }
+    if s2k.kind == S2K_GNU_DUMMY || s2k.kind == S2K_SIMPLE { return s, ERR_UNSUPPORTED; }
+    if tries.pass >= MAX_PASS_TRIES { return s, ERR_LIMIT; }
+    tries.pass++;
     let key, e2 = s2k_key(s2k, pass, ks);
-    if e2 != OK { return e2; }
-    var s = Session { from_pass: true };
+    if e2 != OK { return s, e2; }
     if at == body.len {
         s.cipher = cipher;
         s.key.append(key);
-        ss.push(s);
-        return OK;
+        return s, OK;
     }
     // An encrypted session key: CFB with a zero IV, its cipher first.
     var esk: u8[>..] = [];
     esk.append(body[at..]);
     var iv: u8[>..] = [];
     iv.resize(cipher_block_size(cipher), 0);
-    if !cfb(cipher, key, iv, esk, true) { return ERR_UNSUPPORTED; }
+    if !cfb(cipher, key, iv, esk, true) { return s, ERR_UNSUPPORTED; }
     let c2: i64 = esk[0];
     let ks2 = cipher_key_size(c2);
-    if ks2 == 0 || esk.len != 1 + ks2 { return ERR_PASSPHRASE; }
+    if ks2 == 0 || esk.len != 1 + ks2 { return s, ERR_PASSPHRASE; }
     s.cipher = c2;
     s.key.append(esk[1..]);
-    ss.push(s);
-    return OK;
+    return s, OK;
 }
 
 // SEIPD v1: CFB with a zero IV over a random block, its last two octets
@@ -393,14 +426,81 @@ fn decompress(algo: i64, data: const u8[:], out: u8[>..]&, limit: i64) -> i64 {
     return if rc == 0 { OK } else { ERR_MALFORMED };
 }
 
+// The encrypted data of packet p (tag t, body) opened with a session:
+// its plaintext into next, and what it was into m.
+fn open_data(t: i64, body: const u8[:], s: const Session&, m: Message&, next: u8[>..]&) -> i64 {
+    next.clear();
+    var e = OK;
+    if t == TAG_SEIPD && body[0] == 1 { e = open_seipd1(s, body[1..], next); }
+    else if t == TAG_SEIPD && body[0] == 2 { e = open_seipd2(s, body, next); }
+    else if t == TAG_SEIPD { e = ERR_UNSUPPORTED; }
+    else if t == TAG_AEAD { e = open_aead20(s, body, next); }
+    else { e = open_sed(s, body, next); }
+    if e != OK { next.clear(); return e; }
+    m.cipher = if t == TAG_AEAD { body[1] } else { s.cipher };
+    m.aead = if t == TAG_AEAD { body[2] } else if t == TAG_SEIPD && body[0] == 2 { body[2] } else { 0 };
+    m.integrity = if t == TAG_SED { INTEGRITY_NONE } else if t == TAG_SEIPD && body[0] == 1 { INTEGRITY_MDC } else { INTEGRITY_AEAD };
+    m.decrypted_with = s.by;
+    return OK;
+}
+
+// The error to report of two: a limit hit, else a wrong passphrase, else
+// the first that is not ERR_NO_KEY.
+fn worse(cur: i64, e: i64) -> i64 {
+    if cur == ERR_LIMIT || e == OK { return cur; }
+    if e == ERR_LIMIT || e == ERR_PASSPHRASE || cur == ERR_NO_KEY { return e; }
+    return cur;
+}
+
+// Opens encrypted data (packet tag t, body) with the session key packets
+// before it (esks: tag, start, end in cur), one by one, stopping at the
+// first session key it opens with. RFC 9580 §5.1: v3 PKESK and v4 SKESK
+// go with SEIPD v1 (and LibrePGP's packet 20, and packet 9), v6 PKESK with
+// SEIPD v2; others are not tried.
+fn open_encrypted(kr: const Keyring&, cur: const u8[:], esks: const i64[:], t: i64, body: const u8[:], m: Message&,
+                  opt: ReadOptions, next: u8[>..]&) -> i64 {
+    let want_v6 = t == TAG_SEIPD && body[0] == 2;
+    var tries = Tries { .. };
+    var err = ERR_NO_KEY;
+    var mismatched = false;
+    var i = 0;
+    while i + 3 <= esks.len {
+        let b = cur[esks[i + 1]..esks[i + 2]];
+        let tag = esks[i];
+        i += 3;
+        if b.len < 1 { err = worse(err, ERR_MALFORMED); continue; }
+        if tag == TAG_PKESK {
+            if (b[0] == 6) != want_v6 { mismatched = true; continue; }
+            var from = 0;
+            while from < kr.keys.len {
+                let s, after, e = open_pkesk(kr, b, from, tries);
+                if e != OK { err = worse(err, e); break; }
+                let ed = open_data(t, body, s, m, next);
+                if ed == OK { return OK; }
+                err = worse(err, ed);
+                from = after;
+            }
+        } else {
+            if want_v6 { mismatched = true; continue; }
+            if opt.passphrase.len == 0 { err = worse(err, ERR_PASSPHRASE); continue; }
+            let s, e = open_skesk(b, opt.passphrase, tries);
+            if e != OK { err = worse(err, e); continue; }
+            let ed = open_data(t, body, s, m, next);
+            if ed == OK { return OK; }
+            err = worse(err, ed);
+        }
+        if err == ERR_LIMIT { return ERR_LIMIT; }
+    }
+    if err == ERR_NO_KEY && mismatched { return ERR_MALFORMED; }
+    return err;
+}
+
 // One layer of packets: what it holds goes into m, and the next layer (the
 // plaintext of encrypted data, or decompressed data) into next. Whether
 // there is a next layer.
 fn read_layer(kr: const Keyring&, cur: const u8[:], m: Message&, opt: ReadOptions, next: u8[>..]&,
               outer: bool) -> bool, i64 {
-    var sessions: Session[>..] = [];
-    var esk_err = ERR_NO_KEY;
-    var saw_esk = false;
+    var esks: i64[>..] = [];         // the session key packets: tag, start, end
     var saw_literal = false;
     var at = 0;
     var count = 0;
@@ -413,51 +513,29 @@ fn read_layer(kr: const Keyring&, cur: const u8[:], m: Message&, opt: ReadOption
         let t = p.tag;
         if t == TAG_MARKER || t == TAG_PADDING || t == TAG_TRUST { continue; }
         if t == TAG_PKESK || t == TAG_SKESK {
-            saw_esk = true;
             if p.partial { return false, ERR_MALFORMED; }
-            let body = cur[p.body..p.body_end];
-            var e = OK;
-            if t == TAG_PKESK { e = open_pkesk(kr, body, sessions); }
-            else if opt.passphrase.len > 0 { e = open_skesk(body, opt.passphrase, sessions); }
-            else { e = ERR_PASSPHRASE; }
-            if e != OK && (esk_err == ERR_NO_KEY || e == ERR_PASSPHRASE) { esk_err = e; }
+            esks.push(t);
+            esks.push(p.body);
+            esks.push(p.body_end);
             continue;
         }
         if t == TAG_SEIPD || t == TAG_AEAD || t == TAG_SED {
             if saw_literal || m.encrypted { return false, ERR_MALFORMED; }
             m.encrypted = true;
             if t == TAG_SED && !opt.allow_unprotected { return false, ERR_UNPROTECTED; }
-            if !saw_esk { return false, ERR_MALFORMED; }
-            if sessions.len == 0 { return false, esk_err; }
+            if esks.len == 0 { return false, ERR_MALFORMED; }
             var body: u8[>..] = [];
             packet_body(cur, p, body);
             if body.len < 1 { return false, ERR_MALFORMED; }
-            var last = ERR_DECRYPT;
-            for s in sessions {
-                next.clear();
-                var e = OK;
-                if t == TAG_SEIPD && body[0] == 1 { e = open_seipd1(s, body[1..], next); }
-                else if t == TAG_SEIPD && body[0] == 2 { e = open_seipd2(s, body, next); }
-                else if t == TAG_SEIPD { e = ERR_UNSUPPORTED; }
-                else if t == TAG_AEAD { e = open_aead20(s, body, next); }
-                else { e = open_sed(s, body, next); }
-                if e == OK {
-                    m.cipher = if t == TAG_AEAD { body[1] } else { s.cipher };
-                    m.aead = if t == TAG_AEAD { body[2] } else if t == TAG_SEIPD && body[0] == 2 { body[2] } else { 0 };
-                    m.integrity = if t == TAG_SED { INTEGRITY_NONE } else if t == TAG_SEIPD && body[0] == 1 { INTEGRITY_MDC } else { INTEGRITY_AEAD };
-                    m.decrypted_with = s.by;
-                    // Nothing may follow the encrypted data but padding.
-                    while at < cur.len {
-                        let q, eq = next_packet(cur, at);
-                        if eq != OK || (q.tag != TAG_PADDING && q.tag != TAG_MARKER) { return false, ERR_MALFORMED; }
-                        at = q.end;
-                    }
-                    return true, OK;
-                }
-                last = e;
+            let e = open_encrypted(kr, cur, esks, t, body, m, opt, next);
+            if e != OK { next.clear(); return false, e; }
+            // Nothing may follow the encrypted data but padding.
+            while at < cur.len {
+                let q, eq = next_packet(cur, at);
+                if eq != OK || (q.tag != TAG_PADDING && q.tag != TAG_MARKER) { return false, ERR_MALFORMED; }
+                at = q.end;
             }
-            next.clear();
-            return false, last;
+            return true, OK;
         }
         if t == TAG_COMPRESSED {
             if saw_literal { return false, ERR_MALFORMED; }
@@ -494,7 +572,7 @@ fn read_layer(kr: const Keyring&, cur: const u8[:], m: Message&, opt: ReadOption
         // A key, or anything else: not a message.
         return false, if t == TAG_PUBLIC_KEY || t == TAG_SECRET_KEY || t == TAG_USER_ID { ERR_MALFORMED } else { ERR_UNSUPPORTED };
     }
-    if saw_esk { return false, ERR_MALFORMED; }   // session keys but no encrypted data
+    if esks.len > 0 { return false, ERR_MALFORMED; }   // session keys but no encrypted data
     if !saw_literal { return false, ERR_MALFORMED; }
     return false, OK;
 }
@@ -504,6 +582,7 @@ fn read_layer(kr: const Keyring&, cur: const u8[:], m: Message&, opt: ReadOption
 // signatures (m.sigs; signature_status says whether one is good). The
 // error is for the message itself: malformed, not decryptable, changed.
 fn read_message(kr: const Keyring&, input: const u8[:], m: Message&, opt: ReadOptions) -> i64 {
+    reset(m);
     var cur: u8[>..] = [];
     let e0 = decode_input(input, cur);
     if e0 != OK { return e0; }
@@ -539,6 +618,7 @@ fn verify(kr: const Keyring&, input: const u8[:], m: Message&, opt: ReadOptions)
 // A detached signature (armored or binary, one or more signature packets)
 // over data: m.sigs gets the results, m.data the data. OK if one verifies.
 fn verify_detached(kr: const Keyring&, data: const u8[:], sig: const u8[:], m: Message&, now: i64 = 0) -> i64 {
+    reset(m);
     var bin: u8[>..] = [];
     let e = decode_input(sig, bin);
     if e != OK { return e; }
@@ -559,6 +639,7 @@ fn verify_detached(kr: const Keyring&, data: const u8[:], sig: const u8[:], m: M
 // ends), m.sigs the results. A signature over a hash that a "Hash:"
 // header leaves out is refused.
 fn verify_cleartext(kr: const Keyring&, text: const u8[:], m: Message&, now: i64 = 0) -> i64 {
+    reset(m);
     var ct = Cleartext { .. };
     let e = parse_cleartext(text, ct);
     if e != OK { return e; }
@@ -718,7 +799,7 @@ fn sign_cleartext(kr: const Keyring&, signer: i64, text: const u8[:], out: u8[>.
     var body = text;
     if ends_with(body, "\r\n") { body = body[..body.len - 2]; } else if ends_with(body, "\n") { body = body[..body.len - 1]; }
     var input: u8[>..] = [];
-    canonical_text(input, body, true);
+    cleartext_hashed(input, body);
     var sig: u8[>..] = [];
     let prm = sig_params(opt, SIG_TEXT);
     let e = make_signature(kr.keys[idx], prm, input, sig, literal_meta('t', "", 0));
@@ -727,6 +808,9 @@ fn sign_cleartext(kr: const Keyring&, signer: i64, text: const u8[:], out: u8[>.
     out.append(hash_name(signing_hash(kr.keys[idx], opt.hash)));
     out.append("\n\n");
     dash_escape(out, body);
+    // A last line that is empty (text that ended with two line ends) is
+    // one the reader reads, and the signature hashed.
+    if ends_with(body, "\n") { out.push('\n'); }
     armor(out, ARMOR_SIGNATURE, sig);
     return OK;
 }

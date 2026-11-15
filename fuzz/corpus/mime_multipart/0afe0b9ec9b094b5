@@ -1,0 +1,8 @@
+	MyBoundary
+
+--MyBoundary
+Content-Disposition: form-data; name="filea"; filename="filea.txt"
+Content-Type: text/plain
+
+This is a test file.
+--MyBoundary--

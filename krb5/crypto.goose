@@ -801,7 +801,10 @@ fn checksum(key: Key, ctype0: i32, usage: i64, data: const u8[:], out: u8[>..]&)
 
 // OK if `sum` is the checksum of type `ctype` of data, else
 // KRB_AP_ERR_MODIFIED (or the error that kept it from being computed).
+// An unkeyed type (RSA-MD5, SHA-1), which anyone can compute, is never
+// taken as proof of anything: KRB_AP_ERR_INAPP_CKSUM, as MIT has it.
 fn verify_checksum(key: Key, ctype: i32, usage: i64, data: const u8[:], sum: const u8[:]) -> i64 {
+    if ctype == CKSUM_RSA_MD5 || ctype == CKSUM_SHA1 { return KRB_AP_ERR_INAPP_CKSUM; }
     var want: u8[>..] = [];
     let err = checksum(key, ctype, usage, data, want);
     if err != OK { return err; }

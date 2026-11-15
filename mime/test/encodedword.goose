@@ -119,8 +119,23 @@ fn messages() {
     tv::check_eq("long s charset", o, "a\xef\xbf\xbd");
 }
 
+// A charset that is not a token would end the word or the header: refused.
+fn bad_charset() {
+    for cs in ["utf-8?q?x?=", "utf-8\r\nX-Evil: 1", "", "a b", "a\"b"] {
+        var out: u8[>..] = [];
+        let ok = mime::encode_word(out, mime::Q_ENCODING, cs, "caf\xc3\xa9");
+        tv::check(str("charset ", cs), !ok);
+        tv::check_eq(str("  nothing written ", cs), out, "");
+        tv::check_eq(str("  value form empty ", cs), mime::encode_word(mime::B_ENCODING, cs, "x"), "");
+    }
+    var out: u8[>..] = [];
+    let ok = mime::encode_word(out, mime::Q_ENCODING, "ISO-8859-1", "caf\xe9");
+    tv::check("charset ISO-8859-1", ok);
+}
+
 fn main() {
     encode();
+    bad_charset();
     decode();
     charset_reader();
     messages();

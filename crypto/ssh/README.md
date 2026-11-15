@@ -38,9 +38,12 @@ below).
   connection fails; between its KEXINIT and its NEWKEYS a side sends only
   the exchange's messages, RFC 4253 §7.1, and what else it has waits and
   goes after); the host key against known_hosts lines (patterns,
-  hashed entries, ports, @revoked), a fixed key, or put to the application;
+  hashed entries, ports, @revoked; the host lowercased, as OpenSSH's; the
+  file however long), a fixed key, or put to the application;
   publickey (query, then signature; the server refuses authorized_keys
-  lines with options, which it does not enforce), password and keyboard-interactive
+  lines with options, which it does not enforce; every failed request, a
+  key offered and refused too, counts toward `max_auth_tries`, as in
+  OpenSSH, but a first "none"), password and keyboard-interactive
   authentication both ways, the client asking for a password only when it
   needs one; channels with flow control (the window opens as data
   arrives, or, held with `channel_hold_window`, as the application reports
@@ -95,7 +98,10 @@ instead); `-o ProxyCommand=command` runs that for the connection (`%h`,
 For a passphrase-protected key it asks for the passphrase (three tries;
 empty skips the key) at the terminal, or runs `$SSH_ASKPASS` as ssh does
 (always with `SSH_ASKPASS_REQUIRE=force` or `prefer`, else when there is
-no terminal); password prompts likewise.
+no terminal); password prompts likewise (an answer over 1 KiB is refused,
+never cut short). What the server sends to be shown (its banner, a
+disconnect's or a refusal's message, a signal's name) is made safe for the
+terminal as OpenSSH's does: control characters as `\ooo`.
 
 `goose-sshd` lets in the user running it: `-p port` (2222), `-a address`
 (127.0.0.1), `-h host_key_file` (`./goose_host_ed25519_key`, made on first
@@ -104,13 +110,18 @@ refused), `-k authorized_keys` (`~/.ssh/authorized_keys`; a line with
 options, `command=`, `from=`, `restrict` and the like, lets nobody in,
 since they are not enforced), `-P
 password_file` ("user:password" lines, plain or bcrypt), `-u user`,
-`-b banner`, `-s sftp_server` (by default `goose-sftp-server` beside
-goose-sshd), `-g`, `-v`. Each connection is a process of its own; a session
+`-b banner` (1023 bytes at most), `-s sftp_server` (by default `goose-sftp-server` beside
+goose-sshd), `-G seconds` (the login grace time, 120; 0 for none), `-m
+max_startups` (10, 250 at most), `-g`, `-v`. The files are read whole; a password file
+over 8 KiB is refused rather than cut. As OpenSSH's, a connection not
+logged in within the grace time is dropped, and so is a new one while
+max_startups others are not logged in yet. Each connection is a process of its own; a session
 runs a command or the user's shell, on a pty when asked, in the user's home
 directory, and ends with its exit status; the `sftp` subsystem runs the
 SFTP server. It connects the client's -L and -D channels to their targets,
 and listens for -R on the loopback address (on the address asked for with
-`-g`, as OpenSSH's GatewayPorts). tools/net.c is their operating-system part (sockets, the terminal,
+`-g`, as OpenSSH's GatewayPorts); an address over 255 bytes is refused.
+With `-v` what the client sent is logged made safe for the terminal. tools/net.c is their operating-system part (sockets, the terminal,
 processes), and tools/fs.c the file system's, for macOS and Linux.
 
 `goose-scp` copies files as OpenSSH's scp does by default (over SFTP):
@@ -123,7 +134,12 @@ sources need one. A remote path starts from the home directory, `~` is
 expanded by the server (expand-path@openssh.com), and a remote source's last
 part may be a pattern (`*`, `?`, `[...]`). `-r` copies directories,
 following symbolic links; `-p` keeps times and modes (otherwise a new file
-gets its source's mode under the umask, as scp). Transfers keep 64 requests
+gets its source's mode under the umask, as scp), never the setuid, setgid
+or sticky bits. As OpenSSH's (CVE-2019-6111), a file copied into a local
+directory is named by the last part of the path the user gave, never by the
+server's expand-path answer; a `~` or `~user` alone has no name, so the
+target must name the file; and names the server lists for `-r` or a pattern
+are refused when "", ".", ".." or holding a slash. Transfers keep 64 requests
 of 32 KiB in flight, as OpenSSH's. A file that fails is reported and the
 others still copied; the status is then 1. Not supported: copies between
 two remote hosts, the legacy scp protocol (`-O`; OpenSSH's `scp -O` to
@@ -144,13 +160,17 @@ does not replace a file, as the draft says (a link, then an unlink, as
 OpenSSH); posix-rename@openssh.com does. REALPATH takes a path whose last
 part does not exist yet, as OpenSSH's (OpenBSD's realpath). At most 64
 handles are open at once, each named by its slot and a generation, so a
-closed handle never names the slot's next use. `-e` or `-v` logs requests
-to stderr.
+closed handle never names the slot's next use. copy-data refuses one
+handle both ways, or two opened by the same path, as OpenSSH's, and "to the
+end" (length 0) copies to where the file ended when asked, so a copy into
+the same file by another path (which OpenSSH's copies forever) ends. Replies go out as they reach 1 MiB, not after a whole
+read of requests. `-e` or `-v` logs requests to stderr.
 
 `goose-ssh-keygen` makes key files as ssh-keygen does: `-t ed25519`
-(the default), `ecdsa` (`-b 256`, `384`, `521`) or `rsa` (`-b`, 3072),
-`-C comment`, `-N passphrase` (else asked twice; empty for none), `-Z
-cipher` (aes256-ctr), `-a rounds` (16), `-f file` (`~/.ssh/id_<type>`),
+(the default), `ecdsa` (`-b 256`, `384`, `521`) or `rsa` (`-b`, 3072;
+1024 to 8192, a multiple of 64), `-C comment` (1024 bytes at most), `-N
+passphrase` (else asked twice; empty for none), `-Z cipher` (aes256-ctr),
+`-a rounds` (16), `-f file` (`~/.ssh/id_<type>`),
 the key in OpenSSH's format with mode 0600 and `file.pub` beside it. `-y
 [-P passphrase] -f file` prints the public line, `-p [-P old] [-N new] -f
 file` changes the passphrase, `-l [-E sha256|md5] -f file` prints the
@@ -196,7 +216,8 @@ on free ports of 127.0.0.1, and leaves nothing running.
   passphrase-protected keys, ssh-keygen's under each of the nine key file
   ciphers and one of Go's: refused without the passphrase or with another,
   read with it, written here under the same cipher and read back, a
-  changed tag or a shortened file refused.
+  changed tag or a shortened file refused; an ECDSA key file whose scalar
+  is 0 or n refused (`KEY_MALFORMED`), as the PEM readers refuse it.
 - `transport`: every cipher and MAC seals packets of 0 to 40000 bytes that
   the other side measures from their first bytes and opens in sequence;
   a changed byte or a packet out of order does not open; every key
@@ -243,7 +264,7 @@ ssh-keygen (and by Go, for the AES-256 CTR and CBC ones it reads), and
 its fingerprints equal to ssh-keygen's.
 
 And SFTP: `scripts/sftp_raw.py` sends goose-sftp-server and OpenSSH's
-sftp-server the same 91 requests, byte by byte, and compares their replies
+sftp-server the same 94 requests, byte by byte, and compares their replies
 (stale and malformed handles, EXCL and APPEND, reads past the end and cut
 at the limit, links, RENAME onto a file and posix-rename, directories, NUL
 and over-long paths, every attribute, every extension); one `sftp -D` batch
@@ -261,6 +282,15 @@ OpenSSH ssh -J through goose-sshd; goose-ssh -W as OpenSSH ssh's
 ProxyCommand and OpenSSH ssh -W as goose-ssh's; -W to an sshd (its version
 line), -W and -J to closed ports (255), -W with a command refused, and no
 proxy left running.
+
+And hostile peers: goose-scp against `scripts/evil_sftp.py` as goose-sshd's
+sftp subsystem, a server that answers expand-path with a path of its own,
+lists "..", "../escape", "" and "a/b", and serves setuid files (the files
+land under the names the user gave, nothing outside the target, no setuid
+bit kept); goose-sshd's grace time and max startups, a password file too
+long refused, authorized_keys past 64 KiB read whole, a banner's escapes
+shown as `\ooo`, and a tcpip-forward address too long refused with the
+session going on.
 
 `tools/gossh` builds offline from the module cache
 (`GOFLAGS=-mod=mod GOPROXY=off GOSUMDB=off`).

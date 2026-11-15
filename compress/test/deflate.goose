@@ -232,6 +232,33 @@ fn errors() {
     if c1[..] != c2[..] { fail("reset dropped the dictionary"); }
 }
 
+// A limit counts the bytes a whole-buffer decoder appends, not what out
+// had before.
+fn appended_limits() {
+    let data = "the bytes appended, not the bytes out had before them";
+    var raw: u8[>..] = [];
+    var z: u8[>..] = [];
+    var g: u8[>..] = [];
+    compress::deflate_encode(data, raw);
+    compress::zlib_encode(data, z);
+    compress::gzip_encode(data, g);
+    for which in 3 {
+        let enc = if which == 0 { raw[..] } else if which == 1 { z[..] } else { g[..] };
+        for limit in [data.len, data.len - 1] {
+            var out: u8[>..] = [];
+            out.append("0123456789");
+            let st = if which == 0 { compress::inflate_decode(enc, out, limit) }
+                     else if which == 1 { compress::zlib_decode(enc, out, limit) }
+                     else { compress::gzip_decode(enc, out, limit) };
+            let want = if limit == data.len { 0 } else { compress::ERR_LIMIT };
+            if st != want || out[..10] != "0123456789" || (st == 0 && out[10..] != data) {
+                print("FAIL appended limit, decoder ", which, ", limit ", limit, ": ", st);
+                failures++;
+            }
+        }
+    }
+}
+
 fn main() {
     let xs = inputs();
     levels(xs);
@@ -239,6 +266,7 @@ fn main() {
     dictionaries();
     headers();
     errors();
+    appended_limits();
     if failures > 0 { print(failures, " failures"); exit(1); }
     print("deflate: all passed");
 }

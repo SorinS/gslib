@@ -384,6 +384,7 @@ fn handshake(o: const Opts&, l: Link&, cfg: const tls::ClientConfig&) -> bool {
         if !write_all(l, out) { break; }
         out.clear();
         if tls::connected(l.t) { l.tls_on = true; return true; }
+        if tls::failed(l.t) { break; }              // client_start refused (a bad configuration)
         let n = sysnet::net_read(l.fd, buf, o.timeout_ms as! i32);
         if n <= 0 { break; }
         if tls::client_feed(l.t, cfg, buf[..n], out, app) != 0 {

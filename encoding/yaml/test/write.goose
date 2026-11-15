@@ -65,6 +65,12 @@ fn refusals() {
     refused("binary that is not base64", bin, "yaml: explicitly tagged !!binary data must be base64-encoded");
     let i .= doc.push(yaml::node(yaml::SCALAR, "\xff", "!!int"));
     refused("bad UTF-8 with a tag", i, "yaml: cannot marshal invalid UTF-8 data as !!int");
+    // A tag that ends inside a character (yaml.v3 runs off its end).
+    let t .= doc.push(yaml::node(yaml::SCALAR, "x", "!a\xE2"));
+    refused("tag that is not UTF-8", t, "yaml: tag is not valid UTF-8");
+    let q .= doc.push(yaml::node(yaml::MAPPING));
+    q.tag = "!\xE2\x82";
+    refused("collection's tag that is not UTF-8", q, "yaml: tag is not valid UTF-8");
 }
 
 fn collections() {

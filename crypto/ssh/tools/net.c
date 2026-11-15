@@ -256,7 +256,22 @@ int32_t tty_rows(int32_t fd) {
     return ioctl(fd, TIOCGWINSZ, &w) == 0 && w.ws_row ? w.ws_row : 24;
 }
 
-/* $SSH_ASKPASS run with the prompt, its first line of output the answer. */
+/* A line from fd (to \n, or \r too with cr), without its end: its length,
+   or -2 if it did not fit in out (the rest of it read and dropped, never
+   left for the next read, nor the line taken cut short). */
+static int64_t read_line(int fd, net_buf out, int cr) {
+    int64_t n = 0;
+    int over = 0;
+    char ch;
+    while (read(fd, &ch, 1) == 1 && ch != '\n' && !(cr && ch == '\r')) {
+        if (n < out.len) out.data[n++] = (uint8_t)ch;
+        else over = 1;
+    }
+    return over ? -2 : n;
+}
+
+/* $SSH_ASKPASS run with the prompt, its first line of output the answer
+   (-2 if too long). */
 static int64_t askpass(const char *prog, net_slice prompt, net_buf out) {
     char p[1024];
     if (cstring(prompt, p, sizeof p) < 0) return -1;
@@ -272,9 +287,7 @@ static int64_t askpass(const char *prog, net_slice prompt, net_buf out) {
         _exit(127);
     }
     close(fds[1]);
-    int64_t n = 0;
-    char ch;
-    while (n < out.len && read(fds[0], &ch, 1) == 1 && ch != '\n' && ch != '\r') out.data[n++] = (uint8_t)ch;
+    int64_t n = read_line(fds[0], out, 1);
     close(fds[0]);
     int st;
     while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
@@ -284,7 +297,7 @@ static int64_t askpass(const char *prog, net_slice prompt, net_buf out) {
 /* A secret typed at the terminal, not echoed, or from $SSH_ASKPASS as
    OpenSSH's ssh has it: always with $SSH_ASKPASS_REQUIRE "force" or
    "prefer", never with "never", else when there is no terminal. Its
-   length, or -1 for neither. */
+   length, -1 for neither, -2 if too long. */
 int64_t tty_secret(net_slice prompt, net_buf out) {
     const char *prog = getenv("SSH_ASKPASS");
     const char *req = getenv("SSH_ASKPASS_REQUIRE");
@@ -298,23 +311,19 @@ int64_t tty_secret(net_slice prompt, net_buf out) {
     quiet = t;
     quiet.c_lflag &= ~(tcflag_t)ECHO;
     tcsetattr(fd, TCSAFLUSH, &quiet);
-    int64_t n = 0;
-    char ch;
-    while (n < out.len && read(fd, &ch, 1) == 1 && ch != '\n' && ch != '\r') out.data[n++] = (uint8_t)ch;
+    int64_t n = read_line(fd, out, 1);
     tcsetattr(fd, TCSAFLUSH, &t);
     if (write(fd, "\n", 1) < 0) {}
     close(fd);
     return n;
 }
 
-/* A line typed at the terminal, echoed (for yes/no). */
+/* A line typed at the terminal, echoed (for yes/no); -2 if too long. */
 int64_t tty_line(net_slice prompt, net_buf out) {
     int fd = open("/dev/tty", O_RDWR);
     if (fd < 0) return -1;
     if (write(fd, prompt.data, (size_t)prompt.len) < 0) { close(fd); return -1; }
-    int64_t n = 0;
-    char ch;
-    while (n < out.len && read(fd, &ch, 1) == 1 && ch != '\n') out.data[n++] = (uint8_t)ch;
+    int64_t n = read_line(fd, out, 0);
     close(fd);
     return n;
 }
@@ -541,6 +550,20 @@ int32_t proc_fork(void) {
     return (int32_t)fork();
 }
 
+int32_t proc_fork_watched(int32_t *fd) {
+    int p[2];
+    if (pipe(p) < 0) return -1;
+    fcntl(p[0], F_SETFD, FD_CLOEXEC);
+    fcntl(p[1], F_SETFD, FD_CLOEXEC);
+    signal(SIGCHLD, SIG_DFL);
+    pid_t pid = fork();
+    if (pid < 0) { close(p[0]); close(p[1]); return -1; }
+    if (pid == 0) { close(p[0]); *fd = p[1]; return 0; }
+    close(p[1]);
+    *fd = p[0];
+    return (int32_t)pid;
+}
+
 void proc_reap(void) {
     while (waitpid(-1, NULL, WNOHANG) > 0) {}
 }
@@ -556,7 +579,7 @@ int64_t os_user(net_buf out) {
     if (!u) u = getenv("LOGNAME");
     if (!u) return 0;
     size_t l = strlen(u);
-    if ((int64_t)l > out.len) l = (size_t)out.len;
+    if ((int64_t)l > out.len) return -1;              /* too long: never cut short */
     memcpy(out.data, u, l);
     return (int64_t)l;
 }
@@ -587,6 +610,12 @@ int64_t os_read_private(net_slice path, net_buf out) {
         if (n < 0) { r = -6; break; }
         if (n == 0) break;
         r += n;
+    }
+    if (r == out.len) {                     /* grown since fstat: too long, never cut short */
+        char extra;
+        ssize_t n;
+        do { n = read(fd, &extra, 1); } while (n < 0 && errno == EINTR);
+        if (n != 0) r = -6;
     }
     close(fd);
     return r;
@@ -633,7 +662,7 @@ int64_t os_home(net_buf out) {
     const char *h = getenv("HOME");
     if (!h) return 0;
     size_t l = strlen(h);
-    if ((int64_t)l > out.len) l = (size_t)out.len;
+    if ((int64_t)l > out.len) return -1;              /* too long: never cut short */
     memcpy(out.data, h, l);
     return (int64_t)l;
 }

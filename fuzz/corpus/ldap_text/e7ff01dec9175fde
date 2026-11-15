@@ -1,0 +1,3 @@
+dn: cn=a
+changetype: modrdn
+deleteoldrdn: 1

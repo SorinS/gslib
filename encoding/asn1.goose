@@ -41,13 +41,15 @@ let CLASS_PRIVATE: u8 = 3;
 // The tag of [n] in the context class, constructed (EXPLICIT, or IMPLICIT
 // over a constructed type) or primitive.
 fn ctx(n: u32, constructed: bool) -> u32 {
+    assert(n <= 0x00ffffff);
     let base: u32 = if constructed { 0xa0 } else { 0x80 };
-    return if n < 31 { base | n } else { base << 24 | n };
+    return if n < 31 { base | n } else { (base | 0x1f) << 24 | n };
 }
 
 // One element: its tag (the identifier octet for numbers below 31, else
-// class and constructed bits << 24 | number), and where its header,
-// content and end are in the buffer.
+// that first octet, low bits 0x1f, << 24 | number, so a high tag number
+// never equals a one-octet tag), and where its header, content and end are
+// in the buffer.
 struct Tlv { tag: u32, cls: u8, constructed: bool, number: u32, start: i64, off: i64, end: i64 }
 
 fn content_len(t: Tlv) -> i64 { t.end - t.off }
@@ -71,13 +73,14 @@ fn read(buf: const u8[:], at: i64, limit: i64, ber: bool = false) -> Tlv, bool {
             let b = buf[p];
             p++;
             if n == 0 && b == 0x80 { return t, false; }
-            if n > 0x00ffffff { return t, false; }
+            // At most 24 bits, below the identifier octet in the tag.
+            if n > 0x0001ffff { return t, false; }
             n = (n << 7) | (b & 0x7f);
             if b & 0x80 == 0 { break; }
         }
         if n < 31 { return t, false; }
         t.number = n;
-        t.tag = ((id & 0xe0) as u32) << 24 | n;
+        t.tag = (id as u32) << 24 | n;
     }
     if p >= limit { return t, false; }
     let l0 = buf[p];
@@ -468,7 +471,8 @@ fn put_header(out: u8[>..]&, tag: u32, len: i64) {
         out.push(tag as! u8);
     } else {
         let n = tag & 0x00ffffff;
-        out.push(((tag >> 24) | 0x1f) as! u8);
+        assert(((tag >> 24) & 0x1f) == 0x1f && n >= 31);
+        out.push((tag >> 24) as! u8);
         var tmp: u8[5] = [0; 5];
         var k = 0;
         var v = n;

@@ -2,7 +2,8 @@
 // running it:
 //
 //   goose-sshd [-p port] [-a address] [-h host_key_file]... [-k authorized_keys]
-//              [-P password_file] [-u user] [-b banner] [-s sftp_server] [-g] [-v]
+//              [-P password_file] [-u user] [-b banner] [-s sftp_server]
+//              [-G login_grace_seconds] [-m max_startups] [-g] [-v]
 //
 // It listens on 127.0.0.1:2222 by default (-a 0.0.0.0 for every address),
 // with the host keys given (by default ./goose_host_ed25519_key, made on
@@ -21,6 +22,10 @@
 // address (on any address the client names with -g, as OpenSSH's
 // GatewayPorts) and sends each connection back as a forwarded-tcpip
 // channel; cancel-tcpip-forward stops it.
+// As OpenSSH's: a connection not logged in within the grace time (-G, 120
+// seconds by default; 0 for none) is dropped, and so is a new one while
+// max_startups (-m, 10 by default) are not yet logged in. The files are
+// read whole; a password file over 8 KiB is refused.
 import std;
 import os;
 import gslib from "../../..";
@@ -36,11 +41,14 @@ import .relay;
 var verbose = false;
 var gateway_ports = false;
 var sftp_server: u8[>..] = [];
+var login_grace: i64 = 120;            // seconds; 0: no limit
+var max_startups: i64 = 10;            // connections not yet logged in, at once
 
-fn log(s: const u8[:]) { if verbose { sysnet::eprint(str("goose-sshd: ", s, "\n")); } }
+// What the client sent may be in s: made safe for a terminal.
+fn log(s: const u8[:]) { if verbose { sysnet::eprint(str("goose-sshd: ", sysnet::safe_text(s), "\n")); } }
 
 fn usage() {
-    sysnet::eprint("usage: goose-sshd [-p port] [-a address] [-h host_key_file]... [-k authorized_keys] [-P password_file] [-u user] [-b banner] [-s sftp_server] [-g] [-v]\n");
+    sysnet::eprint("usage: goose-sshd [-p port] [-a address] [-h host_key_file]... [-k authorized_keys] [-P password_file] [-u user] [-b banner] [-s sftp_server] [-G login_grace_seconds] [-m max_startups] [-g] [-v]\n");
     exit(1);
 }
 
@@ -132,7 +140,12 @@ fn spawn(s: Session&, cmd: const u8[:]) -> bool {
     return s.pid > 0;
 }
 
-fn handle_connection(sock: i32, cfg: const ssh::ServerConfig&, peer: const u8[:]) {
+// watch: the pipe the listener counts this connection by until it has
+// logged in (closed then).
+fn handle_connection(sock: i32, cfg: const ssh::ServerConfig&, peer: const u8[:], watch: i32) {
+    var watch_fd = watch;
+    var authed = false;
+    let deadline = time_ns() + login_grace * 1000000000;
     var c = ssh::server(cfg);
     var out: u8[>..] = [];
     ssh::server_start(c, cfg, out);
@@ -234,6 +247,8 @@ fn handle_connection(sock: i32, cfg: const ssh::ServerConfig&, peer: const u8[:]
             }
             if e.kind == ssh::EV_AUTHENTICATED {
                 log(str("accepted ", ssh::bytes(events, e.data), " from ", peer));
+                authed = true;
+                if watch_fd >= 0 { sysnet::net_close(watch_fd); watch_fd = -1; }
             } else if e.kind == ssh::EV_CHANNEL_OPEN {
                 let kind = ssh::get_string(r, events);
                 if ssh::bytes(events, kind) == "session" && s.ch < 0 {
@@ -376,6 +391,10 @@ fn handle_connection(sock: i32, cfg: const ssh::ServerConfig&, peer: const u8[:]
             s = no_session();
         }
         if !send_all(sock, out) { break; }
+        if login_grace > 0 && !authed && time_ns() > deadline {
+            log(str("connection from ", peer, ": not logged in within ", login_grace, " seconds"));
+            break;
+        }
         if ssh::closed(c) {
             if ssh::failed(c) { log(str("connection from ", peer, " failed: ", c.message)); }
             break;
@@ -424,6 +443,12 @@ fn main() {
         else if w == "-u" { user.clear(); user.append(a[i + 1]); }
         else if w == "-b" { banner.clear(); banner.append(a[i + 1]); }
         else if w == "-s" { sftp_server.clear(); sftp_server.append(a[i + 1]); }
+        else if w == "-G" || w == "-m" {
+            let v, ok = parse_int(a[i + 1], 10);
+            // -m: each one not logged in is a descriptor polled, 256 at most.
+            if !ok || v < 0 || v > 1000000 || (w == "-m" && (v == 0 || v > 250)) { usage(); }
+            if w == "-G" { login_grace = v; } else { max_startups = v; }
+        }
         else { usage(); }
         i += 2;
     }
@@ -438,35 +463,65 @@ fn main() {
     }
     if authorized.len == 0 { authorized.append(str(sysnet::home_dir(), "/.ssh/authorized_keys")); }
     var text: u8[>..] = [];
-    if read_file(authorized, text) { cfg.authorized_keys.append(text[..::min(text.len, cfg.authorized_keys.cap)]); }
+    if read_file(authorized, text) { cfg.authorized_keys.append(text); }
     if passwords.len > 0 {
         var pw: u8[>..] = [];
         if !read_file(passwords, pw) { sysnet::eprint(str("goose-sshd: cannot read ", passwords, "\n")); exit(1); }
-        cfg.passwords.append(pw[..::min(pw.len, cfg.passwords.cap)]);
+        // Never a part of it: a password cut short would be let in.
+        if pw.len > cfg.passwords.cap {
+            sysnet::eprint(str("goose-sshd: ", passwords, ": too long (over ", cfg.passwords.cap, " bytes)\n"));
+            exit(1);
+        }
+        cfg.passwords.append(pw);
     }
     if cfg.authorized_keys.len == 0 && cfg.passwords.len == 0 {
         sysnet::eprint("goose-sshd: no authorized keys or passwords: nobody could log in\n");
         exit(1);
     }
     cfg.auth_user.append(user);
+    if banner.len >= cfg.banner.cap { sysnet::eprint(str("goose-sshd: the banner is too long (", cfg.banner.cap - 1, " bytes at most)\n")); exit(1); }
     if banner.len > 0 { cfg.banner.append(banner); cfg.banner.push('\n'); }
     let lfd = sysnet::net_listen(addr, port as! i32);
     if lfd < 0 { sysnet::eprint(str("goose-sshd: cannot listen on ", addr, " port ", port, "\n")); exit(1); }
     sysnet::eprint(str("goose-sshd: listening on ", addr, " port ", port, " for ", user, "\n"));
+    // Each connection not yet logged in: the read end of its child's pipe,
+    // ready once the child has logged in or ended.
+    var pending: i32[>..] = [];
     loop {
+        var fds: i32[>..] = [];
+        fds.push(lfd);
+        fds.append(pending);
+        var ready: u8[>..] = [];
+        ready.resize(fds.len, 0);
+        let n = sysnet::net_poll_set(fds, ready, 1000);
+        sysnet::proc_reap();
+        var still: i32[>..] = [];
+        for j in pending.len {
+            if ready[j + 1] != 0 { sysnet::net_close(pending[j]); } else { still.push(pending[j]); }
+        }
+        pending.clear();
+        pending.append(still);
+        if ready[0] == 0 { continue; }
         var peer: u8[64] = [0; 64];
         var plen: i64 = 0;
         var pport: i32 = 0;
         let fd = sysnet::net_accept(lfd, peer, plen, pport);
-        sysnet::proc_reap();
         if fd < 0 { continue; }
+        if pending.len >= max_startups {
+            log(str("connection from ", peer[..plen], " dropped: ", pending.len, " not yet logged in"));
+            sysnet::net_close(fd);
+            continue;
+        }
         log(str("connection from ", peer[..plen]));
-        let pid = sysnet::proc_fork();
+        var wfd: i32 = -1;
+        let pid = sysnet::proc_fork_watched(wfd);
         if pid == 0 {
             sysnet::net_close(lfd);
-            handle_connection(fd, cfg, peer[..plen]);
+            for p in pending { sysnet::net_close(p); }
+            handle_connection(fd, cfg, peer[..plen], wfd);
             sysnet::proc_exit(0);
         }
+        if pid > 0 { pending.push(wfd); }
         sysnet::net_close(fd);
     }
 }

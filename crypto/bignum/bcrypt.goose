@@ -132,6 +132,9 @@ fn bcrypt_parse(h: const u8[:]) -> u8, i64, u8[>..], i64, bool {
 // CompareHashAndPassword: whether password hashes to h, compared in
 // constant time.
 fn bcrypt_verify(h: const u8[:], password: const u8[:]) -> bool {
+    // bcrypt_hash refuses a longer password, and bcrypt itself would only
+    // read its first 72 bytes: anything typed after them must not match.
+    if password.len > 72 { return false; }
     let minor, cost, salt, at, ok = bcrypt_parse(h);
     if !ok { return false; }
     let again = bcrypt_format(minor, cost, salt, bcrypt_raw(password, cost, salt));

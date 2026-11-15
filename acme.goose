@@ -115,6 +115,7 @@ struct Problem {
     kind:        u8[..256]  = [],
     detail:      u8[..1024] = [],
     subproblems: i64        = 0,
+    truncated:   bool       = false,   // detail was cut at 1024 bytes
 }
 
 // The directory (§7.1.1): the URLs of the server's resources, and its
@@ -131,6 +132,7 @@ struct Directory {
     website:          u8[..512]  = [],
     eab_required:     bool       = false, // externalAccountRequired
     profiles:         u8[..1024] = [],    // the names of the profiles offered, one a line
+    profiles_truncated: bool     = false, // profiles left empty: more than fit, or a name with a line end
 }
 
 // An ACME client: the server's directory, the account key and the
@@ -258,11 +260,11 @@ fn str_member(n: json::Node?, name: const u8[:]) -> const u8[:] {
     return if ok { s } else { "" };
 }
 
-// Sets a URL field: false when the URL does not fit, so that a document
-// with one is refused rather than read with the URL missing.
-fn put_limited(out: u8[..512]&, s: const u8[:]) -> bool {
+// Sets a field (a URL, a date, a name): false when the value does not fit,
+// so that a document with one is refused rather than read with it missing.
+fn put_limited<A>(out: A&, s: const u8[:]) -> bool {
     out.clear();
-    if s.len > 512 { return false; }
+    if s.len > out.cap { return false; }
     out.append(s);
     return true;
 }
@@ -278,16 +280,25 @@ fn valid_token(t: const u8[:]) -> bool {
     return true;
 }
 
-fn read_problem(n: json::Node?, status: i64) -> Problem {
+// A problem document, and whether its type fits: a type over 256 bytes is
+// not kept (a cut-short type could read as another), and detail says so.
+// Only the detail, text for people, is cut, at 1024 bytes, with
+// `truncated` set.
+fn read_problem(n: json::Node?, status: i64) -> Problem, bool {
     var p = Problem { .. };
     p.status = status;
     let t = str_member(n, "type");
-    if t.len <= 256 { p.kind.append(t); }
     let d = str_member(n, "detail");
-    p.detail.append(d[..min(d.len, 1024)]);
     let subs = json::member(n, "subproblems");
     if subs { json::each(subs) { s => p.subproblems++; }; }
-    return p;
+    if t.len > p.kind.cap {
+        p.detail.append("a problem document with an over-long type");
+        return p, false;
+    }
+    p.kind.append(t);
+    p.truncated = d.len > p.detail.cap;
+    p.detail.append(d[..min(d.len, p.detail.cap)]);
+    return p, true;
 }
 
 // A problem from a response's body; a body that is not one still gives
@@ -302,7 +313,8 @@ fn problem_of(body: const u8[:], status: i64) -> Problem {
         p.detail.append("not a problem document");
         return p;
     }
-    return read_problem(root, status);
+    let p, ok = read_problem(root, status);
+    return p;
 }
 
 // Whether the last refusal was of this type, given without the
@@ -334,13 +346,19 @@ fn read_directory(text: const u8[:]) -> Directory, bool {
         d.eab_required = ok && eab;
         let profiles = json::member(meta, "profiles");
         if profiles {
+            // One a line, for the caller to read (obtain takes the profile
+            // it is given): a name with a line end in it, or more than
+            // fit, and the list is left empty, never cut, with
+            // profiles_truncated set.
             json::each(profiles) { p =>
-                // One a line: a name with a line end in it is passed over.
-                if position(p.key, '\n') < 0 && d.profiles.len + p.key.len + 1 <= 1024 {
+                if position(p.key, '\n') >= 0 || d.profiles.len + p.key.len + 1 > d.profiles.cap {
+                    d.profiles_truncated = true;
+                } else if !d.profiles_truncated {
                     d.profiles.append(p.key);
                     d.profiles.push('\n');
                 }
             };
+            if d.profiles_truncated { d.profiles.clear(); }
         }
     }
     let ok = fits && d.new_nonce.len > 0 && d.new_account.len > 0 && d.new_order.len > 0;
@@ -357,14 +375,16 @@ fn read_order(text: const u8[:], url: const u8[:]) -> Order, bool {
     let root, msg = json::parse(text, doc, decoded);
     guard root else { return o, false; }
     o.status = status_lookup(str_member(root, "status"));
-    let e = str_member(root, "expires");
-    if e.len <= 64 { o.expires.append(e); }
+    fits = put_limited(o.expires, str_member(root, "expires")) && fits;
     fits = put_limited(o.finalize, str_member(root, "finalize")) && fits;
     fits = put_limited(o.certificate, str_member(root, "certificate")) && fits;
-    let p = str_member(root, "profile");
-    if p.len <= 64 { o.profile.append(p); }
+    fits = put_limited(o.profile, str_member(root, "profile")) && fits;
     let err = json::member(root, "error");
-    if err { o.error = read_problem(err, 0); }
+    if err {
+        let pe, pok = read_problem(err, 0);
+        o.error = pe;
+        fits = pok && fits;
+    }
     let list = json::member(root, "authorizations");
     if list {
         json::each(list) { z =>
@@ -398,15 +418,15 @@ fn read_authz(text: const u8[:], url: const u8[:]) -> Authz, bool {
     }
     let w, ok = json::as_bool(json::member(root, "wildcard"));
     z.wildcard = ok && w;
-    let e = str_member(root, "expires");
-    if e.len <= 64 { z.expires.append(e); }
+    fits = put_limited(z.expires, str_member(root, "expires")) && fits;
     let list = json::member(root, "challenges");
     if list {
         json::each(list) { c =>
-            if z.challenges.len < 8 {
+            // More challenges than are kept: refused, not some dropped.
+            if z.challenges.len == 8 { fits = false; }
+            else {
                 var ch = Challenge { .. };
-                let k = str_member(c, "type");
-                if k.len <= 32 { ch.kind.append(k); }
+                fits = put_limited(ch.kind, str_member(c, "type")) && fits;
                 fits = put_limited(ch.url, str_member(c, "url")) && fits;
                 // A token is published as a file name and a DNS value: one
                 // that is not base64url is refused, not used.
@@ -414,7 +434,11 @@ fn read_authz(text: const u8[:], url: const u8[:]) -> Authz, bool {
                 if tok.len > 0 && !valid_token(tok) { fits = false; } else { ch.token.append(tok); }
                 ch.status = status_lookup(str_member(c, "status"));
                 let err = json::member(c, "error");
-                if err { ch.error = read_problem(err, 0); }
+                if err {
+                    let pe, pok = read_problem(err, 0);
+                    ch.error = pe;
+                    fits = pok && fits;
+                }
                 z.challenges.push(ch);
             }
         };

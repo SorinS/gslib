@@ -646,6 +646,15 @@ fn id_tokens() {
     let ps = sign(payload(aud, ""), rsa, jwa::PS256, "rsa-1");
     check("PS256 with an RSA key", fn_err(c, hc, ps, nonce) == oauth::OK);
     check("an access token is not an ID token", fn_err(c, hc, sign(payload(aud, ""), rsa, jwa::RS256, "rsa-1", "at+jwt"), nonce) == oauth::ERR_TYP);
+    // Nor is a logout token, or any other "+jwt" (checked with the nonce
+    // left out, as a client not using one would).
+    check("typ logout+jwt is not an ID token", fn_err(c, hc, sign(payload(aud, ""), rsa, jwa::RS256, "rsa-1", "logout+jwt"), "") == oauth::ERR_TYP);
+    check("typ application/logout+jwt", fn_err(c, hc, sign(payload(aud, ""), rsa, jwa::RS256, "rsa-1", "application/logout+jwt"), "") == oauth::ERR_TYP);
+    check("typ secevent+JWT", fn_err(c, hc, sign(payload(aud, ""), rsa, jwa::RS256, "rsa-1", "secevent+JWT"), "") == oauth::ERR_TYP);
+    check("typ JWT is an ID token", fn_err(c, hc, sign(payload(aud, ""), rsa, jwa::RS256, "rsa-1", "JWT"), "") == oauth::OK);
+    check("typ application/jwt", fn_err(c, hc, sign(payload(aud, ""), rsa, jwa::RS256, "rsa-1", "application/jwt"), "") == oauth::OK);
+    let events = "\"events\":{\"http://schemas.openid.net/event/backchannel-logout\":{}}";
+    check("a token with logout events is not an ID token", fn_err(c, hc, sign(payload(aud, events), rsa, jwa::RS256, "rsa-1"), "") == oauth::ERR_TYP);
     check("not a JWS", fn_err(c, hc, "not.a-token", nonce) == oauth::ERR_MALFORMED);
 
     // at_hash and c_hash, for the OIDC examples' values.
@@ -737,7 +746,37 @@ fn access_tokens() {
     check("bound to the RFC's DPoP key", pe == oauth::OK && oauth::check_dpop_binding(at.cnf_jkt, pr) == oauth::OK);
 }
 
+// Plain http only to loopback hosts, unless the client allows it: refused
+// before any request is made.
+fn https_only() {
+    var c = oauth::Client { .. };
+    var hc = http::Client { .. };
+    for u in ["https://login.example.test", "HTTPS://login.example.test/x", "http://127.0.0.1:8080/token",
+              "http://localhost/token", "http://[::1]:9/t", "http://127.9.9.9/t"] {
+        check(str("allowed: ", u), oauth::url_allowed(c, u));
+    }
+    for u in ["http://login.example.test", "http://10.0.0.1/token", "http://localhost.example.test/t",
+              "ftp://login.example.test/x", "http://[::2]/t"] {
+        check(str("not allowed: ", u), !oauth::url_allowed(c, u));
+    }
+    check("discover over http refused", oauth::discover(c, hc, "http://login.example.test") == oauth::ERR_INSECURE);
+    c.meta.jwks_uri.append("http://login.example.test/jwks");
+    check("jwks_uri over http refused", oauth::fetch_jwks(c, hc) == oauth::ERR_INSECURE);
+    let r, e = oauth::post_form(c, hc, "http://login.example.test/token", "grant_type=x");
+    check("token endpoint over http refused", e == oauth::ERR_INSECURE);
+    var t = oauth::Token { .. };
+    let r2, e2 = oauth::resource_request(c, hc, "GET", "http://api.example.test/r", t);
+    check("resource over http refused", e2 == oauth::ERR_INSECURE);
+    let m, ok = oauth::read_metadata("{\"issuer\":\"https://login.example.test\",\"authorization_endpoint\":\"http://login.example.test/authorize\",\"token_endpoint\":\"https://login.example.test/token\"}");
+    check("metadata with an http authorization endpoint not allowed", ok && !oauth::endpoints_allowed(c, m));
+    let m2, ok2 = oauth::read_metadata("{\"issuer\":\"https://login.example.test\",\"authorization_endpoint\":\"https://login.example.test/authorize\",\"token_endpoint\":\"http://127.0.0.1:8080/token\"}");
+    check("metadata with https and loopback endpoints allowed", ok2 && oauth::endpoints_allowed(c, m2));
+    c.allow_http = true;
+    check("allow_http", oauth::url_allowed(c, "http://login.example.test") && oauth::endpoints_allowed(c, m));
+}
+
 fn main() {
+    https_only();
     pkce();
     dpop();
     limits();

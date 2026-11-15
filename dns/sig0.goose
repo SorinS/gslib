@@ -50,17 +50,19 @@ fn sig0_verify(w: const u8[:], key_owner: const u8[:], key_rd: const u8[:], now:
     let off = last_record_offset(w);
     if off < 0 { return ERR_RDATA; }
     let n, next, e = read_name(w, off);
+    if e != OK || next + 10 > w.len { return ERR_RDATA; }
     if get16(w, next) != TYPE_SIG { return ERR_NO_SIG; }
     let rdstart = next + 10;
     let rdend = rdstart + get16(w, next + 8);
-    if rdend - rdstart < 20 { return ERR_RDATA; }
+    if rdend - rdstart < 20 || rdend > w.len { return ERR_RDATA; }
     let rd = w[rdstart..rdend];
     let expire = get32(rd, 8) as i64;
     let incept = get32(rd, 12) as i64;
     let t = now & 0xffffffff;
     if t < incept || t > expire { return ERR_TIME; }
     let signer, sp, se = read_name(w, rdstart + 18);
-    if se != OK || !name_equal(signer, key_owner) { return ERR_AUTH; }
+    if se != OK || sp > rdend { return ERR_RDATA; }       // the signer's name within the rdata
+    if !name_equal(signer, key_owner) { return ERR_AUTH; }
     if key_tag(key_rd) != get16(rd, 16) || key_rd.len < 5 || dnskey_alg(key_rd) != rd[2] { return ERR_KEY; }
     var data: u8[>..] = [];
     data.append(w[rdstart..sp]);

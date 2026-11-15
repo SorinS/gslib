@@ -236,6 +236,14 @@ fn round_trips() {
                 if n >= 100 {
                     var lim: u8[>..] = [];
                     if compress::lzw_decode(enc, order, lw, lim, 50) != compress::ERR_LIMIT || lim.len != 50 { fail("limit"); }
+                    // < 0 is no limit; and the limit counts what is appended.
+                    var none: u8[>..] = [];
+                    if compress::lzw_decode(enc, order, lw, none, -1) != 0 || none[..] != data[..n] { fail("no limit"); }
+                    var pre: u8[>..] = [];
+                    pre.append("0123456789");
+                    if compress::lzw_decode(enc, order, lw, pre, 50) != compress::ERR_LIMIT || pre.len != 60 || pre[10..] != data[..50] {
+                        fail("limit after out's own bytes");
+                    }
                 }
             }
         }

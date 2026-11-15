@@ -1,0 +1,8 @@
+A=a; path=/foo/bar
+X=x; path=/foo/bar
+Y=y; path=/foo/bar/baz/qux
+B=b; path=/foo/bar/baz/qux
+C=c; path=/foo/bar/baz
+W=w; path=/foo/bar/baz
+Z=z; path=/foo
+D=d; path=/foo

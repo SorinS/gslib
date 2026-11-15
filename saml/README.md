@@ -117,7 +117,14 @@ KeyDescriptor without `use` is both; each X509Certificate is kept (DER),
 so a key rollover works: every signing certificate is tried. Endpoints
 of bindings this package does not speak are kept, marked `BINDING_OTHER`.
 An entityID over 1024 bytes, a Location over 2048, a Binding over 256 are
-`ERR_LIMIT`, never cut.
+`ERR_LIMIT`, never cut. Every Location and ResponseLocation must be an
+absolute `http:` or `https:` URL with a host and no white space or
+control characters (`ERR_MALFORMED`): a `javascript:` ACS would be the
+action of the form an IdP serves, and CR LF would split a Location
+header. `add_endpoint` refuses the same (false), `sp_entity` and
+`idp_entity` say false when one of the Sp's or Idp's URLs is refused,
+`sp_metadata` and `idp_metadata` are then `ERR_ENDPOINT`, and a message
+is never delivered to a location that fails the check.
 
 ## Using it
 
@@ -186,7 +193,14 @@ a `LogoutSubject`, `logout_subject_of(a)` from an assertion),
 `sp_logout_response` / `idp_logout_response`, `sp_read_logout_response`
 / `idp_read_logout_response` (for the request ID kept). Logout messages
 are signed when the sender has a key, and must be signed to be taken
-(saml-profiles §4.4.4.1 and §4.4.4.2), by either binding.
+(saml-profiles §4.4.4.1 and §4.4.4.2), by either binding. A
+LogoutRequest's IssueInstant may be at most `logout_max_age` seconds old
+(300, besides the skew) and its NotOnOrAfter not passed; `r.replay_until`
+says how long its ID must be remembered, and
+`sp_read_logout_request_replay` / `idp_read_logout_request_replay` hand
+the ID to the caller's replay cache as `process_response_replay` does
+(`ERR_REPLAY` when it was seen). AuthnRequests and LogoutResponses have
+no maximum age (a LogoutResponse is tied to the request ID kept).
 
 Nothing is kept in part: the structs the caller reads are root structs
 of growable fields, and what has a fixed size (an endpoint's Location, a
@@ -218,7 +232,9 @@ metadata is signed; verify it with this).
 `sp` serves GET /metadata, GET /login (an AuthnRequest, its ID kept), POST
 /acs (the Response checked, a replayed assertion refused; on success the
 verified assertion is printed on stdout as one line of JSON), GET
-/logout (a LogoutRequest for the last user) and GET and POST /slo.
+/logout (a LogoutRequest for the last user) and GET and POST /slo (a
+replayed LogoutRequest refused, on both sides). A redirect URL with a
+line break is never written into a Location header.
 `idp` is a test IdP: it serves GET /metadata, GET and POST /sso (the
 AuthnRequest checked and answered at once for `--user` with its `--attr`
 values: no password is asked), GET /init?sp=ENTITYID (an IdP-initiated
@@ -248,8 +264,12 @@ In gslib's `examples/saml/`, run from gslib's top as `goose examples/saml/<name>
   prints the user and attributes; the same Response refused as a replay,
   and a forged assertion wrapped around the signed one refused. No network.
 - `sp_server.goose`: the smallest useful SP, on 127.0.0.1:8001: /login
-  and /acs, a replay cache in a block. Needs an IdP, so `make test` only
-  type-checks it (it was run against `goose-saml idp`).
+  and /acs, a replay cache in a block. Each AuthnRequest ID is kept for
+  the browser that asked (a `saml_session` cookie, `SameSite=None;
+  Secure`, which browsers allow on 127.0.0.1) and removed when a Response
+  comes for it, so a Response is checked against that browser's request
+  only, once. Needs an IdP, so `make test` only type-checks it (it was
+  run against `goose-saml idp`).
 
 ## Tests
 
@@ -310,6 +330,11 @@ The tests run at a fixed time (2026-01-01), set in `Sp.now` and `Idp.now`.
   aggregates by entityID, validUntil ahead and passed; malformed:
   an ACS without index, no ACS, a bad KeyDescriptor use, a certificate
   that is not one, a Location over 2048 bytes, SAML 1.1 only, a DOCTYPE;
+  Locations that are not absolute http(s) URLs (`javascript:`, `data:`,
+  relative, no host, CR LF, a space, a tab, DEL) and such a
+  ResponseLocation; `add_endpoint`, `sp_entity`, `idp_entity`,
+  `sp_metadata` and `idp_metadata` refusing them; an unsolicited Response
+  to a `javascript:` ACS put into an Entity by hand refused, no form;
   several ACS (the default, by index, another binding kept), a
   KeyDescriptor without use.
 - `idp.goose` (106): AuthnRequests by both bindings, signed and not,
@@ -324,8 +349,11 @@ The tests run at a fixed time (2026-01-01), set in `Sp.now` and `Idp.now`.
   NameID, encryption without the SP's certificate; Single Logout from the
   SP and from the IdP over each binding, a LogoutResponse for another
   request, a failure status; unsigned and expired LogoutRequests, one to
-  another endpoint, a LogoutSubject from an assertion (a NameID too long
-  refused, not cut), no SLO endpoint.
+  another endpoint; one without NotOnOrAfter taken, then refused past
+  `logout_max_age`; a replayed LogoutRequest refused by
+  `idp_read_logout_request_replay` and `sp_read_logout_request_replay`;
+  a LogoutSubject from an assertion (a NameID too long refused, not cut),
+  no SLO endpoint.
 
 `make test-saml` passes at -O0, -O2 and `--debug`. `SAML_VERBOSE=1`
 prints every check's code and reason.

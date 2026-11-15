@@ -92,8 +92,14 @@ An IMAP command's untagged responses stay in `c.data` until the next
 command, and items are read from there (`messages`, `fetch_item`,
 `envelope`, `bodystructure`). A response line may be at most 1 MiB, a
 literal `c.max_literal` (64 MiB), and a command's responses together
-`c.max_data` (256 MiB). Anything over is `ERR_PROTOCOL`: close then, and
-fetch many bodies in smaller sets.
+`c.max_data` (256 MiB). A SEARCH or ESEARCH answer may hold at most
+`MAX_SEARCH` (1M) numbers, and no more than `c.max_data / 8`: ESEARCH's
+`ALL 1:N` is a few bytes for N of them. Anything over is `ERR_PROTOCOL`:
+close then, and fetch many bodies in smaller sets. A POP3 multi-line response (RETR, TOP,
+LIST, UIDL) is bounded the same way by its client's `c.max_data` (256
+MiB). What a server sends that will not fit its field is refused, not
+cut: an ENVELOPE address over 320 bytes or a name over 256, a section
+number of a BODYSTRUCTURE over 64, a LIST name over 1024 once decoded.
 
 ### Safety
 
@@ -107,6 +113,16 @@ fetch many bodies in smaller sets.
 - PLAIN, LOGIN and XOAUTH2 (and POP3's USER/PASS, IMAP's LOGIN) send the password
   readable, so without TLS they are refused (`ERR_AUTH`) except to
   localhost, as Go's `smtp.PlainAuth`.
+- An address with CR, LF or NUL is refused wherever it comes from: when
+  parsed, in an IMAP ENVELOPE (the envelope does not parse), and when a
+  `mail::Address` built by hand goes into a message (`write` gives
+  `ERR_ADDRESS`).
+- A SASL user over 512 bytes or a secret over 8192 is refused
+  (`ERR_AUTH`, nothing sent), never cut.
+- NTLM names its target, `SMTPSVC/host`, `IMAP/host` or `POP/host`, and
+  over TLS binds the exchange to the server's certificate
+  (tls-server-end-point, RFC 5929), so a server with Extended Protection
+  refuses it relayed elsewhere (`mail::sasl_target`).
 - SCRAM checks the server's signature: a server that does not know the
   password, and says yes anyway, fails with `ERR_AUTH`, and the exchange
   is cancelled with `*`.
@@ -143,6 +159,9 @@ x= passed), `ERR_KEY` (the key record: revoked, malformed, the wrong k= or
 h=, too small), `ERR_DNS` (no record), `ERR_FORMAT` (the header does not
 parse, does not sign From, or i= is outside d=), `ERR_UNSUPPORTED` (an
 algorithm not done; rsa-sha1 unless `allow_sha1`), with `reason` in words.
+A message with more than one From field (or none) fails every signature
+with `ERR_FORMAT` (RFC 6376 §8.15): the From a reader is shown may be the
+unsigned one.
 `dkim::result_text` writes RFC 8601's form. `verify` returns `mail::OK`
 when any signature passes.
 
@@ -213,6 +232,9 @@ one OpenPGP message that is signed and encrypted (RFC 3156 §6.2); `open`
 also reads the §6.1 nesting (multipart/signed inside multipart/encrypted).
 Whether the signing key belongs to From is the caller's to decide. The
 OpenPGP underneath is crypto/openpgp (its README has the formats).
+`open`, `verify` and `decrypt` start by emptying the `Opened` they are
+given, so one can be used again; a multipart delimiter is a whole line
+(the boundary, `--` for the last, then only white space).
 
 Post-quantum recipients need nothing new: a recipient whose encryption
 key is gpg 2.5's Kyber subkey (LibrePGP's ML-KEM-768+X25519,

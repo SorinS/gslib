@@ -1,0 +1,3 @@
+# Netscape HTTP Cookie File
+.example.com	TRUE	/	FALSE	2000000000	name	value
+#HttpOnly_www.example.com	FALSE	/a	TRUE	0	s	v

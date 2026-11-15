@@ -409,12 +409,58 @@ fn hostile() {
     check("a URL with a query is refused", scep::set_url(url_c, "http://ca.example.org/scep?x=1") == scep::ERR_ARG);
 }
 
+// A message whose attributes are made by hand: a transactionID or a
+// failInfoText the reader must refuse, not abort on or cut short.
+fn odd_attrs(tid: const u8[:], fail_text: const u8[:]) -> u8[>..] {
+    let ck = key("vectors/client.key");
+    let req, e = scep::make_csr(subject("device.example.org"), "", ck, "");
+    let signer, se = scep::self_signed(req, ck);
+    let sc, pe = x509::parse(signer);
+    var ad: u8[>..] = [];
+    var v: u8[>..] = [];
+    asn1::put(v, asn1::PRINTABLE_STRING, tid);
+    scep::put_attr(ad, scep::OID_TRANSACTION_ID, v);
+    scep::put_number_attr(ad, scep::OID_MESSAGE_TYPE, scep::MSG_PKCS_REQ);
+    let n = scep::new_nonce();
+    scep::put_octets_attr(ad, scep::OID_SENDER_NONCE, n[..]);
+    if fail_text.len > 0 {
+        var ft: u8[>..] = [];
+        asn1::put_utf8_string(ft, fail_text);
+        scep::put_attr(ad, scep::OID_FAIL_INFO_TEXT, ft);
+    }
+    var so = x509::CmsSignOptions { .. };
+    so.extra_attrs.append(ad);
+    let msg, okm = x509::cms_sign_with(x509::OID_CMS_DATA, "", ck, sc, "", x509::SIG_RSA_PKCS1, 256, so);
+    assert(okm);
+    return msg;
+}
+
+fn hostile_attrs() {
+    let m0, e0 = scep::read_message(odd_attrs("abc", ""), "", false);
+    check("hand-made attributes read", e0 == scep::OK && m0.attrs.transaction_id == "abc");
+    let bad = odd_attrs("a@b", "");
+    let m1, e1 = scep::read_message(bad, "", false);
+    check("transactionID not printable: refused", e1 == scep::ERR_MALFORMED);
+    var s = scep::Server { .. };
+    s.ca_key = key("vectors/ca.key");
+    s.ca_cert = pem_cert("vectors/ca.pem");
+    let a = scep::serve(s, "POST", "/scep?operation=PKIOperation", bad, NOW);
+    check("transactionID not printable: the CA answers", a.status != 200);
+    var long: u8[>..] = [];
+    for i in 2049 { long.push('x'); }
+    let m2, e2 = scep::read_message(odd_attrs("abc", long[..2048]), "", false);
+    check("failInfoText of 2048", e2 == scep::OK && m2.attrs.fail_text.len == 2048);
+    let m3, e3 = scep::read_message(odd_attrs("abc", long), "", false);
+    check("failInfoText past 2048: refused", e3 == scep::ERR_MALFORMED);
+}
+
 fn main() {
     caps();
     csr();
     enroll_through_server();
     pending();
     hostile();
+    hostile_attrs();
     print("scep: ", checks, " checks, ", failures, " failed");
     if failures > 0 { exit(1); }
 }

@@ -139,6 +139,34 @@ fn limits() {
     if compress::lzma_decode(lz, lo2, -1) != compress::ERR_TRAILING { fail("lzma_decode trailing", "not refused"); }
     var tr: u8[>..] = [];
     if compress::xz_decode(data[..data.len - 1], tr, -1) != compress::ERR_TRUNCATED { fail("xz_decode truncated", "not refused"); }
+    // The limit counts what is appended; out's own bytes stay, even when
+    // there are more of them than the limit.
+    var pre: u8[>..] = [];
+    pre.append("0123456789");
+    if compress::xz_decode(data, pre, 5) != compress::ERR_LIMIT || pre.len < 10 || pre[..10] != "0123456789" {
+        fail("xz_decode prefilled past the limit", str(pre.len));
+    }
+    var pre2: u8[>..] = [];
+    pre2.append("0123456789");
+    if compress::xz_decode(data, pre2, 457) != 0 || pre2.len != 467 || pre2[10..] != whole[..] { fail("xz_decode prefilled", str(pre2.len)); }
+    // An index whose sums of sizes pass 2^63 (two records of 2^63-1).
+    let ix = unhex("fd377a585a0000016922de360200210116000000742fe5a301000468656c6c6f0000000086a610360200210116000000742fe5a301000468656c6c6f0000000086a61036000209ffffffffffffffff7f09ffffffffffffffff7f0000e0bdbcc128729c10060000000001595a");
+    var ixo: u8[>..] = [];
+    if compress::xz_decode(ix, ixo, -1) != compress::ERR_DATA { fail("index sums past 2^63", "not refused"); }
+}
+
+fn unhex(s: const u8[:]) -> u8[>..] {
+    var out: u8[>..] = [];
+    var i = 0;
+    while i + 1 < s.len {
+        let h = s[i];
+        let l = s[i + 1];
+        let hv = if h >= 'a' { h - 'a' + 10 } else { h - '0' };
+        let lv = if l >= 'a' { l - 'a' + 10 } else { l - '0' };
+        out.push((hv << 4) | lv);
+        i += 2;
+    }
+    return out;
 }
 
 fn streams() {

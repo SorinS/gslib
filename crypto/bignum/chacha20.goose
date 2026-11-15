@@ -220,7 +220,7 @@ fn chacha20_poly1305_encrypt(key: const u8[:], nonce: const u8[:], aad: const u8
 // for data longer than CHACHA20_POLY1305_MAX.
 fn chacha20_poly1305_decrypt(key: const u8[:], nonce: const u8[:], aad: const u8[:], data: u8[:],
                              tag: const u8[:]) -> bool {
-    if data.len > CHACHA20_POLY1305_MAX {
+    if key.len != 32 || nonce.len != 12 || data.len > CHACHA20_POLY1305_MAX {
         for &x in data { x = 0; }
         return false;
     }
@@ -306,6 +306,10 @@ fn xchacha20_poly1305_encrypt(key: const u8[:], nonce: const u8[:], aad: const u
 
 fn xchacha20_poly1305_decrypt(key: const u8[:], nonce: const u8[:], aad: const u8[:], data: u8[:],
                               tag: const u8[:]) -> bool {
+    if key.len != 32 || nonce.len != 24 {
+        for &x in data { x = 0; }
+        return false;
+    }
     let sub, n12 = xchacha_keys(key, nonce);
     return chacha20_poly1305_decrypt(sub, n12, aad, data, tag);
 }
@@ -318,6 +322,7 @@ fn xchacha20_poly1305_seal(key: const u8[:], nonce: const u8[:], aad: const u8[:
 
 fn xchacha20_poly1305_open(key: const u8[:], nonce: const u8[:], aad: const u8[:],
                            sealed: const u8[:]) -> u8[>..], bool {
+    if key.len != 32 || nonce.len != 24 { var none: u8[>..] = []; return none, false; }
     let sub, n12 = xchacha_keys(key, nonce);
     return chacha20_poly1305_open(sub, n12, aad, sealed);
 }

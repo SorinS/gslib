@@ -3,7 +3,7 @@
 // from a STARTTLS/STLS on, and lines in and out.
 //
 // The functions are generic over the client: any root struct with these
-// fields, which smtp::Client and pop3::Client both have:
+// fields, which smtp::Client, pop3::Client and imap::Client have:
 //
 //   fd: i64                    the socket, -1 when closed
 //   secure: bool               TLS is on
@@ -14,6 +14,7 @@
 //   wire: u8[>..]              scratch: bytes for the socket
 //   raw: u8[>..]               scratch: bytes from the socket
 //   timeout_ms: i64            each read and write's, and the connect's
+//   host: u8[..255]            the server's name (link_sasl_target's SPN)
 //
 // Replies are read a line at a time, CRLF or a bare LF ending it; a line
 // longer than its limit is an error, not a line cut in two.
@@ -25,6 +26,7 @@ import mail;
 import net;
 import crypto.tls;
 import crypto.tls.handshake;
+import mail.sasl;
 
 // A socket error as one of mail's.
 fn net_error(e: i64) -> i64 {
@@ -169,4 +171,12 @@ fn link_close(l) {
 fn has_crlf(s: const u8[:]) -> bool {
     for c in s { if c == '\r' || c == '\n' { return true; } }
     return false;
+}
+
+// NTLM's target for s: service/host, and over TLS the server's
+// certificate for the channel binding.
+fn link_sasl_target(l, s: Sasl&, service: const u8[:]) {
+    var chain: u8[>..] = [];
+    if l.secure { chain = tls::peer_certificates(l.tc); }
+    sasl_target(s, service, l.host, chain);
 }

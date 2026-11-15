@@ -1938,7 +1938,8 @@ fn short_tag(tag: const u8[:], decoded: u8[>..]&) -> const u8[:] {
 // with the documents before it read whole. Anchors are yaml.v3's: one set
 // for the stream, a later definition of a name replacing the earlier one
 // from there on.
-fn compose<P>(p: P&, text: const u8[:], doc: Node[>..]&, decoded: u8[>..]&) -> Error {
+fn compose<P>(p: P&, text: const u8[:], doc: Node[>..]&, decoded: u8[>..]&, max_nodes: i64) -> Error {
+    let doc0 = doc.len;
     var anchors = dictionary<const u8[:], i64> {};    // a name's node, by its index in doc
     var outer: Open[>..<] = [];
     var event = next_event(p);         // the event at the cursor,
@@ -1976,9 +1977,15 @@ fn compose<P>(p: P&, text: const u8[:], doc: Node[>..]&, decoded: u8[>..]&) -> E
                       tag: tag, value: value, anchor: "" };
     }
 
+    // gslib's own limit, which yaml.v3 does not have.
+    fn room() {
+        if doc.len - doc0 >= max_nodes { failf(event.start, str("too many nodes (the limit is ", max_nodes, ")")); }
+    }
+
     expect(E_STREAM_START);
     loop {
         guard peek() == E_DOCUMENT_START else { return Error { message: [] }; }
+        room();
         let d .= doc.push(Node { next: null, first: null, alias: null, kind: DOCUMENT, style: 0, count: 0,
                                  line: event.start.line + 1, column: event.start.column + 1,
                                  tag: "", value: "", anchor: "" });
@@ -2000,6 +2007,7 @@ fn compose<P>(p: P&, text: const u8[:], doc: Node[>..]&, decoded: u8[>..]&) -> E
                 continue;
             }
             var n: Node? = null;
+            room();
             if k == E_SCALAR {
                 var style: u8 = 0;
                 if event.style == S_DOUBLE { style = DOUBLE_QUOTED; }
@@ -2060,8 +2068,14 @@ fn compose<P>(p: P&, text: const u8[:], doc: Node[>..]&, decoded: u8[>..]&) -> E
 // Tags and scalars put together from their text (folded, unescaped,
 // prefixed) are pushed onto `decoded`; anchor and alias names are views of
 // text. Text in UTF-16, with a byte order mark, is converted onto
-// `decoded` first.
-fn parse(text: const u8[:], doc: Node[>..]&, decoded: u8[>..]&) -> Node?, Error {
+// `decoded` first. Text longer than l.max_size, and a stream of more than
+// l.max_nodes nodes, are refused ("yaml: input too large", "yaml: too many
+// nodes"), limits of gslib's own: yaml.v3 has none, and reads until memory
+// runs out.
+fn parse(text: const u8[:], doc: Node[>..]&, decoded: u8[>..]&, l: const Limits&) -> Node?, Error {
+    if text.len > l.max_size {
+        return null, Error { line: 1, column: 1, message: str("yaml: input too large (", text.len, " bytes; the limit is ", l.max_size, ")") };
+    }
     var tokens: Token[>..<] = [];
     var indents: i64[>..<] = [];
     var simple_keys: SimpleKey[>..<] = [];
@@ -2085,10 +2099,24 @@ fn parse(text: const u8[:], doc: Node[>..]&, decoded: u8[>..]&) -> Node?, Error 
                      core_prefix: Span { from: consts + 2, to: consts + 20, decoded: true },
                      tokens: tokens, indents: indents, simple_keys: simple_keys, keys_by_token: keys_by_token,
                      states: states, marks: marks, directives: directives, decoded: decoded, .. };
-    let err = compose(p, text, doc, decoded);
+    let err = compose(p, text, doc, decoded, l.max_nodes);
     if p.first_doc < 0 { return null, err; }
     return doc[p.first_doc], err;
 }
+
+// parse with the limits' defaults.
+fn parse(text: const u8[:], doc: Node[>..]&, decoded: u8[>..]&) -> Node?, Error {
+    let l = limits();
+    return parse(text, doc, decoded, l);
+}
+
+// parse's limits: bytes of text, and nodes of the stream.
+struct Limits {
+    max_size:  i64 = 16 << 20,
+    max_nodes: i64 = 1 << 20,
+}
+
+fn limits() -> Limits { Limits { .. } }
 
 // The encoding of text, from its byte order mark, and the mark's length:
 // UTF-16 in either order, or UTF-8 with or without a mark.
@@ -2813,48 +2841,65 @@ fn merge_key(set: i64, node: Node&) -> MergeKey {
     }
 }
 
+// The most pairs of repeated keys check reports for one mapping. yaml.v3
+// reports every pair, which for a key written n times is n(n-1)/2 lines.
+let REPEATS_SHOWN = 100;
+
 // Whether mapping n has keys of the same kind and value, which yaml.v3
-// reports, each pair of them, line by line.
+// reports, each pair of them, line by line: the first REPEATS_SHOWN pairs
+// in its order, then a line saying how many more there are.
 fn repeated_keys<C>(c: C&, n: Node&) -> bool {
-    var seen = dictionary<const u8[:], u8> {};      // a value's kinds of key
-    var repeated = false;
+    var groups = dictionary<const u8[:], i64> {};   // a key's text: its group g
+    var tails: i64[>..<] = [];         // tails[5g + kind]: the group's last key of that kind, or -1
+    var counts: i64[>..<] = [];        // and how many keys of it there are
+    var keys: (Node&)[>..<] = [];
+    var later: i64[>..<] = [];         // the next key of the same kind and text, or -1
+    var pairs = 0;
     var k = n.first;
     while k {
-        let kinds = seen.get(k.value);
-        if kinds {
-            if (kinds & k.kind) != 0 { repeated = true; }
-            kinds |= k.kind;
+        let kind = if k.kind == SEQUENCE { 0 } else if k.kind == MAPPING { 1 } else if k.kind == SCALAR { 2 } else if k.kind == ALIAS { 3 } else { 4 };
+        var g = tails.len / 5;
+        let at = groups.get(k.value);
+        if at {
+            g = at;
         } else {
-            seen.insert(k.value, k.kind);
+            groups.insert(k.value, g);
+            for s in 5 { tails.push(-1); counts.push(0); }
         }
+        let t = tails[5 * g + kind];
+        if t >= 0 { later[t] = keys.len; }
+        pairs += counts[5 * g + kind];
+        counts[5 * g + kind]++;
+        tails[5 * g + kind] = keys.len;
+        keys.push(&k);
+        later.push(-1);
         let v = k.next;
         guard v else { break; }
         k .= v.next;
     }
-    guard repeated else { return false; }
-    var ki = n.first;
-    while ki {
-        let vi = ki.next;
-        guard vi else { break; }
-        var kj = vi.next;
-        while kj {
-            if kj.kind == ki.kind && kj.value == ki.value {
-                if c.errors.len == 0 {
-                    c.error_line = kj.line;
-                    c.error_column = kj.column;
-                } else {
-                    c.errors.push('\n');
-                }
-                format(c.errors, "  line ", kj.line, ": mapping key ");
-                go_quote(c.errors, kj.value);
-                format(c.errors, " already defined at line ", ki.line);
+    guard pairs > 0 else { return false; }
+    var shown = 0;
+    var i = 0;
+    while i < keys.len && shown < REPEATS_SHOWN {
+        let ki .= keys[i];
+        var j = later[i];
+        while j >= 0 && shown < REPEATS_SHOWN {
+            let kj .= keys[j];
+            if c.errors.len == 0 {
+                c.error_line = kj.line;
+                c.error_column = kj.column;
+            } else {
+                c.errors.push('\n');
             }
-            let vj = kj.next;
-            guard vj else { break; }
-            kj .= vj.next;
+            format(c.errors, "  line ", kj.line, ": mapping key ");
+            go_quote(c.errors, kj.value);
+            format(c.errors, " already defined at line ", ki.line);
+            shown++;
+            j = later[j];
         }
-        ki .= vi.next;
+        i++;
     }
+    if pairs > shown { format(c.errors, "\n  and ", pairs - shown, " more pairs of repeated keys"); }
     return true;
 }
 
@@ -2930,18 +2975,40 @@ fn target(n: Node?) -> Node? {
 // decodes a mapping: its own pairs in order, then those of the mappings
 // its merge key (<<) names, in order and theirs in turn, each key that
 // came already passed over. Keys are compared as text. Nothing for null or
-// a node that is not a mapping.
+// a node that is not a mapping. A mapping merged a second time is passed
+// over, since all its keys came already: so a merge that names the mapping
+// it is in ends, and merges that name the same mappings over and over take
+// a step for each, not one for each way to reach it.
 fn each_pair<F>(node: Node?) {
     let n = target(node);
     guard n else { return; }
     guard n.kind == MAPPING else { return; }
     var seen = dictionary<const u8[:], bool> {};
     var todo: (Node&)[>..<] = [];     // the mappings still to walk, the next last
+    var walked: (Node&)[>..<] = [];   // the mappings walked, in chains by where they start
+    var chain: i64[>..<] = [];        // the next of walked[i] in its chain, or -1
+    var heads = dictionary<u64, i64> {};
     todo.push(&n);
     var top = true;
     while todo.len > 0 {
         let m .= todo[todo.len - 1];
         todo.pop();
+        // (Nodes are compared as references; where they start only picks
+        // the chain, since nodes built by hand all start at 0:0.)
+        let h = hash_combine(hash(m.line), hash(m.column));
+        var first = -1;
+        let at = heads.get(h);
+        if at { first = at; }
+        var again = false;
+        var i = first;
+        while i >= 0 && !again {
+            if walked[i] .== m { again = true; }
+            i = chain[i];
+        }
+        if again { continue; }
+        walked.push(&m);
+        chain.push(first);
+        heads.insert(h, walked.len - 1);
         var merge: Node? = null;
         var k = m.first;
         while k {
@@ -3482,7 +3549,9 @@ fn node_events<N>(n: N&, events: OutEvent[>..]&, scratch: u8[>..]&) {
                     drop_tag = true;
                 } else {
                     let rtag = resolve_tag(m.value);
-                    if same_tag(m.tag, rtag) {
+                    // (A plain << reads back as a merge key, which yaml.v3
+                    // forgets: it writes the text << plain.)
+                    if same_tag(m.tag, rtag) && m.value != "<<" {
                         drop_tag = true;
                     } else if same_tag(m.tag, "!!str") {
                         drop_tag = true;
@@ -3660,6 +3729,9 @@ fn analyze_event<E>(e: E&, ev: OutEvent) {
     } else if ev.kind == E_SCALAR || ev.kind == E_SEQUENCE_START || ev.kind == E_MAPPING_START {
         if ev.anchor.len > 0 { analyze_anchor(e, ev.anchor, false); }
         let tagged = ev.handle.len > 0 || ev.suffix.len > 0;
+        // (yaml.v3 runs off the end of a tag that ends in part of a
+        // character.)
+        if tagged && (!valid_utf8(ev.handle) || !valid_utf8(ev.suffix)) { emit_error("tag is not valid UTF-8"); }
         if tagged && !ev.implicit && (ev.kind != E_SCALAR || !ev.quoted_implicit) {
             e.handle = ev.handle;
             e.suffix = ev.suffix;
@@ -3790,6 +3862,10 @@ fn analyze_scalar<E>(e: E&, value: const u8[:]) {
         e.single_quoted_allowed = false;
     }
     if space_break || special_characters { e.block_allowed = false; }
+    // Not in yaml.v3, whose block scalars do not read back: a leading
+    // break is taken for the one after the header, and a leading tab for
+    // indentation.
+    if leading_break || value[0] == '\t' { e.block_allowed = false; }
     if line_breaks {
         e.flow_plain_allowed = false;
         e.block_plain_allowed = false;
@@ -4123,7 +4199,7 @@ fn write_tag_content<E>(e: E&, value: const u8[:], need_whitespace: bool) {
            || c == '[' || c == ']' || is_alpha(c) {
             i = write_char(e, value, i);
         } else {
-            let w = max(1, width(c));
+            let w = min(max(1, width(c)), value.len - i);
             for k in w {
                 let octet = value[i];
                 i++;
@@ -4260,8 +4336,12 @@ fn write_double_quoted_scalar<E>(e: E&, value: const u8[:], allow_breaks: bool) 
 
 fn write_block_scalar_hints<E>(e: E&, value: const u8[:]) {
     if str_is_space(value, 0) || str_is_break(value, 0) {
+        // The indentation indicator: libyaml's is best_indent, which
+        // yaml.v3 keeps where it indents a sequence's items by 2, and
+        // which then does not read back; this one is the indentation
+        // the lines have, past that of the node they are in.
         var hint: u8[..1] = [];
-        hint.push(('0' + e.best_indent) as! u8);
+        hint.push(('0' + e.indent - max(e.indents[e.indents.len - 1], 0)) as! u8);
         write_indicator(e, hint, false, false, false);
     }
     e.open_ended = false;
@@ -4290,6 +4370,19 @@ fn write_block_scalar_hints<E>(e: E&, value: const u8[:]) {
         hint.push(chomp);
         write_indicator(e, hint, false, false, false);
     }
+}
+
+// Whether a block scalar's header keeps its final line breaks (+): it
+// ends with two, or is one.
+fn keeps_breaks(value: const u8[:]) -> bool {
+    guard value.len > 0 else { return false; }
+    var i = value.len - 1;
+    while i > 0 && (value[i] & 0xC0) == 0x80 { i--; }
+    guard str_is_break(value, i) else { return false; }
+    guard i > 0 else { return true; }
+    i--;
+    while i > 0 && (value[i] & 0xC0) == 0x80 { i--; }
+    return str_is_break(value, i);
 }
 
 fn write_literal_scalar<E>(e: E&, value: const u8[:]) {
@@ -4321,9 +4414,21 @@ fn write_folded_scalar<E>(e: E&, value: const u8[:]) {
     while i < value.len {
         if str_is_break(value, i) {
             if !breaks && !leading_spaces && value[i] == '\n' {
-                // (libyaml looks from the start of the value here.)
-                var k = 0;
+                // A line between two lines that are not more indented,
+                // which would fold. (libyaml, and yaml.v3, look at the
+                // value's first line here instead of the next, which reads
+                // back with a line break too many before a more indented
+                // line, and too few after a value's more indented first
+                // line; at the value's end, where they add a line too
+                // many when the breaks are kept (+), this does as they do
+                // when they are not, where it makes no difference.)
+                var k = i;
                 while str_is_break(value, k) { k += max(1, width(value[k])); }
+                if k >= value.len {
+                    k = 0;
+                    while str_is_break(value, k) { k += max(1, width(value[k])); }
+                    if keeps_breaks(value) { k = value.len; }
+                }
                 if !str_is_blankz(value, k) { put_break(e); }
             }
             i = write_break(e, value, i);

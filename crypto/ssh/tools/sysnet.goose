@@ -44,6 +44,10 @@ extern fn proc_wait(pid: i32, wait: i32) -> i32;
 extern fn proc_kill(pid: i32, sig: i32);
 extern fn proc_end(pid: i32) -> i32;
 extern fn proc_fork() -> i32;
+// fork with a pipe from the child: *fd its write end in the child, the
+// read end in the parent, which sees it ready once the child closes it or
+// ends (both ends close-on-exec).
+extern fn proc_fork_watched(fd: i32&) -> i32;
 extern fn proc_reap();
 extern fn proc_exit(code: i32);
 // argv: each argument ended by a NUL. to_fd is its stdin (non-blocking),
@@ -65,35 +69,84 @@ fn read_some(fd: i32, out: u8[>..]&) -> i64 {
     return n;
 }
 
+// The user and home directory, from $USER (or $LOGNAME) and $HOME: one
+// too long to take is an error, never cut short.
 fn user_name() -> u8[>..] {
     var buf: u8[256] = [0; 256];
     let n = os_user(buf);
+    if n < 0 { eprint("$USER is too long\n"); exit(255); }
     var out: u8[>..] = [];
     out.append(buf[..n]);
     return out;
 }
 
 fn home_dir() -> u8[>..] {
-    var buf: u8[1024] = [0; 1024];
+    var buf: u8[4096] = [0; 4096];
     let n = os_home(buf);
+    if n < 0 { eprint("$HOME is too long\n"); exit(255); }
     var out: u8[>..] = [];
     out.append(buf[..n]);
     return out;
 }
 
+// A secret (passphrase, password) or a line typed, up to 1 KiB: one
+// longer is refused (empty), not cut short.
 fn secret(prompt: const u8[:]) -> u8[>..] {
-    var buf: u8[256] = [0; 256];
+    var buf: u8[1024] = [0; 1024];
     let n = tty_secret(prompt, buf);
     var out: u8[>..] = [];
+    if n == -2 { eprint("too long: not taken\n"); }
     if n > 0 { out.append(buf[..n]); }
     return out;
 }
 
 fn ask_line(prompt: const u8[:]) -> u8[>..] {
-    var buf: u8[256] = [0; 256];
+    var buf: u8[1024] = [0; 1024];
     let n = tty_line(prompt, buf);
     var out: u8[>..] = [];
+    if n == -2 { eprint("too long: not taken\n"); }
     if n > 0 { out.append(buf[..n]); }
+    return out;
+}
+
+// Text from the peer (a banner, a disconnect's or a refusal's message, a
+// signal's name, an SFTP status) made safe for a terminal, as OpenSSH's
+// does: printable ASCII, tabs, newlines and CRLF kept, and UTF-8 but for
+// its control characters (C1); any other byte (a lone CR too) as \ooo.
+fn safe_text(s: const u8[:]) -> u8[>..] {
+    var out: u8[>..] = [];
+    var i = 0;
+    while i < s.len {
+        let ch = s[i];
+        let crlf = ch == '\r' && i + 1 < s.len && s[i + 1] == '\n';
+        if (ch >= 0x20 && ch < 0x7f) || ch == '\n' || ch == '\t' || crlf { out.push(ch); i++; continue; }
+        // A whole UTF-8 sequence, shortest form, not a surrogate, from U+00A0 on.
+        var n = 0;
+        var cp: u32 = 0;
+        if ch >= 0xc2 && ch <= 0xdf { n = 2; cp = ch & 0x1f; }
+        else if ch >= 0xe0 && ch <= 0xef { n = 3; cp = ch & 0x0f; }
+        else if ch >= 0xf0 && ch <= 0xf4 { n = 4; cp = ch & 0x07; }
+        var good = n > 0 && i + n <= s.len;
+        if good {
+            var j = 1;
+            while j < n {
+                if (s[i + j] & 0xc0) != 0x80 { good = false; }
+                else { cp = (cp << 6) | (s[i + j] & 0x3f); }
+                j++;
+            }
+        }
+        let shortest = (n == 2 && cp >= 0x80) || (n == 3 && cp >= 0x800) || (n == 4 && cp >= 0x10000);
+        if good && shortest && cp >= 0xa0 && cp <= 0x10ffff && !(cp >= 0xd800 && cp <= 0xdfff) {
+            out.append(s[i..i + n]);
+            i += n;
+            continue;
+        }
+        out.push('\\');
+        out.push('0' + (ch >> 6));
+        out.push('0' + ((ch >> 3) & 7));
+        out.push('0' + (ch & 7));
+        i++;
+    }
     return out;
 }
 

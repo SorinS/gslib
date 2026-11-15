@@ -12,10 +12,11 @@ c_libs_linux = ["dl"];
 c_libs_windows = ["ws2_32"];
 dylibs_linux = ["c=libc.so.6"];
 
-// The examples, and programs of each library (tests, tools), not the package's own
+// The examples, the fuzz targets, and programs of each library (tests, tools), not the package's own
 // modules: the JIT's symbol table does not look for externs there.
 exclude = [
     "examples",
+    "fuzz",
     "crypto/bignum/test", "crypto/bignum/tools",
     "encoding/asn1/test",
     "crypto/x509/test", "crypto/x509/tools",

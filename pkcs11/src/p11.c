@@ -172,6 +172,13 @@ typedef struct { const uint8_t *data; int64_t len; } p11_slice;
 #define P11_E_ENCODING   0x100000003ULL   /* a template or mechanism Goose sent is malformed */
 #define P11_E_MEMORY     0x100000004ULL
 #define P11_E_NO_MODULE  0x100000005ULL   /* a context that was destroyed, or never loaded */
+#define P11_E_MODULE     0x100000006ULL   /* the module said it wrote past the buffer it was given */
+
+/* Whether a u64 survives as a CK_ULONG: always where that is 8 bytes; on
+   Windows (4) a larger handle, type, flag or length is refused rather than
+   cut short. */
+#define FITS(v) ((uint64_t)(CK_ULONG)(v) == (uint64_t)(v))
+#define NEED(c) do { if (!(c)) return P11_E_ENCODING; } while (0)
 
 #define CKR_OK 0
 #define CKR_BUFFER_TOO_SMALL 0x150
@@ -270,7 +277,7 @@ static int decode_template(p11_slice t, CK_ATTRIBUTE **out, CK_ULONG *n) {
     while (at < t.len) {
         if (t.len - at < 16) return 0;
         uint64_t len = get64(t.data + at + 8);
-        if (len > (uint64_t)(t.len - at - 16)) return 0;
+        if (len > (uint64_t)(t.len - at - 16) || !FITS(len) || !FITS(get64(t.data + at))) return 0;
         at += 16 + (int64_t)len;
         count++;
     }
@@ -331,9 +338,16 @@ static uint64_t r64(reader *r) {
     return v;
 }
 
+/* A u64 that must fit a CK_ULONG. */
+static CK_ULONG rul(reader *r) {
+    uint64_t v = r64(r);
+    if (!FITS(v)) r->ok = 0;
+    return (CK_ULONG)v;
+}
+
 static CK_BYTE *rbytes(reader *r, CK_ULONG *n) {
     uint64_t len = r64(r);
-    if (!r->ok || len > (uint64_t)(r->len - r->at)) { r->ok = 0; *n = 0; return NULL; }
+    if (!r->ok || len > (uint64_t)(r->len - r->at) || !FITS(len)) { r->ok = 0; *n = 0; return NULL; }
     CK_BYTE *p = len ? (CK_BYTE *)(r->d + r->at) : NULL;
     r->at += (int64_t)len;
     *n = (CK_ULONG)len;
@@ -341,16 +355,16 @@ static CK_BYTE *rbytes(reader *r, CK_ULONG *n) {
 }
 
 static void read_oaep(reader *r, CK_RSA_PKCS_OAEP_PARAMS *o) {
-    o->hashAlg = (CK_ULONG)r64(r);
-    o->mgf = (CK_ULONG)r64(r);
-    o->source = (CK_ULONG)r64(r);
+    o->hashAlg = rul(r);
+    o->mgf = rul(r);
+    o->source = rul(r);
     o->pSourceData = rbytes(r, &o->ulSourceDataLen);
 }
 
 static int decode_mechanism(p11_slice s, p11_mech *pm) {
     reader r = { s.data, s.len, 0, 1 };
     memset(pm, 0, sizeof *pm);
-    pm->m.mechanism = (CK_ULONG)r64(&r);
+    pm->m.mechanism = rul(&r);
     uint64_t kind = r64(&r);
     switch (kind) {
     case P11_PARAM_NONE:
@@ -362,7 +376,7 @@ static int decode_mechanism(p11_slice s, p11_mech *pm) {
         pm->p.gcm.pIv = rbytes(&r, &pm->p.gcm.ulIvLen);
         pm->p.gcm.ulIvBits = pm->p.gcm.ulIvLen * 8;
         pm->p.gcm.pAAD = rbytes(&r, &pm->p.gcm.ulAADLen);
-        pm->p.gcm.ulTagBits = (CK_ULONG)r64(&r);
+        pm->p.gcm.ulTagBits = rul(&r);
         pm->m.pParameter = &pm->p.gcm;
         pm->m.ulParameterLen = sizeof pm->p.gcm;
         break;
@@ -372,21 +386,21 @@ static int decode_mechanism(p11_slice s, p11_mech *pm) {
         pm->m.ulParameterLen = sizeof pm->p.oaep;
         break;
     case P11_PARAM_PSS:
-        pm->p.pss.hashAlg = (CK_ULONG)r64(&r);
-        pm->p.pss.mgf = (CK_ULONG)r64(&r);
-        pm->p.pss.sLen = (CK_ULONG)r64(&r);
+        pm->p.pss.hashAlg = rul(&r);
+        pm->p.pss.mgf = rul(&r);
+        pm->p.pss.sLen = rul(&r);
         pm->m.pParameter = &pm->p.pss;
         pm->m.ulParameterLen = sizeof pm->p.pss;
         break;
     case P11_PARAM_ECDH1:
-        pm->p.ecdh1.kdf = (CK_ULONG)r64(&r);
+        pm->p.ecdh1.kdf = rul(&r);
         pm->p.ecdh1.pSharedData = rbytes(&r, &pm->p.ecdh1.ulSharedDataLen);
         pm->p.ecdh1.pPublicData = rbytes(&r, &pm->p.ecdh1.ulPublicDataLen);
         pm->m.pParameter = &pm->p.ecdh1;
         pm->m.ulParameterLen = sizeof pm->p.ecdh1;
         break;
     case P11_PARAM_RSA_AES_KW:
-        pm->p.rsa_aes.kw.ulAESKeyBits = (CK_ULONG)r64(&r);
+        pm->p.rsa_aes.kw.ulAESKeyBits = rul(&r);
         read_oaep(&r, &pm->p.rsa_aes.oaep);
         pm->p.rsa_aes.kw.pOAEPParams = &pm->p.rsa_aes.oaep;
         pm->m.pParameter = &pm->p.rsa_aes.kw;
@@ -399,15 +413,15 @@ static int decode_mechanism(p11_slice s, p11_mech *pm) {
         pm->m.ulParameterLen = sizeof pm->p.eddsa;
         break;
     case P11_PARAM_ULONG:
-        pm->p.ul = (CK_ULONG)r64(&r);
+        pm->p.ul = rul(&r);
         pm->m.pParameter = &pm->p.ul;
         pm->m.ulParameterLen = sizeof pm->p.ul;
         break;
     case P11_PARAM_CCM:
-        pm->p.ccm.ulDataLen = (CK_ULONG)r64(&r);
+        pm->p.ccm.ulDataLen = rul(&r);
         pm->p.ccm.pNonce = rbytes(&r, &pm->p.ccm.ulNonceLen);
         pm->p.ccm.pAAD = rbytes(&r, &pm->p.ccm.ulAADLen);
-        pm->p.ccm.ulMACLen = (CK_ULONG)r64(&r);
+        pm->p.ccm.ulMACLen = rul(&r);
         pm->m.pParameter = &pm->p.ccm;
         pm->m.ulParameterLen = sizeof pm->p.ccm;
         break;
@@ -421,6 +435,7 @@ static int decode_mechanism(p11_slice s, p11_mech *pm) {
 
 uint64_t p11_initialize(uint64_t ctx, uint64_t flags) {
     FL(ctx);
+    NEED(FITS(flags));
     CK_C_INITIALIZE_ARGS a;
     memset(&a, 0, sizeof a);
     a.flags = (CK_ULONG)flags;
@@ -462,8 +477,10 @@ uint64_t p11_get_slot_list(uint64_t ctx, uint8_t present, gs_rref out) {
         if (rv != CKR_OK) return rv;
         CK_ULONG *xs = calloc(n ? n : 1, sizeof *xs);
         if (!xs) return P11_E_MEMORY;
+        CK_ULONG cap = n;
         rv = f->C_GetSlotList(present, xs, &n);
         if (rv == CKR_BUFFER_TOO_SMALL) { free(xs); continue; }   /* a slot came */
+        if (rv == CKR_OK && n > cap) { free(xs); return P11_E_MODULE; }
         if (rv == CKR_OK) put_list(out, xs, n);
         free(xs);
         return rv;
@@ -474,6 +491,7 @@ uint64_t p11_get_slot_list(uint64_t ctx, uint8_t present, gs_rref out) {
    manufacturer (32). */
 uint64_t p11_get_slot_info(uint64_t ctx, uint64_t slot, gs_rref out) {
     FL(ctx);
+    NEED(FITS(slot));
     CK_SLOT_INFO i;
     memset(&i, 0, sizeof i);
     CK_RV rv = f->C_GetSlotInfo((CK_ULONG)slot, &i);
@@ -491,6 +509,7 @@ uint64_t p11_get_slot_info(uint64_t ctx, uint64_t slot, gs_rref out) {
    serial number (16), UTC time (16). */
 uint64_t p11_get_token_info(uint64_t ctx, uint64_t slot, gs_rref out) {
     FL(ctx);
+    NEED(FITS(slot));
     CK_TOKEN_INFO i;
     memset(&i, 0, sizeof i);
     CK_RV rv = f->C_GetTokenInfo((CK_ULONG)slot, &i);
@@ -511,12 +530,15 @@ uint64_t p11_get_token_info(uint64_t ctx, uint64_t slot, gs_rref out) {
 
 uint64_t p11_get_mechanism_list(uint64_t ctx, uint64_t slot, gs_rref out) {
     FL(ctx);
+    NEED(FITS(slot));
     CK_ULONG n = 0;
     CK_RV rv = f->C_GetMechanismList((CK_ULONG)slot, NULL, &n);
     if (rv != CKR_OK) return rv;
     CK_ULONG *xs = calloc(n ? n : 1, sizeof *xs);
     if (!xs) return P11_E_MEMORY;
+    CK_ULONG cap = n;
     rv = f->C_GetMechanismList((CK_ULONG)slot, xs, &n);
+    if (rv == CKR_OK && n > cap) { free(xs); return P11_E_MODULE; }
     if (rv == CKR_OK) put_list(out, xs, n);
     free(xs);
     return rv;
@@ -525,6 +547,7 @@ uint64_t p11_get_mechanism_list(uint64_t ctx, uint64_t slot, gs_rref out) {
 /* u64 min key size, u64 max key size, u64 flags. */
 uint64_t p11_get_mechanism_info(uint64_t ctx, uint64_t slot, uint64_t mech, gs_rref out) {
     FL(ctx);
+    NEED(FITS(slot) && FITS(mech));
     CK_MECHANISM_INFO i;
     memset(&i, 0, sizeof i);
     CK_RV rv = f->C_GetMechanismInfo((CK_ULONG)slot, (CK_ULONG)mech, &i);
@@ -535,22 +558,26 @@ uint64_t p11_get_mechanism_info(uint64_t ctx, uint64_t slot, uint64_t mech, gs_r
     return rv;
 }
 
-/* The label is padded with blanks to 32 bytes, as C_InitToken wants it. */
+/* The label is padded with blanks to 32 bytes, as C_InitToken wants it; a
+   longer one is refused. */
 uint64_t p11_init_token(uint64_t ctx, uint64_t slot, p11_slice pin, p11_slice label) {
     FL(ctx);
+    NEED(label.len <= 32 && FITS(slot) && FITS(pin.len));
     CK_BYTE l[32];
     memset(l, ' ', 32);
-    memcpy(l, label.data, (size_t)(label.len < 32 ? label.len : 32));
+    memcpy(l, label.data, (size_t)label.len);
     return f->C_InitToken((CK_ULONG)slot, (CK_BYTE *)pin.data, (CK_ULONG)pin.len, l);
 }
 
 uint64_t p11_init_pin(uint64_t ctx, uint64_t sh, p11_slice pin) {
     FL(ctx);
+    NEED(FITS(sh) && FITS(pin.len));
     return f->C_InitPIN((CK_ULONG)sh, (CK_BYTE *)pin.data, (CK_ULONG)pin.len);
 }
 
 uint64_t p11_set_pin(uint64_t ctx, uint64_t sh, p11_slice old, p11_slice pin) {
     FL(ctx);
+    NEED(FITS(sh) && FITS(old.len) && FITS(pin.len));
     return f->C_SetPIN((CK_ULONG)sh, (CK_BYTE *)old.data, (CK_ULONG)old.len, (CK_BYTE *)pin.data, (CK_ULONG)pin.len);
 }
 
@@ -558,18 +585,20 @@ uint64_t p11_set_pin(uint64_t ctx, uint64_t sh, p11_slice old, p11_slice pin) {
 
 uint64_t p11_open_session(uint64_t ctx, uint64_t slot, uint64_t flags, uint64_t *sh) {
     FL(ctx);
+    NEED(FITS(slot) && FITS(flags));
     CK_ULONG h = 0;
     CK_RV rv = f->C_OpenSession((CK_ULONG)slot, (CK_ULONG)flags, NULL, NULL, &h);
     *sh = h;
     return rv;
 }
 
-uint64_t p11_close_session(uint64_t ctx, uint64_t sh) { FL(ctx); return f->C_CloseSession((CK_ULONG)sh); }
-uint64_t p11_close_all_sessions(uint64_t ctx, uint64_t slot) { FL(ctx); return f->C_CloseAllSessions((CK_ULONG)slot); }
+uint64_t p11_close_session(uint64_t ctx, uint64_t sh) { FL(ctx); NEED(FITS(sh)); return f->C_CloseSession((CK_ULONG)sh); }
+uint64_t p11_close_all_sessions(uint64_t ctx, uint64_t slot) { FL(ctx); NEED(FITS(slot)); return f->C_CloseAllSessions((CK_ULONG)slot); }
 
 /* u64 slot, u64 state, u64 flags, u64 device error. */
 uint64_t p11_get_session_info(uint64_t ctx, uint64_t sh, gs_rref out) {
     FL(ctx);
+    NEED(FITS(sh));
     CK_SESSION_INFO i;
     memset(&i, 0, sizeof i);
     CK_RV rv = f->C_GetSessionInfo((CK_ULONG)sh, &i);
@@ -583,13 +612,15 @@ uint64_t p11_get_session_info(uint64_t ctx, uint64_t sh, gs_rref out) {
 
 uint64_t p11_login(uint64_t ctx, uint64_t sh, uint64_t user, p11_slice pin) {
     FL(ctx);
+    NEED(FITS(sh) && FITS(user) && FITS(pin.len));
     return f->C_Login((CK_ULONG)sh, (CK_ULONG)user, (CK_BYTE *)pin.data, (CK_ULONG)pin.len);
 }
 
-uint64_t p11_logout(uint64_t ctx, uint64_t sh) { FL(ctx); return f->C_Logout((CK_ULONG)sh); }
+uint64_t p11_logout(uint64_t ctx, uint64_t sh) { FL(ctx); NEED(FITS(sh)); return f->C_Logout((CK_ULONG)sh); }
 
 uint64_t p11_set_operation_state(uint64_t ctx, uint64_t sh, p11_slice state, uint64_t enc, uint64_t auth) {
     FL(ctx);
+    NEED(FITS(sh) && FITS(state.len) && FITS(enc) && FITS(auth));
     return f->C_SetOperationState((CK_ULONG)sh, (CK_BYTE *)state.data, (CK_ULONG)state.len, (CK_ULONG)enc,
                                   (CK_ULONG)auth);
 }
@@ -598,6 +629,7 @@ uint64_t p11_set_operation_state(uint64_t ctx, uint64_t sh, p11_slice state, uin
 
 uint64_t p11_create_object(uint64_t ctx, uint64_t sh, p11_slice t, uint64_t *obj) {
     FL(ctx);
+    NEED(FITS(sh));
     CK_ATTRIBUTE *a;
     CK_ULONG n;
     if (!decode_template(t, &a, &n)) return P11_E_ENCODING;
@@ -610,6 +642,7 @@ uint64_t p11_create_object(uint64_t ctx, uint64_t sh, p11_slice t, uint64_t *obj
 
 uint64_t p11_copy_object(uint64_t ctx, uint64_t sh, uint64_t o, p11_slice t, uint64_t *obj) {
     FL(ctx);
+    NEED(FITS(sh) && FITS(o));
     CK_ATTRIBUTE *a;
     CK_ULONG n;
     if (!decode_template(t, &a, &n)) return P11_E_ENCODING;
@@ -620,10 +653,11 @@ uint64_t p11_copy_object(uint64_t ctx, uint64_t sh, uint64_t o, p11_slice t, uin
     return rv;
 }
 
-uint64_t p11_destroy_object(uint64_t ctx, uint64_t sh, uint64_t o) { FL(ctx); return f->C_DestroyObject((CK_ULONG)sh, (CK_ULONG)o); }
+uint64_t p11_destroy_object(uint64_t ctx, uint64_t sh, uint64_t o) { FL(ctx); NEED(FITS(sh) && FITS(o)); return f->C_DestroyObject((CK_ULONG)sh, (CK_ULONG)o); }
 
 uint64_t p11_get_object_size(uint64_t ctx, uint64_t sh, uint64_t o, uint64_t *size) {
     FL(ctx);
+    NEED(FITS(sh) && FITS(o));
     CK_ULONG n = 0;
     CK_RV rv = f->C_GetObjectSize((CK_ULONG)sh, (CK_ULONG)o, &n);
     *size = n == CK_UNAVAILABLE ? UINT64_MAX : n;
@@ -637,12 +671,17 @@ uint64_t p11_get_object_size(uint64_t ctx, uint64_t sh, uint64_t o, uint64_t *si
    other attributes all there. */
 uint64_t p11_get_attribute_value(uint64_t ctx, uint64_t sh, uint64_t o, p11_slice types, gs_rref out) {
     FL(ctx);
+    NEED(FITS(sh) && FITS(o));
     if (types.len % 8 != 0) return P11_E_ENCODING;
     CK_ULONG n = (CK_ULONG)(types.len / 8);
     if (n == 0) return CKR_OK;
     CK_ATTRIBUTE *a = calloc(n, sizeof *a);
     if (!a) return P11_E_MEMORY;
-    for (CK_ULONG i = 0; i < n; i++) a[i].type = (CK_ULONG)get64(types.data + 8 * i);
+    for (CK_ULONG i = 0; i < n; i++) {
+        uint64_t ty = get64(types.data + 8 * i);
+        if (!FITS(ty)) { free(a); return P11_E_ENCODING; }
+        a[i].type = (CK_ULONG)ty;
+    }
     /* uint64_t, not CK_RV: P11_E_MEMORY does not fit Windows' 32-bit CK_ULONG. */
     uint64_t rv = f->C_GetAttributeValue((CK_ULONG)sh, (CK_ULONG)o, a, n);
     int usable = rv == CKR_OK || rv == 0x11 /* SENSITIVE */ || rv == 0x12 /* TYPE_INVALID */;
@@ -661,11 +700,19 @@ uint64_t p11_get_attribute_value(uint64_t ctx, uint64_t sh, uint64_t o, p11_slic
         else {
             for (CK_ULONG i = 0; i < n; i++) if (a[i].pValue) b[m++] = a[i];
             CK_RV rv2 = m ? f->C_GetAttributeValue((CK_ULONG)sh, (CK_ULONG)o, b, m) : CKR_OK;
+            int past = 0;
             m = 0;
-            for (CK_ULONG i = 0; i < n; i++) if (a[i].pValue) { a[i].ulValueLen = b[m].ulValueLen; m++; }
+            for (CK_ULONG i = 0; i < n; i++) {
+                if (!a[i].pValue) continue;
+                CK_ULONG got = b[m++].ulValueLen;
+                /* Longer than the first call said: past the buffer. */
+                if (got != CK_UNAVAILABLE && got > a[i].ulValueLen) past = 1;
+                a[i].ulValueLen = got;
+            }
             free(b);
             if (rv2 != CKR_OK) rv = rv2;
-            for (CK_ULONG i = 0; i < n; i++) {
+            if (past) rv = P11_E_MODULE;
+            for (CK_ULONG i = 0; i < n && !past; i++) {
                 put64(out, a[i].type);
                 if (!a[i].pValue || a[i].ulValueLen == CK_UNAVAILABLE) {
                     put64(out, UINT64_MAX);
@@ -683,6 +730,7 @@ uint64_t p11_get_attribute_value(uint64_t ctx, uint64_t sh, uint64_t o, p11_slic
 
 uint64_t p11_set_attribute_value(uint64_t ctx, uint64_t sh, uint64_t o, p11_slice t) {
     FL(ctx);
+    NEED(FITS(sh) && FITS(o));
     CK_ATTRIBUTE *a;
     CK_ULONG n;
     if (!decode_template(t, &a, &n)) return P11_E_ENCODING;
@@ -693,6 +741,7 @@ uint64_t p11_set_attribute_value(uint64_t ctx, uint64_t sh, uint64_t o, p11_slic
 
 uint64_t p11_find_objects_init(uint64_t ctx, uint64_t sh, p11_slice t) {
     FL(ctx);
+    NEED(FITS(sh));
     CK_ATTRIBUTE *a;
     CK_ULONG n;
     if (!decode_template(t, &a, &n)) return P11_E_ENCODING;
@@ -704,17 +753,19 @@ uint64_t p11_find_objects_init(uint64_t ctx, uint64_t sh, p11_slice t) {
 /* Up to max handles, appended as u64s. */
 uint64_t p11_find_objects(uint64_t ctx, uint64_t sh, uint64_t max, gs_rref out) {
     FL(ctx);
+    NEED(FITS(sh) && FITS(max));
     if (max == 0) return CKR_OK;
     CK_ULONG *xs = calloc((size_t)max, sizeof *xs);
     if (!xs) return P11_E_MEMORY;
     CK_ULONG n = 0;
     CK_RV rv = f->C_FindObjects((CK_ULONG)sh, xs, (CK_ULONG)max, &n);
+    if (rv == CKR_OK && n > max) { free(xs); return P11_E_MODULE; }
     if (rv == CKR_OK) put_list(out, xs, n);
     free(xs);
     return rv;
 }
 
-uint64_t p11_find_objects_final(uint64_t ctx, uint64_t sh) { FL(ctx); return f->C_FindObjectsFinal((CK_ULONG)sh); }
+uint64_t p11_find_objects_final(uint64_t ctx, uint64_t sh) { FL(ctx); NEED(FITS(sh)); return f->C_FindObjectsFinal((CK_ULONG)sh); }
 
 /* --- Cryptographic operations ------------------------------------------------------- */
 
@@ -729,6 +780,7 @@ uint64_t p11_find_objects_final(uint64_t ctx, uint64_t sh) { FL(ctx); return f->
 
 uint64_t p11_op_init(uint64_t ctx, int64_t op, uint64_t sh, p11_slice mech, uint64_t key) {
     FL(ctx);
+    NEED(FITS(sh) && FITS(key));
     p11_mech pm;
     if (!decode_mechanism(mech, &pm)) return P11_E_ENCODING;
     CK_ULONG s = (CK_ULONG)sh, k = (CK_ULONG)key;
@@ -793,6 +845,7 @@ static uint64_t io_call(CK_FUNCTION_LIST *f, int64_t op, CK_ULONG s, CK_BYTE *in
 
 uint64_t p11_io(uint64_t ctx, int64_t op, uint64_t sh, p11_slice in, gs_rref out) {
     FL(ctx);
+    NEED(FITS(sh) && FITS(in.len));
     int known;
     CK_ULONG n = 0;
     uint64_t rv = io_call(f, op, (CK_ULONG)sh, (CK_BYTE *)in.data, (CK_ULONG)in.len, NULL, &n, &known);
@@ -803,6 +856,7 @@ uint64_t p11_io(uint64_t ctx, int64_t op, uint64_t sh, p11_slice in, gs_rref out
         CK_ULONG m = n;
         rv = io_call(f, op, (CK_ULONG)sh, (CK_BYTE *)in.data, (CK_ULONG)in.len, buf, &m, &known);
         if (rv == CKR_BUFFER_TOO_SMALL && m > n) { n = m; free(buf); continue; }
+        if (rv == CKR_OK && m > n) rv = P11_E_MODULE;
         if (rv == CKR_OK) gs_bld_append(out, buf, (int64_t)m);
         free(buf);
         return rv;
@@ -819,6 +873,7 @@ uint64_t p11_io(uint64_t ctx, int64_t op, uint64_t sh, p11_slice in, gs_rref out
 
 uint64_t p11_in(uint64_t ctx, int64_t op, uint64_t sh, p11_slice in) {
     FL(ctx);
+    NEED(FITS(sh) && FITS(in.len));
     CK_ULONG s = (CK_ULONG)sh;
     CK_BYTE *d = (CK_BYTE *)in.data;
     CK_ULONG n = (CK_ULONG)in.len;
@@ -834,16 +889,18 @@ uint64_t p11_in(uint64_t ctx, int64_t op, uint64_t sh, p11_slice in) {
 
 uint64_t p11_verify(uint64_t ctx, uint64_t sh, p11_slice data, p11_slice sig) {
     FL(ctx);
+    NEED(FITS(sh) && FITS(data.len) && FITS(sig.len));
     return f->C_Verify((CK_ULONG)sh, (CK_BYTE *)data.data, (CK_ULONG)data.len, (CK_BYTE *)sig.data,
                        (CK_ULONG)sig.len);
 }
 
-uint64_t p11_digest_key(uint64_t ctx, uint64_t sh, uint64_t key) { FL(ctx); return f->C_DigestKey((CK_ULONG)sh, (CK_ULONG)key); }
+uint64_t p11_digest_key(uint64_t ctx, uint64_t sh, uint64_t key) { FL(ctx); NEED(FITS(sh) && FITS(key)); return f->C_DigestKey((CK_ULONG)sh, (CK_ULONG)key); }
 
 /* --- Keys ----------------------------------------------------------------------------- */
 
 uint64_t p11_generate_key(uint64_t ctx, uint64_t sh, p11_slice mech, p11_slice t, uint64_t *key) {
     FL(ctx);
+    NEED(FITS(sh));
     p11_mech pm;
     CK_ATTRIBUTE *a;
     CK_ULONG n;
@@ -858,6 +915,7 @@ uint64_t p11_generate_key(uint64_t ctx, uint64_t sh, p11_slice mech, p11_slice t
 uint64_t p11_generate_key_pair(uint64_t ctx, uint64_t sh, p11_slice mech, p11_slice pubt, p11_slice privt,
                                uint64_t *pub, uint64_t *priv) {
     FL(ctx);
+    NEED(FITS(sh));
     p11_mech pm;
     CK_ATTRIBUTE *a, *b;
     CK_ULONG na, nb;
@@ -874,6 +932,7 @@ uint64_t p11_generate_key_pair(uint64_t ctx, uint64_t sh, p11_slice mech, p11_sl
 
 uint64_t p11_wrap_key(uint64_t ctx, uint64_t sh, p11_slice mech, uint64_t wrapping, uint64_t key, gs_rref out) {
     FL(ctx);
+    NEED(FITS(sh) && FITS(wrapping) && FITS(key));
     p11_mech pm;
     if (!decode_mechanism(mech, &pm)) return P11_E_ENCODING;
     CK_ULONG n = 0;
@@ -881,7 +940,9 @@ uint64_t p11_wrap_key(uint64_t ctx, uint64_t sh, p11_slice mech, uint64_t wrappi
     if (rv != CKR_OK) return rv;
     CK_BYTE *buf = malloc(n ? n : 1);
     if (!buf) return P11_E_MEMORY;
+    CK_ULONG cap = n;
     rv = f->C_WrapKey((CK_ULONG)sh, &pm.m, (CK_ULONG)wrapping, (CK_ULONG)key, buf, &n);
+    if (rv == CKR_OK && n > cap) { free(buf); return P11_E_MODULE; }
     if (rv == CKR_OK) gs_bld_append(out, buf, (int64_t)n);
     free(buf);
     return rv;
@@ -890,6 +951,7 @@ uint64_t p11_wrap_key(uint64_t ctx, uint64_t sh, p11_slice mech, uint64_t wrappi
 uint64_t p11_unwrap_key(uint64_t ctx, uint64_t sh, p11_slice mech, uint64_t unwrapping, p11_slice wrapped,
                         p11_slice t, uint64_t *key) {
     FL(ctx);
+    NEED(FITS(sh) && FITS(unwrapping) && FITS(wrapped.len));
     p11_mech pm;
     CK_ATTRIBUTE *a;
     CK_ULONG n;
@@ -904,6 +966,7 @@ uint64_t p11_unwrap_key(uint64_t ctx, uint64_t sh, p11_slice mech, uint64_t unwr
 
 uint64_t p11_derive_key(uint64_t ctx, uint64_t sh, p11_slice mech, uint64_t base, p11_slice t, uint64_t *key) {
     FL(ctx);
+    NEED(FITS(sh) && FITS(base));
     p11_mech pm;
     CK_ATTRIBUTE *a;
     CK_ULONG n;
@@ -917,6 +980,7 @@ uint64_t p11_derive_key(uint64_t ctx, uint64_t sh, p11_slice mech, uint64_t base
 
 uint64_t p11_generate_random(uint64_t ctx, uint64_t sh, uint64_t len, gs_rref out) {
     FL(ctx);
+    NEED(FITS(sh) && FITS(len));
     CK_BYTE *buf = malloc(len ? (size_t)len : 1);
     if (!buf) return P11_E_MEMORY;
     CK_RV rv = f->C_GenerateRandom((CK_ULONG)sh, buf, (CK_ULONG)len);
@@ -927,11 +991,12 @@ uint64_t p11_generate_random(uint64_t ctx, uint64_t sh, uint64_t len, gs_rref ou
 
 uint64_t p11_wait_for_slot_event(uint64_t ctx, uint64_t flags, uint64_t *slot) {
     FL(ctx);
+    NEED(FITS(flags));
     CK_ULONG s = 0;
     CK_RV rv = f->C_WaitForSlotEvent((CK_ULONG)flags, &s, NULL);
     *slot = s;
     return rv;
 }
 
-uint64_t p11_get_function_status(uint64_t ctx, uint64_t sh) { FL(ctx); return f->C_GetFunctionStatus((CK_ULONG)sh); }
-uint64_t p11_cancel_function(uint64_t ctx, uint64_t sh) { FL(ctx); return f->C_CancelFunction((CK_ULONG)sh); }
+uint64_t p11_get_function_status(uint64_t ctx, uint64_t sh) { FL(ctx); NEED(FITS(sh)); return f->C_GetFunctionStatus((CK_ULONG)sh); }
+uint64_t p11_cancel_function(uint64_t ctx, uint64_t sh) { FL(ctx); NEED(FITS(sh)); return f->C_CancelFunction((CK_ULONG)sh); }

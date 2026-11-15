@@ -1,0 +1,32 @@
+Date: Sat, 14 Nov 2026 10:00:00 +0000
+From: Alice <alice@example.com>
+To: Bob <bob@example.com>
+Subject: PGP/MIME test
+Message-ID: <pgp-test@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/signed; boundary="gpg-signed-boundary"; micalg=pgp-sha256;
+ protocol="application/pgp-signature"
+
+--gpg-signed-boundary
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Hello Bob,
+
+this is signed. Caf=C3=A9 at noon?
+-- 
+Alice
+
+--gpg-signed-boundary
+Content-Type: application/pgp-signature; name="signature.asc"
+
+-----BEGIN PGP SIGNATURE-----
+
+iKQEABYIAEwWIQQL8aWxJ6d1U9Vp04XMrYanlpRpEgUCavfXQxsUgAAAAAAEAA5t
+YW51MiwyLjUrMS4xMiwwLDMSHGFsaWNlQGV4YW1wbGUuY29tAAoJEMythqeWlGkS
+fAoA/0GxSgQVhAikzMBPbpskXx98EsTh0BvXFZzrIW/UFxt9AQDxsAwBTHBMhYxy
+Y9FYOwVjfiP1CYW1JmJm8UYmaKoJDw==
+=5iTx
+-----END PGP SIGNATURE-----
+
+--gpg-signed-boundary--

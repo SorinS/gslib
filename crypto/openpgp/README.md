@@ -112,10 +112,22 @@ gives a key's flags (`FLAG_*`) and expiry, as in gpg. Third-party
 certifications are kept for export but not checked: there is no web of
 trust here, so who a key belongs to is the caller's to decide.
 
+A key the keyring already holds (the same fingerprint) is merged into
+that copy, as gpg imports: new user IDs, subkeys, a secret the copy lacks,
+and the key's own signatures (a revocation, a newer self-signature) are
+added; third-party certifications in the second copy are not. So a key
+fetched again with its revocation is revoked, not shadowed by the first
+copy. A key revocation certificate on its own (gpg's `--gen-revoke`)
+revokes the key it is for; `add_keys` gives `ERR_NO_KEY` when there is
+none.
+
 A `Key` is fixed-size (its numbers are in bounded arrays sized for
 RSA-8192), and a keyring refers to its keys by index. A subkey's `primary`
 is its primary's index. `find_key` takes a fingerprint or key ID in hex,
-or text from a user ID, and prefers a key whose secret is there.
+an email address (matched whole against a user ID's `<address>`, without
+case) or other text from a user ID, and prefers a key whose secret is
+there. Only user IDs with a valid self-certification and no revocation
+are searched.
 `signing_key` and `encryption_key` choose the newest usable subkey, else
 the primary.
 
@@ -148,11 +160,20 @@ when:
 - it verifies, with a hash that is not MD5;
 - its hashed area has no critical subpacket that is not known here;
 - its key is in the keyring, bound by a valid self-signature, not
-  revoked, not expired at the signature's time, and allowed to sign.
+  revoked, not expired at the signature's time, and allowed to sign;
+- it has not expired itself (its expiration subpacket) by `now`, or by
+  the clock when `now` is 0;
+- a v6 signature is not by SHA-1 (or MD5, RIPEMD-160): `ERR_UNSUPPORTED`.
+
+Each of `read_message`, `verify`, `decrypt`, `verify_detached` and
+`verify_cleartext` starts by emptying the `Message` it is given, so one
+can be used again. (They shrink `m.data`: a label made with `str(...)` in
+the same call's arguments has to go into a local first.)
 
 `verify_cleartext` reads the cleartext framework: dash escapes undone,
 trailing white space dropped, a signature over a hash its `Hash:` header
-leaves out refused.
+leaves out refused. Lines end at LF; a CR elsewhere in a line is part of
+the text, for `sign_cleartext` as for the reader (and gpg).
 
 ## Encrypting and decrypting
 
@@ -162,9 +183,17 @@ encryption key and an SKESK v4 for the passphrase if one is given, and the
 data in SEIPD v1: CFB with the MDC. With a signer, the data is signed
 first, in the same message.
 
-`read_message` tries each session key it can open: PKESKs with the
-keyring's unlocked secret keys (wildcard key IDs too), SKESKs with
-`ReadOptions.passphrase`. It then decrypts:
+`read_message` tries the session key packets in order, PKESKs with the
+keyring's unlocked secret keys (wildcard key IDs too) and SKESKs with
+`ReadOptions.passphrase`, and stops at the first whose session key opens
+the data. Whoever sends a message chooses how many there are, so it takes
+at most 8 private-key operations (`MAX_KEY_TRIES`) and 4 passphrase S2K
+runs (`MAX_PASS_TRIES`) for one, then `ERR_LIMIT`; an Argon2 S2K may ask
+for at most 2 GiB, 16 lanes and the work of one pass over 2 GiB (RFC
+9580's first choice; its second, 3 passes over 64 MiB, is well within).
+As RFC 9580 §5.1 has it, v3 PKESKs and v4 SKESKs open SEIPD v1 (and
+LibrePGP's OCB packet), v6 PKESKs SEIPD v2; others are not tried. It
+then decrypts:
 - SEIPD v1: the MDC is checked over all of it before anything is
   returned, so changed data is `ERR_INTEGRITY` with nothing out;
 - LibrePGP's OCB packet and SEIPD v2: each chunk and the final tag

@@ -235,6 +235,32 @@ fn tokens() {
     let r2 = jwt::parse_nested(t2, jwa::RSA_OAEP_256, rsa, jwa::EDDSA, spub, g2, v);
     tv::check("nested token", e2 == jwx::OK && r2 == jwx::OK && g2.sub == "carol");
 
+    // A JWT is compact only (RFC 7519 §1): the same claims as a JSON JWS
+    // or JWE are refused, though jws::verify and jwe::decrypt read them.
+    var signers: jws::Signer[>..] = [];
+    var sh = jws::Header { .. };
+    sh.alg = jwa::EDDSA;
+    signers.push(jws::Signer { key: signer, header: sh, .. });
+    let body = jwt::marshal(c);
+    for flat in [false, true] {
+        let js, ejs = jws::sign_json(body, signers, flat);
+        let jp, ejp = jws::verify(js, jwa::EDDSA, spub);
+        tv::check(str("JSON JWS verifies, flattened ", flat), ejs == jwx::OK && ejp == jwx::OK);
+        var gj = jwt::new_claims();
+        tv::check_int(str("JSON JWS is not a JWT, flattened ", flat), jwt::parse(js, jwa::EDDSA, spub, gj, v), jwx::ERR_MALFORMED);
+        var gs = jwt::new_claims();
+        tv::check_int("JSON JWS not a JWT by set", jwt::parse_set(js, [spub], gs, v), jwx::ERR_MALFORMED);
+        var gi = jwt::new_claims();
+        tv::check_int("JSON JWS not read insecurely", jwt::parse_insecure(js, gi), jwx::ERR_MALFORMED);
+    }
+    var shared = jwe::Header { .. };
+    shared.enc = jwa::A256GCM;
+    var rs: jwe::Recipient[>..] = [];
+    rs.push(jwe::Recipient { alg: jwa::RSA_OAEP_256, key: pub, .. });
+    let je, eje = jwe::encrypt_json(body, shared, rs);
+    var ge = jwt::new_claims();
+    tv::check_int("JSON JWE is not a JWT", jwt::parse_encrypted(je, jwa::RSA_OAEP_256, rsa, ge, v), jwx::ERR_MALFORMED);
+
     // From a set of keys, by kid.
     var keys: jwk::Key[>..] = [];
     keys.push(jwk::generate_ec(jwa::CRV_P384));

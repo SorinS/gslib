@@ -110,6 +110,13 @@ little-endian:
 | attributes given back | repeated: `u64 type`, `u64 len` (all ones, with no bytes, for one the module did not give), `len` bytes |
 | info structures | their fields in order: `u64`s, then versions (2 bytes each), then the blank-padded strings at their fixed lengths |
 
+Nothing is cut short on the way. A handle, type, flag or length that
+does not fit the platform's `CK_ULONG` (past 2^32 on Windows) is
+`ERR_ENCODING`, as is a token label past 32 bytes; `attr(t, type, u64)`
+asserts that its value fits. A module that says it wrote more than the
+buffer it was given (a length past the one it asked for, more handles
+than room) gets `ERR_MODULE`, and none of it is read.
+
 Results of unknown size use PKCS#11's two calls (the length, then the
 data), retried if the module's answer grows in between.
 

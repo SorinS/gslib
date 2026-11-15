@@ -446,7 +446,8 @@ fn gss_wrap(ctx: GssContext&, msg: const u8[:], conf: bool, out: u8[>..]&) -> i6
 }
 
 // The message of a Wrap token, appended to out; and whether it was
-// encrypted.
+// encrypted. Nothing goes to out when the token is refused, out of
+// sequence included.
 fn gss_unwrap(ctx: GssContext&, token: const u8[:], out: u8[>..]&) -> bool, i64 {
     if !ctx.established { return false, ERR_CONTEXT; }
     if ctx.key.etype == ETYPE_RC4_HMAC { return rc4_unwrap(ctx, token, out); }
@@ -477,7 +478,10 @@ fn gss_unwrap(ctx: GssContext&, token: const u8[:], out: u8[>..]&) -> bool, i64 
             let want = if i == 6 || i == 7 { 0 } else { token[i] };
             if inner[i] != want { return true, ERR_TOKEN; }
         }
+        let serr = check_seq(ctx, seq);
+        if serr != OK { return true, serr; }
         out.append(p[..p.len - 16 - ec]);
+        return true, OK;
     } else {
         if b.len < ec { return false, ERR_TOKEN; }
         let msg = b[..b.len - ec];
@@ -490,9 +494,11 @@ fn gss_unwrap(ctx: GssContext&, token: const u8[:], out: u8[>..]&) -> bool, i64 
         data[data.len - 9] = 0;
         let err = verify_checksum(ctx.key, cksum_type_for(ctx.key.etype), seal_usage(!ctx.initiator), data, b[b.len - ec..]);
         if err != OK { return false, err; }
+        let serr = check_seq(ctx, seq);
+        if serr != OK { return false, serr; }
         out.append(msg);
     }
-    return sealed, check_seq(ctx, seq);
+    return false, OK;
 }
 
 // --- RFC 4757's tokens (RC4) ----------------------------------------------------------
@@ -649,6 +655,8 @@ fn rc4_unwrap(ctx: GssContext&, token: const u8[:], out: u8[>..]&) -> bool, i64 
     // The padding's last byte says how long it is (1 for RC4; up to 8).
     let padn: i64 = data[data.len - 1];
     if padn < 1 || padn > 8 || 8 + padn > data.len { return sealed, ERR_TOKEN; }
+    let serr = check_seq(ctx, seq_of(seq));
+    if serr != OK { return sealed, serr; }
     out.append(data[8..data.len - padn]);
-    return sealed, check_seq(ctx, seq_of(seq));
+    return sealed, OK;
 }

@@ -1360,6 +1360,9 @@ fn xz_index(d: XzReader&, src: const u8[:]) -> i64 {
                 d.ix_part = 2;
             } else {
                 if v > 0x7fffffffffffffff { return ERR_DATA; }
+                // Sums past what a VLI holds are liblzma's LZMA_DATA_ERROR.
+                if d.ix_sum_unpadded > 0x7fffffffffffffff - d.ix_unpadded
+                   || d.ix_sum_uncomp > 0x7fffffffffffffff - (v as! i64) { return ERR_DATA; }
                 d.ix_sum_unpadded += d.ix_unpadded;
                 d.ix_sum_uncomp += v as! i64;
                 d.ix_hash = rec_mix(d.ix_hash, d.ix_unpadded, v as! i64);
@@ -1464,11 +1467,15 @@ fn xz_run(d: XzReader&, src: const u8[:], out: u8[:]) -> i64 {
                     d.sp += n;
                     // The block's record: unpadded size (without the padding).
                     let unpadded = d.bh_size + d.check_size + d.bcsize;
-                    d.nblocks++;
-                    d.sum_unpadded += unpadded;
-                    d.sum_uncomp += d.busize;
-                    d.rec_hash = rec_mix(d.rec_hash, unpadded, d.busize);
-                    d.stage = XS_BLOCK_HEADER;
+                    if d.sum_unpadded > 0x7fffffffffffffff - unpadded || d.sum_uncomp > 0x7fffffffffffffff - d.busize {
+                        r = ERR_DATA;
+                    } else {
+                        d.nblocks++;
+                        d.sum_unpadded += unpadded;
+                        d.sum_uncomp += d.busize;
+                        d.rec_hash = rec_mix(d.rec_hash, unpadded, d.busize);
+                        d.stage = XS_BLOCK_HEADER;
+                    }
                 }
             }
         } else if st == XS_INDEX {
@@ -1596,9 +1603,10 @@ fn xz_read(d: XzReader&, input: const u8[:], out: u8[:]) -> i64, i64, i64 {
     return taken, d.op, 0;
 }
 
-// Decodes a whole .xz file (any number of streams) into out, at most
-// `limit` bytes (-1: no limit): 0, or an error (ERR_TRUNCATED when it ends
-// early, ERR_LIMIT past the limit).
+// Decodes a whole .xz file (any number of streams), appending at most
+// `limit` bytes to out (< 0: no limit): 0, or an error (ERR_TRUNCATED when
+// it ends early, ERR_LIMIT past the limit, with out holding the limit's
+// bytes and one more).
 fn xz_decode(data: const u8[:], out: u8[>..]&, limit: i64) -> i64 {
     var d = xz_reader();
     return xz_decode_with(d, data, out, limit);
@@ -1612,16 +1620,17 @@ fn lzma_decode(data: const u8[:], out: u8[>..]&, limit: i64) -> i64 {
 
 fn xz_decode_with(d: XzReader&, data: const u8[:], out: u8[>..]&, limit: i64) -> i64 {
     var p = 0;
+    let base = out.len;
     while true {
         let at = out.len;
         var room: i64 = 1 << 16;
-        if limit >= 0 && at + room > limit + 1 { room = limit + 1 - at; }
+        if limit >= 0 && at - base + room > limit + 1 { room = limit + 1 - (at - base); }
         out.resize(at + room, 0);
         let used, made, st = xz_read(d, data[p..], out[at..]);
         out.resize(at + made);
         p += used;
         if st < 0 { return st; }
-        if limit >= 0 && out.len > limit { return ERR_LIMIT; }
+        if limit >= 0 && out.len - base > limit { return ERR_LIMIT; }
         if d.stage == XS_DONE {
             if p < data.len { return ERR_TRAILING; }
             return 0;

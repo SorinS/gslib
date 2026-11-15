@@ -85,8 +85,62 @@ fn documents() {
     let np = acme::problem_of("<html>", 503);
     check("not a problem document", np.status == 503 && np.kind.len == 0);
 
+    // Fields too long to keep: the document refused, not read without them.
+    let long65 = bytes('x', 65);
+    let o1, ok1 = acme::read_order(str("{\"status\":\"pending\",\"expires\":\"", long65, "\",\"finalize\":\"https://x.test/f\"}"), "u");
+    check("order: over-long expires refused", !ok1);
+    let o2, ok2 = acme::read_order(str("{\"status\":\"pending\",\"profile\":\"", long65, "\",\"finalize\":\"https://x.test/f\"}"), "u");
+    check("order: over-long profile refused", !ok2);
+    let o3, ok3 = acme::read_order(str("{\"status\":\"invalid\",\"error\":{\"type\":\"", bytes('t', 257), "\"},\"finalize\":\"https://x.test/f\"}"), "u");
+    check("order: over-long problem type refused", !ok3);
+    let o4, ok4 = acme::read_order(str("{\"status\":\"pending\",\"expires\":\"", bytes('x', 64), "\",\"profile\":\"", bytes('p', 64), "\",\"finalize\":\"https://x.test/f\"}"), "u");
+    check("order: expires and profile of 64", ok4 && o4.expires.len == 64 && o4.profile.len == 64);
+    let id = "\"status\":\"pending\",\"identifier\":{\"type\":\"dns\",\"value\":\"a.test\"}";
+    let z1, zk1 = acme::read_authz(str("{", id, ",\"expires\":\"", long65, "\"}"), "u");
+    check("authz: over-long expires refused", !zk1);
+    let z2, zk2 = acme::read_authz(str("{", id, ",\"challenges\":[{\"type\":\"", bytes('c', 33), "\",\"url\":\"https://x.test/c\",\"token\":\"t\"}]}"), "u");
+    check("authz: over-long challenge type refused", !zk2);
+    var nine: u8[>..] = [];
+    for k in 9 {
+        if k > 0 { nine.push(','); }
+        nine.append("{\"type\":\"http-01\",\"url\":\"https://x.test/c\",\"token\":\"t\"}");
+    }
+    let z3, zk3 = acme::read_authz(str("{", id, ",\"challenges\":[", nine, "]}"), "u");
+    check("authz: nine challenges refused", !zk3);
+    let z4, zk4 = acme::read_authz(str("{", id, ",\"challenges\":[", nine[..nine.len - 56], "]}"), "u");
+    check("authz: eight challenges", zk4 && z4.challenges.len == 8);
+    let lp = acme::problem_of(str("{\"type\":\"urn:ietf:params:acme:error:", bytes('m', 256), "\",\"detail\":\"d\"}"), 400);
+    check("problem: over-long type not kept cut short", lp.status == 400 && lp.kind.len == 0 && lp.detail.len > 0);
+    // A long detail is only text: cut, flagged, the type kept (so a
+    // badNonce with a long detail is still retried).
+    let ld = acme::problem_of(str("{\"type\":\"urn:ietf:params:acme:error:badNonce\",\"detail\":\"", bytes('d', 1025), "\"}"), 400);
+    var la = acme::Client { .. };
+    la.problem = ld;
+    check("problem: over-long detail cut", ld.truncated && ld.detail.len == 1024 && acme::is_problem(la, "badNonce"));
+    let o5, ok5 = acme::read_order(str("{\"status\":\"invalid\",\"error\":{\"type\":\"urn:ietf:params:acme:error:x\",\"detail\":\"", bytes('d', 2000), "\"},\"finalize\":\"https://x.test/f\"}"), "u");
+    check("order: an error with a long detail still read", ok5 && o5.status == acme::ST_INVALID && o5.error.truncated);
+    // A profile list too long, or a name with a line end: left empty, flagged.
+    var many: u8[>..] = [];
+    for k in 40 {
+        if k > 0 { many.push(','); }
+        format(many, "\"", bytes('p', 30), k, "\":\"x\"");
+    }
+    let dirb = "\"newNonce\":\"https://x.test/n\",\"newAccount\":\"https://x.test/a\",\"newOrder\":\"https://x.test/o\"";
+    let d1, dk1 = acme::read_directory(str("{", dirb, ",\"meta\":{\"profiles\":{", many, "}}}"));
+    check("directory: too many profiles left empty", dk1 && d1.profiles.len == 0 && d1.profiles_truncated);
+    let d2, dk2 = acme::read_directory(str("{", dirb, ",\"meta\":{\"profiles\":{\"a\\nb\":\"x\",\"c\":\"y\"}}}"));
+    check("directory: a profile with a line end left empty", dk2 && d2.profiles.len == 0 && d2.profiles_truncated);
+    let d3, dk3 = acme::read_directory(str("{", dirb, ",\"meta\":{\"profiles\":{\"classic\":\"x\",\"tlsserver\":\"y\"}}}"));
+    check("directory: profiles", dk3 && d3.profiles == "classic\ntlsserver\n" && !d3.profiles_truncated);
+
     check("status names", acme::status_lookup("processing") == acme::ST_PROCESSING
           && acme::status_lookup("nonsense") == acme::ST_UNKNOWN && acme::status_name(acme::ST_READY) == "ready");
+}
+
+fn bytes(c: u8, n: i64) -> u8[>..] {
+    var out: u8[>..] = [];
+    for i in n { out.push(c); }
+    return out;
 }
 
 fn misc() {

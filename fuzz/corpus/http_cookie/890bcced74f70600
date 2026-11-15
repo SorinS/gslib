@@ -1,0 +1,7 @@
+A=1; path=/
+A=2; path=/path
+A=3; path=/quux
+A=4; path=/path/foo
+A=5; domain=.host.test; path=/path
+A=6; domain=.host.test; path=/quux
+A=7; domain=.host.test; path=/path/foo

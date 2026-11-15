@@ -71,13 +71,13 @@ fn good() {
     for i in 5 {
         var w: u8[>..] = [];
         let msg = str("client message ", i);
-        tv::check_err("wrap c2s", ntlm::wrap(cli.session, msg, w), ntlm::OK);
+        tv::check_err("wrap c2s", ntlm::wrap(cli.session, msg, true, w), ntlm::OK);
         tv::check("sealed", find(w, "client message") < 0);
         var p: u8[>..] = [];
         tv::check_err("unwrap c2s", ntlm::unwrap(srv.session, w, p), ntlm::OK);
         tv::check("c2s text", p[..] == msg[..]);
         var w2: u8[>..] = [];
-        tv::check_err("wrap s2c", ntlm::wrap(srv.session, "reply", w2), ntlm::OK);
+        tv::check_err("wrap s2c", ntlm::wrap(srv.session, "reply", true, w2), ntlm::OK);
         var p2: u8[>..] = [];
         tv::check_err("unwrap s2c", ntlm::unwrap(cli.session, w2, p2), ntlm::OK);
         tv::check("s2c text", p2[..] == "reply");
@@ -89,22 +89,35 @@ fn good() {
     // from the wrong direction.
     tv::check_err("replayed MIC", ntlm::verify_mic(srv.session, "data", m), ntlm::ERR_SIGNATURE);
     var w: u8[>..] = [];
-    ntlm::wrap(cli.session, "pay 10", w);
+    ntlm::wrap(cli.session, "pay 10", true, w);
     w[w.len - 1] ^= 1;
     var p: u8[>..] = [];
     tv::check_err("changed sealed message", ntlm::unwrap(srv.session, w, p), ntlm::ERR_SIGNATURE);
     tv::check("nothing out on failure", p.len == 0);
+    // The refused MIC and token left the incoming state as it was: the
+    // real message still unwraps.
+    w[w.len - 1] ^= 1;
+    tv::check_err("good token after refused ones", ntlm::unwrap(srv.session, w, p), ntlm::OK);
+    tv::check("its text", p[..] == "pay 10");
+    p.clear();
     var own: u8[>..] = [];
-    ntlm::wrap(cli.session, "loop", own);
+    ntlm::wrap(cli.session, "loop", true, own);
     tv::check_err("own token back", ntlm::unwrap(cli.session, own, p), ntlm::ERR_SIGNATURE);
     tv::check_err("short token", ntlm::unwrap(srv.session, "short", p), ntlm::ERR_SIGNATURE);
+    var after: u8[>..] = [];
+    ntlm::wrap(srv.session, "still in step", true, after);
+    tv::check_err("client in step after its own token refused", ntlm::unwrap(cli.session, after, p), ntlm::OK);
+    tv::check("sealed session", ntlm::sealed(cli.session) && ntlm::sealed(srv.session));
 
     // Integrity only: messages signed, not sealed.
     var c2 = ntlm::initiator(alice(), SPN, ntlm::WANT_SIGN);
     var s2 = server();
     tv::check_err("sign-only exchange", run(c2, s2), ntlm::OK);
     var sw: u8[>..] = [];
-    ntlm::wrap(c2.session, "in the clear", sw);
+    var refused: u8[>..] = [];
+    tv::check_err("confidentiality asked, not negotiated", ntlm::wrap(c2.session, "secret", true, refused), ntlm::ERR_NO_SESSION);
+    tv::check("nothing wrapped", refused.len == 0 && !ntlm::sealed(c2.session));
+    ntlm::wrap(c2.session, "in the clear", false, sw);
     tv::check("signed, not sealed", find(sw, "in the clear") == 16);
     var sp: u8[>..] = [];
     tv::check_err("unwrap signed", ntlm::unwrap(s2.session, sw, sp), ntlm::OK);
@@ -570,7 +583,7 @@ fn anonymous_and_state() {
     tv::check_err("anonymous allowed", run(c2, s2), ntlm::OK);
     tv::check("anonymous outcome", s2.anonymous && s2.user.len == 0);
     var w: u8[>..] = [];
-    tv::check_err("no session for anonymous", ntlm::wrap(s2.session, "x", w), ntlm::ERR_NO_SESSION);
+    tv::check_err("no session for anonymous", ntlm::wrap(s2.session, "x", false, w), ntlm::ERR_NO_SESSION);
     tv::check_err("no MIC for anonymous", ntlm::get_mic(c2.session, "x", w), ntlm::ERR_NO_SESSION);
 
     var s3 = server();

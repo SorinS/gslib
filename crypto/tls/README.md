@@ -89,11 +89,11 @@ EC, Ed25519, Ed448, ML-DSA), SEC 1 or PKCS #1 DER.
 |---|---|---|
 | Suites | all three, in `cfg.suites` order | its own order of preference |
 | Key exchange | The post-quantum X25519MLKEM768 (the default), SecP256r1MLKEM768 and SecP384r1MLKEM1024 hybrids and MLKEM1024 alone; X25519, P-256, P-384, P-521; X448 and brainpoolP256r1tls13, P384r1tls13 and P512r1tls13 (RFC 8734). The defaults are Go's, everything but MLKEM1024, then X448 and the three Brainpool groups last. The client sends a share for the first of `cfg.groups` that TLS 1.3 takes (plus, beside a hybrid, a share of its ECDH part on the same key, as Go does) and reaches the others through HelloRetryRequest; so the new groups cost a ClientHello 8 bytes and no share (their schemes, offered by default, 8 more), and a server that wants one asks for it | its first group the client has a share for, else a HelloRetryRequest for its first group the client supports; never TLS 1.2's Brainpool code points (26-28) |
-| Certificates | checked by `x509::verify_with_roots`: chain to `cfg.roots`, or to the system's roots when `cfg.system_roots`, name `cfg.server_name`, time `cfg.now` (0 for now); `cfg.verify = false` skips it. Whatever `verify`, a leaf with keyUsage must allow what TLS does with it (digitalSignature to sign, in TLS 1.3 and 1.2 alike and RSA keys included, as RFC 5246 §7.4.2 requires and stricter than OpenSSL; keyEncipherment for RSA key exchange). RSA keys are taken from 1024 to 8192 bits, Go's limits (rsa1024min, and crypto/tls's defaultMaxRSAKeySize for peers) | sends `cfg.chain`, signs CertificateVerify with RSA-PSS, ECDSA (P-256, P-384, P-521, and the Brainpool curves with RFC 8734's schemes), Ed25519, Ed448 or ML-DSA as its key and the client allow. One certificate: there is no choosing among several by the client's signature_algorithms |
+| Certificates | checked by `x509::verify_with_roots`: chain to `cfg.roots`, or to the system's roots when `cfg.system_roots`, name `cfg.server_name`, time `cfg.now` (0 for now); `cfg.verify = false` skips it. Verifying with no `cfg.server_name` is refused, as in Go: `client_start` fails with internal_error and sends nothing. Whatever `verify`, a leaf with keyUsage must allow what TLS does with it (digitalSignature to sign, in TLS 1.3 and 1.2 alike and RSA keys included, as RFC 5246 §7.4.2 requires and stricter than OpenSSL; keyEncipherment for RSA key exchange). RSA keys are taken from 1024 to 8192 bits, Go's limits (rsa1024min, and crypto/tls's defaultMaxRSAKeySize for peers) | sends `cfg.chain`, signs CertificateVerify with RSA-PSS, ECDSA (P-256, P-384, P-521, and the Brainpool curves with RFC 8734's schemes), Ed25519, Ed448 or ML-DSA as its key and the client allow. One certificate: there is no choosing among several by the client's signature_algorithms |
 | CertificateVerify | ML-DSA-44/65/87 (draft-ietf-tls-mldsa, offered first, as Go does), RSA-PSS, RSA PKCS #1 v1.5, ECDSA P-256/P-384/P-521, ecdsa_brainpoolP256r1tls13_sha256, P384r1tls13_sha384, P512r1tls13_sha512 (0x081a-0x081c, each bound to its curve), Ed25519, Ed448 (0x0808) | |
 | Client certificates | sends `cfg.cert_chain` (set with `tls::set_client_certificate(cfg, chain_der, key_der)`) when asked, if its key signs with a scheme the server takes and, if the server names CAs, one of its certificates was issued by one of them; otherwise an empty Certificate | asks per `cfg.client_auth`, Go's modes: `NO_CLIENT_CERT` (the default), `REQUEST_CLIENT_CERT`, `REQUIRE_ANY_CLIENT_CERT`, `VERIFY_CLIENT_CERT_IF_GIVEN`, `REQUIRE_AND_VERIFY_CLIENT_CERT`; names the CAs of `cfg.client_cas` and checks chains against them (the system's roots when empty, as Go) for client authentication; `tls::peer_certificates(c)`, `tls::peer_verified(c)` |
 | ALPN | `cfg.alpn` offered | its first protocol the client offered, or `no_application_protocol` |
-| Resumption | offers `cfg.session` when it is unexpired, for `cfg.server_name`, and one of `cfg.suites` has its hash (also after a HelloRetryRequest); `tls::session(c)` is the latest ticket's session | takes a ticket sealed under `cfg.ticket_key` that is unexpired and of the suite's hash, checking its binder; sends `cfg.tickets` tickets (1, as Go) to clients that allow psk_dhe_ke |
+| Resumption | offers `cfg.session` when it is unexpired, for `cfg.server_name`, and one of `cfg.suites` has its hash (also after a HelloRetryRequest); `tls::session(c)` is the latest ticket's session | takes a ticket sealed under `cfg.ticket_key` that is unexpired, of the suite's hash and made for the SNI the client sends now (else a full handshake), checking its binder; sends `cfg.tickets` tickets (1, as Go) to clients that allow psk_dhe_ke |
 | After the handshake | NewSessionTicket kept as the session; KeyUpdate both ways (`key_update(c, request, out)`) | KeyUpdate; `send_session_ticket(c, cfg, out)` for another ticket |
 
 Both sides use middlebox compatibility mode (a session ID and
@@ -103,6 +103,20 @@ fatal alert RFC 8446 calls for and stop. `c.alert` holds the alert sent or
 received, and `c.error` the x509 error behind a certificate alert. Every
 random value comes from an HMAC-DRBG seeded from the OS. A config's
 `seed` fixes it, for tests.
+
+Strict where RFC 8446 says so: a key_share naming a group twice
+(illegal_parameter), an SNI host name longer than 255 bytes (decode_error,
+not cut), a change_cipher_spec before the ClientHello (unexpected_message),
+a CertificateRequest in the handshake with a context (illegal_parameter)
+or a signature_algorithms list that is empty or of odd length
+(decode_error). A HelloRetryRequest with a cookie and no key_share (from a
+server that keeps no state, such as OpenSSL's `-stateless`) is answered
+with the same shares; one asking for nothing new is illegal_parameter.
+
+Once a connection fails, or `close` has sent close_notify on a closed one,
+its secrets are zeroed (the key schedule, record keys, private keys,
+TLS 1.2's master secret, the DRBG); the session from `tls::session(c)`
+stays. A close_notify received zeroes the read keys.
 
 Not supported: 0-RTT, external PSKs, post-handshake client
 authentication, and TLS 1.1 or older.

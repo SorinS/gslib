@@ -69,13 +69,13 @@ fn main() {
 
     // Sealed messages both ways.
     var w: u8[>..] = [];
-    ntlm::wrap(cli.session, "GET /payroll", w);
+    ntlm::wrap(cli.session, "GET /payroll", true, w);
     var p: u8[>..] = [];
     e = ntlm::unwrap(srv.session, w, p);
     if e != ntlm::OK { die("unwrap", e); }
     print("server unwrapped: ", p);
     var w2: u8[>..] = [];
-    ntlm::wrap(srv.session, "200 OK", w2);
+    ntlm::wrap(srv.session, "200 OK", true, w2);
     var p2: u8[>..] = [];
     e = ntlm::unwrap(cli.session, w2, p2);
     if e != ntlm::OK { die("unwrap", e); }

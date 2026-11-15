@@ -1,7 +1,8 @@
 // krb5.config: go-krb5's test krb5.conf, MIT's syntax corners (comments,
 // quoting, nested subsections, final markers, includes), durations,
-// enctype lists, KDC addresses, domain_realm, capaths and the
-// hierarchical realm path.
+// enctype lists (des3 and rc4 only when allowed), KDC addresses,
+// domain_realm, capaths and the hierarchical realm path; the floor on a
+// KDC's s2kparams.
 
 import std;
 import os;
@@ -9,6 +10,7 @@ import gslib from "../..";
 import gslib.krb5;
 import gslib.krb5.crypto;
 import gslib.krb5.config;
+import gslib.krb5.client;
 import tv;
 
 fn parse() {
@@ -25,8 +27,8 @@ fn parse() {
     let et = krb5::conf_etypes(cfg, "default_tkt_enctypes");
     tv::check("tkt enctypes", et.len == 1 && et[0] == 18);
     let pe = krb5::conf_etypes(cfg, "permitted_enctypes");
-    let want_pe: i32[8] = [18, 17, 20, 19, 16, 23, 26, 25];
-    tv::check("permitted default", pe[..] == want_pe[..]);
+    let want_pe: i32[6] = [18, 17, 20, 19, 26, 25];
+    tv::check("permitted default: no des3, no rc4", pe[..] == want_pe[..]);
 
     let kdcs = krb5::realm_kdcs(cfg, "TEST.GOKRB5");
     var n = 0;
@@ -122,6 +124,38 @@ fn etypes() {
     e("des-cbc-crc 23", [23]);
 }
 
+// des3 and rc4 only with allow_des3 and allow_rc4, listed or not.
+fn weak_etypes() {
+    fn c(what: const u8[:], text: const u8[:], want: const i32[:]) {
+        let cfg, err = krb5::config_parse(text);
+        tv::check_int(str(what, " parse"), err, krb5::OK);
+        let got = krb5::conf_etypes(cfg, "default_tkt_enctypes");
+        tv::check(str(what), got == want);
+    }
+    c("listed, not allowed", "[libdefaults]\n default_tkt_enctypes = aes256-cts rc4-hmac des3-cbc-sha1\n", [18]);
+    c("listed, rc4 allowed", "[libdefaults]\n allow_rc4 = true\n default_tkt_enctypes = aes256-cts rc4-hmac des3-cbc-sha1\n",
+      [18, 23]);
+    c("permitted, both allowed",
+      "[libdefaults]\n allow_rc4 = true\n allow_des3 = yes\n permitted_enctypes = rc4-hmac des3-cbc-sha1 aes128-cts\n", [23, 16, 17]);
+    c("DEFAULT with rc4 allowed", "[libdefaults]\n allow_rc4 = true\n default_tkt_enctypes = DEFAULT\n", [18, 17, 20, 19, 26, 25]);
+    c("DEFAULT +rc4", "[libdefaults]\n allow_rc4 = true\n default_tkt_enctypes = DEFAULT rc4\n", [18, 17, 20, 19, 26, 25, 23]);
+}
+
+// A KDC's s2kparams: iteration counts below the type's default refused
+// unless allow_weak_s2kparams.
+fn s2kparams() {
+    tv::check("none", krb5::s2kparams_ok(18, "", false));
+    tv::check("aes 4096", krb5::s2kparams_ok(18, "\x00\x00\x10\x00", false));
+    tv::check("aes 1 refused", !krb5::s2kparams_ok(18, "\x00\x00\x00\x01", false));
+    tv::check("aes 4095 refused", !krb5::s2kparams_ok(17, "\x00\x00\x0f\xff", false));
+    tv::check("aes 1 allowed", krb5::s2kparams_ok(18, "\x00\x00\x00\x01", true));
+    tv::check("sha2 4096 refused", !krb5::s2kparams_ok(20, "\x00\x00\x10\x00", false));
+    tv::check("sha2 32768", krb5::s2kparams_ok(19, "\x00\x00\x80\x00", false));
+    tv::check("camellia 4096 refused", !krb5::s2kparams_ok(26, "\x00\x00\x10\x00", false));
+    tv::check("wrong length", !krb5::s2kparams_ok(18, "\x00\x10\x00", false));
+    tv::check("2^24", krb5::s2kparams_ok(18, "\x01\x00\x00\x00", false));
+}
+
 fn paths() {
     fn hp(c: const u8[:], s: const u8[:], want: const u8[:]) {
         var got: u8[>..] = [];
@@ -181,6 +215,8 @@ fn main() {
     bad();
     durations();
     etypes();
+    weak_etypes();
+    s2kparams();
     paths();
     includes();
     missing();

@@ -62,10 +62,22 @@ fn cmac<K>(k: const K&, msg: const u8[:]) -> u8[>..] {
     return out;
 }
 
-// Whether tag (1 to a block's bytes, a truncated CMAC being its leading
-// bytes) is msg's, compared in constant time.
+// Whether tag is msg's, compared in constant time. The tag is the whole
+// block, or a truncated CMAC (its leading bytes) of at least 8 bytes, the
+// shortest SP 800-38B §A.2 allows: a shorter tag is refused, so a forger
+// cannot pick a one-byte tag and guess it in 256 tries. A protocol with a
+// fixed tag length should say so with cmac_verify_len.
 fn cmac_verify<K>(k: const K&, msg: const u8[:], tag: const u8[:]) -> bool {
     let t = cmac(k, msg);
-    if tag.len < 1 || tag.len > t.len { return false; }
+    if tag.len < 8 || tag.len > t.len { return false; }
     return ct_eq_bytes(t[..tag.len], tag) == 1;
+}
+
+// Whether tag is msg's CMAC truncated to exactly tag_len bytes (1 to a
+// block's), compared in constant time: a tag of any other length is
+// refused.
+fn cmac_verify_len<K>(k: const K&, msg: const u8[:], tag: const u8[:], tag_len: i64) -> bool {
+    let t = cmac(k, msg);
+    if tag_len < 1 || tag_len > t.len || tag.len != tag_len { return false; }
+    return ct_eq_bytes(t[..tag_len], tag) == 1;
 }

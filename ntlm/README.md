@@ -35,7 +35,7 @@ binding uses `x509` and `asn1`.
 | `ntlm/crypto.goose` | `ntowfv2`, `client_blob` (NTLMv2_CLIENT_CHALLENGE), `nt_proof` (NTProofStr), `lmv2_response`, `session_base_key`, `rc4k`, `compute_mic`, `bindings_hash` (MD5 of gss_channel_bindings_struct), `sign_key`, `seal_key` |
 | `ntlm/client.goose` | `Initiator`: `initiator`, `set_channel_bindings`, `negotiate`, `authenticate` (`authenticate_with` for given nonces and time), `established` |
 | `ntlm/server.goose` | `Acceptor` (its policy as fields): `acceptor`, `set_acceptor_bindings`, `set_acceptor_spn`, `accept_negotiate`, `accept_authenticate` with the NT hash lookup as a block, `adopt_challenge`, `accepted` |
-| `ntlm/session.goose` | `Session`: `get_mic`, `verify_mic`, `wrap`, `unwrap` (extended session security: HMAC-MD5 signatures, RC4 sealing, sequence numbers per direction), `reset_rc4` |
+| `ntlm/session.goose` | `Session`: `get_mic`, `verify_mic`, `wrap`, `unwrap`, `sealed` (extended session security: HMAC-MD5 signatures, RC4 sealing, sequence numbers per direction), `reset_rc4` |
 | `ntlm/http.goose` | `http_header`, `http_token` (NTLM and Negotiate header values), `leaf_certificate`, `tls_server_end_point` (RFC 5929's channel binding) |
 
 And outside the package's own directory:
@@ -132,7 +132,7 @@ if se == ntlm::OK { print(srv.domain, "\\", srv.user); }
 
 // Then, both ways.
 var w: u8[>..] = [];
-ntlm::wrap(cli.session, "data", w);
+ntlm::wrap(cli.session, "data", true, w);         // true: sealed, or ERR_NO_SESSION
 var p: u8[>..] = [];
 ntlm::unwrap(srv.session, w, p);
 ```
@@ -220,7 +220,9 @@ Every test runs at -O0, -O2 and with `--debug`:
   surrogate pairs and every malformed form; the channel bindings hash
   against pyspnego's.
 - `test/exchange.goose`: initiator and acceptor in memory: sealing and
-  signing both ways, replayed, changed and reflected signatures; wrong
+  signing both ways, replayed, changed and reflected signatures (the
+  session still in step after each), sealing asked of a sign-only
+  session refused; wrong
   password, unknown user, another domain; a changed MIC, a NEGOTIATE
   changed in transit (caught by the MIC), `require_mic`; an old
   timestamp, a wider skew, a replayed AUTHENTICATE (to a new context and
@@ -315,9 +317,14 @@ copied from a capture.
   unbound AUTHENTICATE goes out).
 - The client always signs (SIGN), as Windows does; `WANT_SIGN` asks for
   nothing more.
-- A wrap token or MIC that fails to verify still moves the session on
-  (its RC4 state and sequence number), as SSPI's does: after one, the
-  direction is out of step and the context should be dropped.
+- `wrap`'s `conf` argument (GSS's conf_req) asks for sealing: with it,
+  a session that did not negotiate SEAL gives `ERR_NO_SESSION` rather
+  than sending the message signed only. Without it the message is sealed
+  all the same when SEAL was negotiated (the token does not say which);
+  `sealed(s)` tells.
+- A wrap token or MIC that fails to verify leaves the session as it was
+  (its incoming RC4 state and sequence number), unlike SSPI, which moves
+  on: a forged or damaged token cannot put the direction out of step.
 - `acceptor()` with a name longer than its field (64 bytes NetBIOS, 256
   DNS) gives an acceptor whose first step fails with `ERR_ARG`.
 - `goose-ntlm serve` is a test server: one connection at a time,

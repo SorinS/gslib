@@ -91,6 +91,7 @@ struct Key {
     revoked:   bool = false,
     valid:     bool = false,         // a primary with a valid self-signature, a subkey with a valid binding
     bound_at:  i64  = 0,             // the creation time of the binding that counts
+    bound_primary: bool = false,     // that binding is a primary user ID's self-signature
 }
 
 fn is_rsa(algo: i64) -> bool { algo == PK_RSA || algo == PK_RSA_E || algo == PK_RSA_S }

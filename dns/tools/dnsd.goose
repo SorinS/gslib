@@ -1,6 +1,6 @@
 // goose-dnsd: an authoritative server for zone files, on dns.server:
 //
-//   goose-dnsd [-a address] [-p port] [-y name:secret] [-n requests] [-v] origin=file ...
+//   goose-dnsd [-a address] [-p port] [-y [alg:]name:secret] [-u] [-n requests] [-v] origin=file ...
 //
 // Answers from the zones it was given (the longest origin that holds the
 // name; REFUSED for others): the records of the name and type, CNAMEs
@@ -9,10 +9,12 @@
 // minimum), RRSIGs from the zone when the query has the DO bit, A and AAAA
 // of in-zone MX, NS and SRV targets. AXFR and IXFR (always the whole zone,
 // as RFC 1995 §4 allows) over TCP; NOTIFY acknowledged; dynamic updates
-// (RFC 2136) applied in memory. With -y, transfers and updates must be
-// signed with that TSIG key (base64 secret), and signed queries are
-// checked. Port 53 unless -p (0 for any: the port taken is printed as
-// "listening on <port>"). -n stops after that many requests.
+// (RFC 2136) applied in memory. Transfers and updates must be signed with
+// the TSIG key -y gives (base64 secret; the algorithm, hmac-sha256 and the
+// others tsig knows, pins it when given); without -y they are REFUSED,
+// unless -u allows them unsigned from anyone. Signed queries are checked.
+// Port 53 unless -p (0 for any: the port taken is printed as "listening
+// on <port>"). -n stops after that many requests.
 import std;
 import os;
 import gslib from "../..";
@@ -33,7 +35,7 @@ root struct Zones {
 }
 
 fn usage() -> i32 {
-    write_stderr("usage: goose-dnsd [-a address] [-p port] [-y name:secret] [-n requests] [-v] origin=file ...\n");
+    write_stderr("usage: goose-dnsd [-a address] [-p port] [-y [alg:]name:secret] [-u] [-n requests] [-v] origin=file ...\n");
     return 2;
 }
 
@@ -215,7 +217,51 @@ fn set_zone(z: Zones&, zi: i64, list: const u8[:]) {
     z.data.append(data);
 }
 
-// RFC 2136 §3: the prerequisites checked, then the updates applied; the rcode.
+// Query and meta types (RFC 6895 §3.1), which no record in a zone has.
+fn is_meta(t: u16) -> bool { t == dns::TYPE_OPT || (t >= 128 && t <= 255) }
+
+// RFC 1982's serial a > b.
+fn serial_gt(a: u32, b: u32) -> bool { a != b && (b - a) & 0x80000000 != 0 }
+
+fn soa_serial(rd: const u8[:]) -> u32 {
+    let a = dns::name_len_at(rd, 0);
+    return dns::get32(rd, a + dns::name_len_at(rd, a));
+}
+
+// RFC 2136 §3.2's checks of a prerequisite's form: FORMERR or NOERROR.
+fn prereq_form(p: dns::Rr, zclass: u16) -> u16 {
+    if p.ttl != 0 { return dns::RCODE_FORMAT_ERROR; }
+    if p.class == dns::CLASS_ANY || p.class == dns::CLASS_NONE {
+        if p.end != p.rd || (is_meta(p.rtype) && p.rtype != dns::TYPE_ANY) { return dns::RCODE_FORMAT_ERROR; }
+    } else if p.class != zclass || is_meta(p.rtype) {
+        return dns::RCODE_FORMAT_ERROR;
+    }
+    return dns::RCODE_SUCCESS;
+}
+
+// RFC 2136 §3.4.1's prescan of one update: FORMERR or NOERROR.
+fn update_form(list: const u8[:], u: dns::Rr, zclass: u16) -> u16 {
+    if u.class == zclass {
+        if is_meta(u.rtype) || u.end == u.rd || !dns::rdata_valid(u.rtype, u.rdata(list)) { return dns::RCODE_FORMAT_ERROR; }
+    } else if u.class == dns::CLASS_ANY {
+        if u.ttl != 0 || u.end != u.rd || (is_meta(u.rtype) && u.rtype != dns::TYPE_ANY) { return dns::RCODE_FORMAT_ERROR; }
+    } else if u.class == dns::CLASS_NONE {
+        if u.ttl != 0 || is_meta(u.rtype) { return dns::RCODE_FORMAT_ERROR; }
+    } else {
+        return dns::RCODE_FORMAT_ERROR;
+    }
+    return dns::RCODE_SUCCESS;
+}
+
+fn count_type(list: const u8[:], n: const u8[:], t: u16) -> i64 {
+    var k = 0;
+    dns::each_rr(list) { rr => if rr.rtype == t && dns::name_equal(rr.name(list), n) { k++; } };
+    return k;
+}
+
+// RFC 2136 §3: the prerequisites checked, every update prescanned, then the
+// updates applied; the rcode. The zone keeps one SOA (an added one replaces
+// it when its serial is newer, §3.4.2.2) and at least one NS at its apex.
 fn apply_update(z: Zones&, zi: i64, req: const dns::Msg&) -> u16 {
     let apex = z.at[zi].origin;
     var list: u8[>..] = [];
@@ -226,7 +272,9 @@ fn apply_update(z: Zones&, zi: i64, req: const dns::Msg&) -> u16 {
     dns::each_rr(req.answer) { p =>
         if rc == dns::RCODE_SUCCESS {
             let n = p.name(req.answer);
-            if !dns::is_subdomain(apex, n) { rc = dns::RCODE_NOT_ZONE; }
+            rc = prereq_form(p, zclass);
+            if rc != dns::RCODE_SUCCESS {}
+            else if !dns::is_subdomain(apex, n) { rc = dns::RCODE_NOT_ZONE; }
             else if p.class == dns::CLASS_ANY {
                 let ok = if p.rtype == dns::TYPE_ANY { has_name(list, n) } else { has_type(list, n, p.rtype) };
                 if !ok { rc = if p.rtype == dns::TYPE_ANY { dns::RCODE_NAME_ERROR } else { dns::RCODE_NXRRSET }; }
@@ -242,28 +290,43 @@ fn apply_update(z: Zones&, zi: i64, req: const dns::Msg&) -> u16 {
     };
     if rc != dns::RCODE_SUCCESS { return rc; }
     dns::each_rr(req.ns) { u =>
-        let n = u.name(req.ns);
-        if !dns::is_subdomain(apex, n) { rc = dns::RCODE_NOT_ZONE; }
+        if rc == dns::RCODE_SUCCESS {
+            if !dns::is_subdomain(apex, u.name(req.ns)) { rc = dns::RCODE_NOT_ZONE; }
+            else { rc = update_form(req.ns, u, zclass); }
+        }
     };
     if rc != dns::RCODE_SUCCESS { return rc; }
     dns::each_rr(req.ns) { u =>
         let n = u.name(req.ns);
+        let at_apex = dns::name_equal(n, apex);
         var next: u8[>..] = [];
-        if u.class == zclass {
+        if u.class == zclass && u.rtype == dns::TYPE_SOA {
+            // Only the apex's, and only a newer one, which replaces the old.
+            var newer = false;
+            dns::each_rr(list) { rr => if rr.rtype == dns::TYPE_SOA && serial_gt(soa_serial(u.rdata(req.ns)), soa_serial(rr.rdata(list))) { newer = true; } };
+            if at_apex && newer {
+                dns::each_rr(list) { rr => if rr.rtype != dns::TYPE_SOA || !dns::name_equal(rr.name(list), apex) { dns::rr_copy(next, list, rr); } };
+                dns::rr_copy(next, req.ns, u);
+            } else {
+                next.append(list);
+            }
+        } else if u.class == zclass {
             next.append(list);
             var dup = false;
             dns::each_rr(list) { rr => if dns::rr_duplicate(list, rr, req.ns, u) { dup = true; } };
             if !dup { dns::rr_copy(next, req.ns, u); }
         } else {
+            var apex_ns = count_type(list, apex, dns::TYPE_NS);
             dns::each_rr(list) { rr =>
                 let same_name = dns::name_equal(rr.name(list), n);
-                let apex_keep = dns::name_equal(n, apex) && (rr.rtype == dns::TYPE_SOA || rr.rtype == dns::TYPE_NS);
+                let apex_keep = at_apex && (rr.rtype == dns::TYPE_SOA || rr.rtype == dns::TYPE_NS);
                 var drop = false;
                 if u.class == dns::CLASS_ANY && u.rtype == dns::TYPE_ANY { drop = same_name && !apex_keep; }
                 else if u.class == dns::CLASS_ANY { drop = same_name && rr.rtype == u.rtype && !apex_keep; }
                 else if u.class == dns::CLASS_NONE {
-                    drop = rr.rtype == u.rtype && rr.class == zclass && same_name &&
-                           rr.rdata(list) == u.rdata(req.ns) && !(apex_keep && rr.rtype == dns::TYPE_SOA);
+                    drop = rr.rtype == u.rtype && rr.class == zclass && same_name && rr.rdata(list) == u.rdata(req.ns) &&
+                           !(at_apex && rr.rtype == dns::TYPE_SOA) && !(at_apex && rr.rtype == dns::TYPE_NS && apex_ns <= 1);
+                    if drop && at_apex && rr.rtype == dns::TYPE_NS { apex_ns--; }
                 }
                 if !drop { dns::rr_copy(next, list, rr); }
             };
@@ -275,10 +338,17 @@ fn apply_update(z: Zones&, zi: i64, req: const dns::Msg&) -> u16 {
     return dns::RCODE_SUCCESS;
 }
 
+// Who may change a zone, or take all of it: the key's holder (with -y);
+// without a key, anyone if -u says so, else no one.
+fn may_write(keyed: bool, unsigned_ok: bool, peer: const dns::Peer&) -> bool {
+    return if keyed { peer.tsig == dns::OK } else { unsigned_ok };
+}
+
 fn run() -> i32 {
     let a = args();
     var cfg = dns::ServerConfig { .. };
     var z = Zones { .. };
+    var unsigned_ok = false;
     var i = 1;
     while i < a.len {
         let s = a[i];
@@ -287,12 +357,27 @@ fn run() -> i32 {
         else if s == "-n" && i + 1 < a.len { i++; let n, ok = parse_int(a[i]); if !ok || n < 0 { return usage(); } cfg.max_requests = n; }
         else if s == "-y" && i + 1 < a.len {
             i++;
-            let kn, sec, ok = split_once(a[i], ':');
+            // [alg:]name:secret, as dig's -y.
+            let first, rest, ok = split_once(a[i], ':');
             if !ok { return usage(); }
+            var kn = first;
+            var sec = rest;
+            let k2, s2, three = split_once(rest, ':');
+            if three {
+                if dns::tsig_hash(first) == 0 || first.len + 1 > 64 { return fail(str("unknown TSIG algorithm ", first)); }
+                cfg.tsig_alg.append(first);
+                if !dns::is_fqdn(first) { cfg.tsig_alg.push('.'); }
+                kn = k2;
+                sec = s2;
+            }
+            if kn.len == 0 || kn.len + 1 > 255 { return fail("bad TSIG key name"); }
+            let sb, sok = dns::tsig_secret(sec);
+            if !sok || sec.len > 128 { return fail("bad TSIG secret (base64, at most 128 characters)"); }
             cfg.tsig_name.append(kn);
             if !dns::is_fqdn(kn) { cfg.tsig_name.push('.'); }
             cfg.tsig_secret.append(sec);
         }
+        else if s == "-u" { unsigned_ok = true; }
         else if s == "-v" { z.verbose = true; }
         else {
             let origin, file, ok = split_once(s, '=');
@@ -332,12 +417,12 @@ fn run() -> i32 {
         if zi < 0 { resp.hdr.rcode = dns::RCODE_REFUSED; }
         else if req.hdr.opcode == dns::OPCODE_NOTIFY { resp.hdr.authoritative = true; }
         else if req.hdr.opcode == dns::OPCODE_UPDATE {
-            if keyed && peer.tsig != dns::OK { resp.hdr.rcode = dns::RCODE_REFUSED; }
+            if !may_write(keyed, unsigned_ok, peer) { resp.hdr.rcode = dns::RCODE_REFUSED; }
             else if !dns::name_equal(qname, z.at[zi].origin) { resp.hdr.rcode = dns::RCODE_NOT_AUTH; }
             else { resp.hdr.rcode = apply_update(z, zi, req); }
         }
         else if qtype == dns::TYPE_AXFR || qtype == dns::TYPE_IXFR {
-            if !peer.tcp || (keyed && peer.tsig != dns::OK) || !dns::name_equal(qname, z.at[zi].origin) { resp.hdr.rcode = dns::RCODE_REFUSED; }
+            if !peer.tcp || !may_write(keyed, unsigned_ok, peer) || !dns::name_equal(qname, z.at[zi].origin) { resp.hdr.rcode = dns::RCODE_REFUSED; }
             else { transfer(z, zi, resp); }
         }
         else { answer(z, zi, req, resp, qname, qtype); }

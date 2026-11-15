@@ -21,6 +21,7 @@
 namespace xml;
 
 import std;
+import dictionary;
 import base64;
 import encoding.xml;
 import encoding.xml.dsig;
@@ -388,35 +389,69 @@ fn decrypt_key(d: const Doc&, ek: i64, key: const x509::PrivateKey&, klen: i64, 
 
 // The EncryptedKeys that may hold ed's key, in the order tried: in its
 // KeyInfo, named by a RetrievalMethod there, then its siblings (SAML's
-// EncryptedAssertion holds them beside the EncryptedData).
-fn candidate_keys(d: const Doc&, ed: i64, out: i64[>..<]&) -> bool {
+// EncryptedAssertion holds them beside the EncryptedData). It stops once
+// it has more than max (the caller's ERR_LIMIT); the RetrievalMethods'
+// IDs are looked up in one pass over the document.
+fn candidate_keys(d: const Doc&, ed: i64, max: i64, out: i64[>..<]&) -> bool {
     let ki = child(d, ed, DSIG_NS, "KeyInfo");
     if ki >= 0 {
         var ok = true;
+        var methods = 0;
         each_element(d, ki) { c =>
-            if is(d, c, XENC_NS, "EncryptedKey") { out.push(c); }
-            else if is(d, c, DSIG_NS, "RetrievalMethod") {
+            if out.len > max {
+                // Enough: the caller refuses this many.
+            } else if is(d, c, XENC_NS, "EncryptedKey") {
+                out.push(c);
+            } else if is(d, c, DSIG_NS, "RetrievalMethod") {
                 let t, th = attr(d, c, "Type");
                 let u, uh = attr(d, c, "URI");
                 if !th || t != URI_TYPE_ENCRYPTED_KEY || !uh || u.len < 2 || u[0] != '#' || first_element(d, c) >= 0 {
                     ok = false;
                 } else {
-                    let el, n = by_id(d, u[1..]);
-                    if n != 1 || !is(d, el, XENC_NS, "EncryptedKey") { ok = false; } else { out.push(el); }
+                    out.push(-2 - c);   // resolved below
+                    methods++;
                 }
             }
         };
         if !ok { return false; }
+        if methods > 0 && !resolve_methods(d, out) { return false; }
     }
     let par = parent(d, ed);
     if par > 0 {
         each_element(d, par) { c =>
-            if c != ed && is(d, c, XENC_NS, "EncryptedKey") {
+            if out.len <= max && c != ed && is(d, c, XENC_NS, "EncryptedKey") {
                 var dup = false;
                 for x in out { if x == c { dup = true; } }
                 if !dup { out.push(c); }
             }
         };
+    }
+    return true;
+}
+
+// Replaces each -2 - RetrievalMethod in keys with the EncryptedKey its URI
+// names; false unless each names exactly one attached element, an
+// EncryptedKey. The document's IDs are indexed once for all of them.
+fn resolve_methods(d: const Doc&, keys: i64[>..<]&) -> bool {
+    var ids = dictionary<const u8[:], i64> {};
+    var dups = dictionary<const u8[:], bool> {};
+    for i in d.nodes.len {
+        let n = d.nodes[i];
+        if n.kind == ATTRIBUTE && n.is_id && n.parent >= 0 && attached(d, n.parent) {
+            let v = view(d, n.value);
+            let first = ids.get_or_insert(v, n.parent);
+            if first != n.parent { dups.insert(v, true); }
+        }
+    }
+    for j in keys.len {
+        if keys[j] < 0 {
+            let u, uh = attr(d, -2 - keys[j], "URI");
+            let id = u[1..];
+            if !ids.contains(id) || dups.contains(id) { return false; }
+            let el = ids.get_or_insert(id, -1);
+            if !is(d, el, XENC_NS, "EncryptedKey") { return false; }
+            keys[j] = el;
+        }
     }
     return true;
 }
@@ -435,7 +470,7 @@ fn decrypt(d: const Doc&, ed: i64, key: const x509::PrivateKey&, o: const Decryp
     var ct: u8[>..] = [];
     if !cipher_value(d, ed, ct) { return out, ERR_ENC_MALFORMED; }
     var keys: i64[>..<] = [];
-    if !candidate_keys(d, ed, keys) { return out, ERR_ENC_MALFORMED; }
+    if !candidate_keys(d, ed, o.max_keys, keys) { return out, ERR_ENC_MALFORMED; }
     if keys.len == 0 { return out, ERR_ENC_KEY; }
     if keys.len > o.max_keys { return out, ERR_LIMIT; }
     var err = ERR_ENC_KEY;

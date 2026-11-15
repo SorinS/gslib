@@ -1,1 +1,1 @@
-vectors: 1598 cases, 0 failed
+vectors: 1598 cases, 0 failed (11 as vectors/differences.txt has them)

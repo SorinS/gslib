@@ -35,13 +35,16 @@ Security first, then the spec:
   declarations, which matters because SignedInfo is canonicalized, by the
   method the document names, before its signature can be checked.
 - **Well-formed, strictly:** UTF-8 only (a UTF-8 BOM is passed over, a
-  UTF-16 one or another declared encoding is `ERR_ENCODING`), every
+  UTF-16 one or another declared encoding is `ERR_ENCODING`; a document
+  declared US-ASCII must be ASCII, as libxml2 has it), every
   character legal (`ERR_CHAR`, also for overlong UTF-8, surrogates,
   `&#0;`), names, one root element, matched tags (`ERR_TAG`), no text
   outside the root, `--` not in comments, `]]>` not in text, the XML
   declaration only first and only version 1.0.
 - **Namespaces 1.0:** every prefix bound, `xmlns:p=""` refused, `xml` and
-  `xmlns` and their namespaces reserved (`ERR_NAMESPACE`); an attribute
+  `xmlns` and their namespaces reserved, a namespace URI with white space
+  in it refused, for a URI reference has none (`xmlns:p=" "`; libxml2
+  refuses these too) (`ERR_NAMESPACE`); an attribute
   twice is `ERR_DUP_ATTR` by its name and also by namespace and local
   name, so `p:a` and `q:a` with p and q bound to one namespace are refused.
 - **Normalized as the spec says:** line ends (CR LF and CR to LF) in
@@ -130,6 +133,15 @@ fn detach(d, n)                         fn move_to(d, n, parent, before) -> bool
 fn write(d, n, out: u8[>..]&)           fn write_document(d, out: u8[>..]&)    // with the XML declaration
 ```
 
+`set_attr` refuses an unprefixed attribute named `xmlns` (a declaration
+is `declare_ns`), and `declare_ns` (also as `set_attr` calls it for a
+prefixed attribute) refuses a binding that would change the namespace of
+the element, of one of its attributes or of something in its subtree
+with that prefix (a descendant that declares the prefix itself is not
+told apart, and refused too): what is built is what parses back.
+`move_to` keeps a moved element's namespaces the same way: where its new
+scope binds a prefix it uses (or the default namespace) otherwise, or
+not at all, the element declares it, as `insert_element` does.
 `write` of a subtree declares the namespaces its ancestors bound, so it
 parses on its own; escaping keeps every character the parser would
 normalize (`&#x9;`, `&#xA;`, `&#xD;` in attributes, `&#xD;` in text), so
@@ -223,7 +235,9 @@ The key of an EncryptedData is found in its KeyInfo (an EncryptedKey, or
 a RetrievalMethod naming one by ID), or beside it (SAML's
 EncryptedAssertion holds EncryptedKeys next to the EncryptedData).
 At most `max_keys` (4) EncryptedKeys are tried, each an RSA or ECDH
-operation made before any signature can be checked; more is `ERR_LIMIT`.
+operation made before any signature can be checked; more is `ERR_LIMIT`,
+and the search stops there (RetrievalMethods' IDs are looked up in one
+pass over the document, so 20000 of them cost no more than one).
 `decrypt_replace` parses the plaintext in the scope of where the
 EncryptedData was (its prefixes resolve as the sender's did), with the
 parser's options and limits; an `Element` must be exactly one element; an
@@ -284,7 +298,10 @@ signed and encrypted are in `test/data`, made by `scripts/make_vectors.py`
   ID, Id and xml:id; every namespace misuse; UTF-16, other encodings,
   bad and overlong UTF-8, surrogates, control characters and references
   to them; structure); line-end and attribute normalization; the builder
-  and the writer, round trips; fragments.
+  and the writer, round trips; fragments; non-ASCII characters in a
+  DOCTYPE's literals, US-ASCII declared with UTF-8 in it, namespace URIs
+  with white space, `set_attr` of `xmlns` and `declare_ns` rebinding a
+  prefix the element, an attribute or a descendant uses.
 - `c14n.goose` (66): Canonical XML 1.0's examples §3.1-3.4 and §3.6 (the
   DTD ones without their DTD), Exclusive XML Canonicalization's §2.2
   (inclusive and exclusive, with PrefixLists), 1.1's xml:base fix-up and
@@ -313,7 +330,9 @@ signed and encrypted are in `test/data`, made by `scripts/make_vectors.py`
   OAEP with MGF1-SHA1 found by RetrievalMethod; flipped and shortened
   ciphertexts, keys and tags, wrong keys, other KDFs (one error for every
   decryption failure); plaintexts that are two elements, text, an ID
-  already in the document, an unbound prefix, a DOCTYPE; and SAML's whole
+  already in the document, an unbound prefix, a DOCTYPE; 20000
+  RetrievalMethods and 20000 sibling EncryptedKeys refused quickly, a
+  RetrievalMethod to no ID or to another element; and SAML's whole
   path: sign, encrypt, write, parse, decrypt in place, verify, read the
   signed NameID.
 

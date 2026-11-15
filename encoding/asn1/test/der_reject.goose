@@ -78,6 +78,21 @@ fn main() {
     check("high tag", parses("9f1f00"));
     check("high tag under 31", !parses("9f1e00"));
     check("high tag padded", !parses("9f801f00"));
+    check("high tag past 24 bits", !parses("9f8880800000"));
+    check("high tag 24 bits", parses("9f87ffff7f00"));
+    // A high tag number is never a one-octet tag: universal 130 is not
+    // [2], universal 48 is not SEQUENCE, universal 160 is not [0].
+    let h1, okh1 = asn1::parse(unhex("1f810200"));
+    check("high universal 130", okh1 && h1.tag != asn1::ctx(2, false) && h1.number == 130 && h1.cls == asn1::CLASS_UNIVERSAL);
+    let h2, okh2 = asn1::parse(unhex("3f3000"));
+    check("high universal 48", okh2 && h2.tag != asn1::SEQUENCE);
+    let h3, okh3 = asn1::parse(unhex("3f812000"));
+    check("high universal 160", okh3 && h3.tag != asn1::ctx(0, true));
+    let h4, okh4 = asn1::parse(unhex("bf814800"));
+    check("high ctx 200", okh4 && h4.tag == asn1::ctx(200, true));
+    var rt: u8[>..] = [];
+    asn1::put_header(rt, h1.tag, 0);
+    check("high universal round trip", hex(rt) == "1f810200");
     check("high tag unfinished", !parses("9f81"));
 
     // Contents.

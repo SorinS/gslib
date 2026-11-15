@@ -35,6 +35,7 @@ let TLS_IMPLICIT:      i64 = 3;  // TLS from the first byte (995)
 
 let MAX_STATUS: i64 = 2048;      // a status line's limit (poplib's; RFC 1939 says 512)
 let MAX_LINE:   i64 = 1 << 20;   // a message line's: RFC 5322 says 998, mail in the wild has more
+let MAX_DATA:   i64 = 1 << 28;   // c.max_data's default: one multi-line response, 256 MiB (as imap's)
 
 root struct Client {
     // mail.link's
@@ -53,6 +54,7 @@ root struct Client {
     capa:     u8[>..]    = [],       // CAPA's lines, each "NAME params\n" (empty if CAPA failed)
     text:     u8[>..]    = [],       // the last status line's text, after +OK or -ERR
     line:     u8[>..]    = [],       // scratch
+    max_data: i64        = MAX_DATA, // a multi-line response (RETR, TOP, LIST...) larger is ERR_PROTOCOL
 }
 
 // A message's number and size (LIST), or number and unique ID (UIDL).
@@ -103,12 +105,15 @@ fn cmd(c: Client&, line: const u8[:]) -> i64 {
 
 // The lines of a multi-line response up to its ".", appended to out with
 // CRLF endings, a leading '.' that was doubled undone (RFC 1939 §3).
+// ERR_PROTOCOL past c.max_data bytes: the rest is unread, so close then.
 fn read_multi(c: Client&, out: u8[>..]&) -> i64 {
+    let start = out.len;
     loop {
         let e = mail::link_read_line(c, c.line, MAX_LINE);
         if e != mail::OK { return e; }
         let l = c.line[..];
         if l == "." { return mail::OK; }
+        if l.len + 2 > c.max_data - (out.len - start) { return mail::ERR_PROTOCOL; }
         out.append(if l.len > 0 && l[0] == '.' { l[1..] } else { l });
         out.append("\r\n");
     }
@@ -271,7 +276,9 @@ fn auth(c: Client&, mech: i64, user: const u8[:], secret: const u8[:]) -> i64 {
         if m == mail::AUTH_AUTO { return mail::ERR_AUTH; }
     }
     if mail::auth_plaintext(m) && !c.secure && !is_local(c.host) { return mail::ERR_AUTH; }
+    if !mail::sasl_fits(user, secret) { return mail::ERR_AUTH; }
     var s = mail::sasl_new(m, user, secret);
+    if m == mail::AUTH_NTLM { mail::link_sasl_target(c, s, "POP"); }
     var resp: u8[>..] = [];
     var line: u8[>..] = [];
     line.append("AUTH ");

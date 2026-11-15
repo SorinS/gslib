@@ -43,10 +43,11 @@ fn secretbox_seal(msg: const u8[:], nonce: const u8[:], key: const u8[:]) -> u8[
     return out;
 }
 
-// secretbox.Open: the message, or false when the tag does not match.
+// secretbox.Open: the message, or false when the tag does not match (or
+// the key or nonce has the wrong length).
 fn secretbox_open(sealed: const u8[:], nonce: const u8[:], key: const u8[:]) -> u8[>..], bool {
     var out: u8[>..] = [];
-    if sealed.len < 16 { return out, false; }
+    if sealed.len < 16 || key.len != 32 || nonce.len != 24 { return out, false; }
     let sub, n8 = secretbox_keys(key, nonce);
     var otk: u8[32] = [0; 32];
     salsa20_xor_at(sub, n8, 0, otk);
@@ -80,7 +81,9 @@ fn box_seal(msg: const u8[:], nonce: const u8[:], peer_pk: const u8[:], sk: cons
     return secretbox_seal(msg, nonce, k);
 }
 
+// box.Open; false also for a key or nonce of the wrong length.
 fn box_open(sealed: const u8[:], nonce: const u8[:], peer_pk: const u8[:], sk: const u8[:]) -> u8[>..], bool {
+    if peer_pk.len != 32 || sk.len != 32 { var none: u8[>..] = []; return none, false; }
     let k = box_precompute(peer_pk, sk);
     return secretbox_open(sealed, nonce, k);
 }

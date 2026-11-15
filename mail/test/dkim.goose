@@ -410,17 +410,17 @@ fn tampering() {
     check("a changed b= fails", status(replace(s, "b=", "b=AAAA"), erec) != mail::OK);
     check("a changed bh= fails", status(replace(s, "bh=", "bh=A"), erec) != mail::OK);
 
-    // Over-signed From: a From added above (which readers show) is caught;
-    // without the extra name in h= it is not, as h= takes the last From.
+    // A second From, above or below, whether From is over-signed or not:
+    // more than one From fails every signature (RFC 6376 §8.15).
     let added = str("From: Mallory <mallory@example.net>\r\n", s);
-    check("over-signed From: an added From fails", status(added, erec) == mail::ERR_SIGNATURE);
+    check("over-signed From: an added From fails", status(added, erec) == mail::ERR_FORMAT);
     var o = opts(dkim::RELAXED, dkim::RELAXED);
     o.oversign_from = false;
     let s1 = signed(MSG, ed, o);
-    check("From signed once: an added From above is not caught",
-          status(str("From: Mallory <mallory@example.net>\r\n", s1), erec) == mail::OK);
-    check("From signed once: a second From below is",
-          status(replace(s1, "X-Unsigned: yes\r\n", "From: Mallory <mallory@example.net>\r\n"), erec) == mail::ERR_SIGNATURE);
+    check("From signed once: an added From above fails",
+          status(str("From: Mallory <mallory@example.net>\r\n", s1), erec) == mail::ERR_FORMAT);
+    check("From signed once: a second From below fails",
+          status(replace(s1, "X-Unsigned: yes\r\n", "From: Mallory <mallory@example.net>\r\n"), erec) == mail::ERR_FORMAT);
 
     // l=: what comes after the signed length is not covered.
     o = opts(dkim::RELAXED, dkim::RELAXED);
@@ -595,7 +595,23 @@ fn multiple() {
                             mail::ERR_KEY && res.len == 1);
 }
 
+fn two_froms() {
+    // RFC 6376 §8.15: a From above the signed one, not oversigned, would
+    // pass; a message with more than one From fails every signature.
+    let ed = key_ed();
+    var o = opts(dkim::RELAXED, dkim::RELAXED);
+    o.oversign_from = false;
+    let s = signed(MSG, ed, o);
+    check("one From: passes", status(s, record_of(ed)) == mail::OK);
+    var forged: u8[>..] = [];
+    forged.append("From: CEO <ceo@example.com>\r\n");
+    forged.append(s);
+    let r = first_result(forged, record_of(ed));
+    check("two From: fails", r.status == mail::ERR_FORMAT && r.reason == "not exactly one From field");
+}
+
 fn main() {
+    two_froms();
     canonicalization();
     rfc8463();
     tag_lists();

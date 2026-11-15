@@ -1,0 +1,4 @@
+a=1
+b=2; secure
+c=3; httponly
+d=4; secure; httponly

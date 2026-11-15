@@ -1,0 +1,30 @@
+MyBoundary
+
+This is a multi-part message.  This line is ignored.
+--MyBoundary
+Header1: value1
+HEADER2: value2
+foo-bar: baz
+
+My value
+The end.
+--MyBoundary
+name: bigsection
+
+[longline]
+--MyBoundary
+Header1: value1b
+HEADER2: value2b
+foo-bar: bazb
+
+Line 1
+Line 2
+Line 3 ends in a newline, but just one.
+
+--MyBoundary
+
+never read data
+--MyBoundary--
+
+
+useless trailer

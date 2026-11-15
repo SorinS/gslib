@@ -182,12 +182,13 @@ fn scrypt_romix(x: u32[:], v: u32[:], y: u32[:], r: i64, n: i64) {
 }
 
 // scrypt: len bytes from the password and salt, with cost n (a power of
-// two above 1), block size r and parallelism p. False, with nothing,
-// when the parameters are out of range (n * r * 128 bytes of memory are
-// needed, and r * p must stay below 2^30).
+// two above 1, at most 2^32 as ROMix's index is a 32-bit word), block
+// size r and parallelism p. False, with nothing, when the parameters are
+// out of range (n * r * 128 bytes of memory are needed, and r * p must
+// stay below 2^30).
 fn scrypt(password: const u8[:], salt: const u8[:], n: i64, r: i64, p: i64, len: i64) -> u8[>..], bool {
     var out: u8[>..] = [];
-    if n <= 1 || (n & (n - 1)) != 0 || r < 1 || p < 1 || r * p >= 1 << 30 || len < 0 {
+    if n <= 1 || n > (1 << 32) || (n & (n - 1)) != 0 || r < 1 || p < 1 || r * p >= 1 << 30 || len < 0 {
         return out, false;
     }
     if n > (1 << 40) / (128 * r) { return out, false; }      // a terabyte at most

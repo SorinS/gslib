@@ -426,6 +426,8 @@ fn verify_rrsig(rrsig: const u8[:], rrset: const u8[:], key_owner: const u8[:], 
     let signer = rrsig_signer(rrsig);
     if !name_equal(signer, key_owner) { return ERR_KEY; }
     if dnskey[2] != 3 || dnskey_flags(dnskey) & FLAG_ZONE == 0 { return ERR_KEY; }
+    // A revoked key (RFC 5011 §2.1) signs only the DNSKEY RRset that revokes it.
+    if dnskey_flags(dnskey) & FLAG_REVOKE != 0 && rrsig_type_covered(rrsig) != TYPE_DNSKEY { return ERR_KEY; }
     let first = rr_at(rrset, 0);
     var same = true;
     each_rr(rrset) { rr =>
@@ -463,6 +465,10 @@ fn verify_rrsig(rrsig: const u8[:], rrset: const u8[:], key_owner: const u8[:], 
 
 // --- NSEC3 ---------------------------------------------------------------------------
 
+// RFC 9276 §3.2: a validator treats NSEC3 records with more iterations than
+// this as insecure; nsec3_match and nsec3_cover take none of them.
+let NSEC3_MAX_ITERATIONS: u16 = 150;
+
 // RFC 5155 §5's hash of a name: SHA-1 over the lower-cased wire name and
 // the salt, then again over the hash and the salt, iterations times.
 // Only algorithm 1 (SHA-1) is defined; ERR_ALG otherwise.
@@ -491,8 +497,10 @@ fn nsec3_label(n: const u8[:], alg: u8, iterations: u16, salt: const u8[:]) -> u
 }
 
 // Whether the NSEC3 record (owner and rdata) is the one for name: its
-// first label is the name's hash (miekg's NSEC3.Match).
+// first label is the name's hash (miekg's NSEC3.Match). False for
+// malformed rdata and for more than NSEC3_MAX_ITERATIONS.
 fn nsec3_match(owner: const u8[:], rd: const u8[:], n: const u8[:]) -> bool {
+    if !rdata_valid(TYPE_NSEC3, rd) || get16(rd, 2) > NSEC3_MAX_ITERATIONS { return false; }
     let salt = rd[5 .. 5 + rd[4] as i64];
     let label = nsec3_label(n, rd[0], get16(rd, 2), salt);
     if owner.len < 1 || owner[0] != label.len { return false; }
@@ -504,8 +512,9 @@ fn nsec3_match(owner: const u8[:], rd: const u8[:], n: const u8[:]) -> bool {
 
 // Whether the NSEC3 record covers name: its hash falls strictly between
 // the owner's hash and the next one, around the end of the chain too
-// (miekg's NSEC3.Cover).
+// (miekg's NSEC3.Cover). False as for nsec3_match.
 fn nsec3_cover(owner: const u8[:], rd: const u8[:], n: const u8[:]) -> bool {
+    if !rdata_valid(TYPE_NSEC3, rd) || get16(rd, 2) > NSEC3_MAX_ITERATIONS { return false; }
     let sl = rd[4] as i64;
     let salt = rd[5 .. 5 + sl];
     let hl = rd[5 + sl] as i64;

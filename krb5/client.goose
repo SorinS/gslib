@@ -124,9 +124,27 @@ fn secret_anonymous() -> Secret {
     Secret { has_password: false, password: "", keytab: [], has_identity: false, anonymous: true, identity: no_pk_identity() }
 }
 
+// Whether the KDC's s2kparams may make a password's key: an iteration
+// count below the type's default (RFC 3962 §4's 4096; 32768 for RFC 8009
+// and RFC 6803) is refused unless `allow_weak` (libdefaults'
+// allow_weak_s2kparams). The hint comes unauthenticated, and a count of 1
+// would let whoever sent it guess the password from our PA-ENC-TIMESTAMP
+// cheaply.
+fn s2kparams_ok(etype: i32, params: const u8[:], allow_weak: bool) -> bool {
+    if params.len == 0 || allow_weak || etype == ETYPE_RC4_HMAC || etype == ETYPE_DES3_CBC_SHA1_KD { return true; }
+    if params.len != 4 { return false; }
+    var iter: i64 = 0;
+    for b in params { iter = iter << 8 | b; }
+    return iter >= default_iterations(etype);
+}
+
 // The client's long-term key for an encryption type and salt.
-fn secret_key(sec: const Secret&, name: const u8[:], realm: const u8[:], etype: i32, salt: const u8[:], params: const u8[:]) -> Key, i64 {
-    if sec.has_password { return string_to_key(etype, sec.password, salt, params); }
+fn secret_key(sec: const Secret&, name: const u8[:], realm: const u8[:], etype: i32, salt: const u8[:], params: const u8[:],
+              allow_weak: bool) -> Key, i64 {
+    if sec.has_password {
+        if !s2kparams_ok(etype, params, allow_weak) { return Key { etype: etype, value: [] }, ERR_S2K_PARAMS; }
+        return string_to_key(etype, sec.password, salt, params);
+    }
     let k, kv, err = keytab_key(sec.keytab, name, realm, etype, 0);
     return k, err;
 }
@@ -335,6 +353,7 @@ fn as_exchange(cfg: const Config&, s: Settings&, cname: const PrincipalName&, re
     let pk_kdfs = pkinit_conf_kdfs(cfg, realm0);
     let enterprise = cname.name_type == NT_ENTERPRISE;
     if enterprise { s.canonicalize = true; }
+    let weak_s2k = conf_bool(cfg, "libdefaults/allow_weak_s2kparams", false);
     for attempt in 8 {
         let etypes = as_etypes(cfg, sec, cname.name, realm);
         if etypes.len == 0 { return empty_credential(), false, ERR_ETYPE; }
@@ -459,7 +478,7 @@ fn as_exchange(cfg: const Config&, s: Settings&, cname: const PrincipalName&, re
                 if !armored && eherr != OK { return empty_credential(), false, ERR_PREAUTH; }
                 let e, sl, pr, ok = pick_etype_info(hints, etypes, cname.name, realm);
                 if !ok || e == 0 { return empty_credential(), false, ERR_PREAUTH; }
-                let k, err = secret_key(sec, cname.name, realm, e, sl, pr);
+                let k, err = secret_key(sec, cname.name, realm, e, sl, pr, weak_s2k);
                 if err != OK { return empty_credential(), false, err; }
                 pk = PreauthKey { have: true, key: k, has_kvno: false, kvno: 0 };
                 known_etype = e;
@@ -583,10 +602,14 @@ fn as_exchange(cfg: const Config&, s: Settings&, cname: const PrincipalName&, re
             if rep.enc_part.etype != pk.key.etype { return empty_credential(), false, KDC_ERR_ETYPE_NOSUPP; }
             key = spake_key0;
         } else if !pk.have || pk.key.etype != rep.enc_part.etype {
+            // Only a type we asked for (MIT's permitted enctypes).
+            var asked = false;
+            for e in etypes { if e == rep.enc_part.etype { asked = true; } }
+            if !asked { return empty_credential(), false, KDC_ERR_ETYPE_NOSUPP; }
             let one: i32[1] = [rep.enc_part.etype];
             let e, sl, pr, ok = pick_etype_info(rep.padata, one, cname.name, realm);
             let use_salt = if ok { copy(sl) } else { default_salt_of(cname.name, realm) };
-            let k, err = secret_key(sec, cname.name, realm, rep.enc_part.etype, use_salt, if ok { pr } else { params });
+            let k, err = secret_key(sec, cname.name, realm, rep.enc_part.etype, use_salt, if ok { pr } else { params }, weak_s2k);
             if err != OK { return empty_credential(), false, err; }
             key = k;
         }

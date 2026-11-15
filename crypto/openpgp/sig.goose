@@ -254,7 +254,10 @@ fn parse_signature(body: const u8[:]) -> Signature, i64 {
     if e1 != OK { return s, e1; }
     let e2 = read_subpackets(s, unhashed, false);
     if e2 != OK { return s, e2; }
-    // A v6 signature's salt is as long as its hash says (§5.2.3).
+    // A v6 signature is not by MD5, SHA-1 or RIPEMD-160 (RFC 9580 §5.2.3,
+    // §9.5: they have no salt size), and its salt is as long as its hash
+    // says.
+    if s.version == 6 && salt_size(s.hash) == 0 { return s, ERR_UNSUPPORTED; }
     if s.version == 6 && s.salt.len != salt_size(s.hash) { return s, ERR_MALFORMED; }
     return s, OK;
 }

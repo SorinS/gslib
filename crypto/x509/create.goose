@@ -538,6 +538,7 @@ fn check_csr(r: const Csr&) -> i64 {
     holder.der.append(r.der);
     holder.key_type = r.key_type;
     holder.key = r.key;
+    holder.spki = r.spki;                          // DSA's parameters are there
     let d = r.der[..];
     let sig, ok = key_bytes(d, r.sig);
     if !ok { return ERR_MALFORMED; }

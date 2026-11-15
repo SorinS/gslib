@@ -1,0 +1,35 @@
+<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_resp1" Version="2.0" IssueInstant="2026-01-01T00:00:00Z" Destination="https://sp.example.com/acs">
+  <saml:Issuer>https://idp.example.com</saml:Issuer>
+  <samlp:Status><samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></samlp:Status>
+  <xenc:EncryptedData xmlns:xenc="http://www.w3.org/2001/04/xmlenc#" Type="http://www.w3.org/2001/04/xmlenc#Element">
+<xenc:EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#aes128-cbc"/>
+<dsig:KeyInfo xmlns:dsig="http://www.w3.org/2000/09/xmldsig#">
+<xenc:EncryptedKey>
+<xenc:EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#rsa-1_5"/>
+<xenc:CipherData>
+<xenc:CipherValue>IJk5FGxf/NrjLNCx8XIMNSxe9QKC91XHli0zKBfZR+uiTxrhznMdg9aR127ByMRf
+JE2w1jiDJsHAU8m7tqeW9oHsZplDp3vxH75Jh4RGuRttA3lY8FDNTn0gWy789G4g
+qgonrZJ/dM0ztC4Fiaa6iETr11hQSzDBj66Ia+9mTdQJw8wfL3L4hU8pUdopYuMN
+JM3ilYc51acb+90OugSrgsNrvBlZo27l4xlmCTYssaazUbNQKJAYWRRuV3TzLZHi
+5KhPjM0Pslk0EqYvxxXcEUPssnRQeNJ5NHBGBA4T0xpX9XSc4doBgxwe8ctQdP9u
+QTN8tgXGfy2VpLSy49tx1g==</xenc:CipherValue>
+</xenc:CipherData>
+</xenc:EncryptedKey>
+</dsig:KeyInfo>
+<xenc:CipherData>
+<xenc:CipherValue>5iBHW11CF/lTmB5f37dmJefP7v37sukUi3Brp62lZZ4+NwqOsiO/Ik/fOUXxRgsv
+8rqVU31eRt9NLW/lJhvkpRSzT/KyOLOLhdeqE7Eurwch0jAyl3ot8983c/kSONQD
+ceYpIXCRmI9TL+ZsQrQlv0FsF2Gy0N2dlJosQBILPtijOU8SDN8iGY5vnsVBXugj
+PgwOx4HeILotrsFizflE1du/MrYzjwpRR1Fr1UkK53c4svH8VZWVBYKmmmvcO4Xu
+yd4NwHn6/azwtGHbc8CDk+pBZ+Q76wpnl+J96oVHiUqNmEY44Rqw5ymsy9pcR867
+b/cBBRgmwwBKx0ajNmyAdWaoAn1wYB0/6qN0e3UnfGBw7rHk77wYYlfbpylF9SLA
+VnFS8Nwhjo8NcOwYmJEinMJZ2cEIrMQr/EY5aB5SoM3meI9/+xEHTfSfvAYCFWFA
+yDFgA17CAcbFnxZvW2gBH3+WLV9W12lVVPr04jECKLNmXqMU9oMcBUBXSiF2OtLd
+htKwcML6h4PK/Shujlbn/U6jiWezV5vuSdy2TeXyFINH9yrQFplXmC/iJ1brSDBq
+ArxEyQSbbki+9h/8aXx5i0bcv29YCsCbhjeDjP2yYUKbpJgXIaICkReIKG3mHkJP
+HIMOLhOC2eQt2TTwsiBanU6AiGqnPUub85BKbDGRDLS/YMEfdHymOvXyeO2LO1lJ
+usi0Gvb6MB9Uqri1S6U2Z9fZ5+3dGdwOyNnIVWlhH7bRRWj/RG2LLo1vmcEtBbfs
+kXttjOCLUT8Iw+DM8mlN6l5NE1tE20ury3ZmIuORZlY=</xenc:CipherValue>
+</xenc:CipherData>
+</xenc:EncryptedData>
+</samlp:Response>

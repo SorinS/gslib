@@ -1,0 +1,16 @@
+dn: cn=a,dc=x
+control: 1.2.840.113556.1.4.805 true
+control: 1.2.3 false:: AAE=
+changetype: modify
+add: mail
+mail: a@x
+mail: b@
+ x
+-
+delete: description
+-
+replace: sn
+sn: z
+-
+increment: uidNumber
+uidNumber: 1

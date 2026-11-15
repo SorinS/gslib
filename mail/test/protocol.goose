@@ -68,6 +68,17 @@ fn main() {
     let count, size, se = pop3::stat(p);
     check("pop3: stat unconnected", se == mail::ERR_STATE);
     check("pop3: empty host", pop3::dial(p, "", 110, pop3::TLS_NONE) == mail::ERR_ARG);
+    // A multi-line response is bounded by max_data, as IMAP's responses are.
+    var q = pop3::Client { .. };
+    q.max_data = 20;
+    q.inbuf.append("0123456789\r\n..dot\r\n.\r\n");
+    var ml: u8[>..] = [];
+    check("pop3: multi-line within max_data", pop3::read_multi(q, ml) == mail::OK && ml == "0123456789\r\n.dot\r\n");
+    var q2 = pop3::Client { .. };
+    q2.max_data = 20;
+    q2.inbuf.append("0123456789\r\n0123456789\r\n.\r\n");
+    var ml2: u8[>..] = [];
+    check("pop3: multi-line past max_data", pop3::read_multi(q2, ml2) == mail::ERR_PROTOCOL);
 
     check("eq_fold", mail::eq_fold("StartTLS", "STARTTLS") && !mail::eq_fold("STARTTLS", "STARTTLSX"));
 

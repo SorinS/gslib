@@ -435,7 +435,7 @@ fn session_loop(s: ntlm::Session&) -> i32 {
             let d, ok = decode_arg(arg);
             if !ok { out_line("error bad base64"); continue; }
             var o: u8[>..] = [];
-            let e = if cmd == "wrap" { ntlm::wrap(s, d, o) } else if cmd == "unwrap" { ntlm::unwrap(s, d, o) } else { ntlm::get_mic(s, d, o) };
+            let e = if cmd == "wrap" { ntlm::wrap(s, d, ntlm::sealed(s), o) } else if cmd == "unwrap" { ntlm::unwrap(s, d, o) } else { ntlm::get_mic(s, d, o) };
             if e != ntlm::OK { out_line(str("error ", ntlm::error_text(e))); continue; }
             out_line(str(if cmd == "wrap" { "wrapped " } else if cmd == "unwrap" { "plain " } else { "mic " }, b64(o)));
         } else if cmd == "verify" {

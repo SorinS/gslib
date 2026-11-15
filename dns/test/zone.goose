@@ -3,7 +3,8 @@
 // $INCLUDE with and without an origin, $GENERATE with modifiers, omitted
 // owners, TTLs and classes, parentheses and comments; the same records,
 // in the same order, and the error that ends the file in the same place.
-// Then text with CRLF line ends, and new_rr's defaults.
+// Then text with CRLF line ends, new_rr's defaults (no $INCLUDE), and
+// records without rdata.
 import std;
 import gslib from "../..";
 import gslib.dns;
@@ -70,5 +71,43 @@ fn main() {
     tv::check_eq("new_rr text", dns::rr_string(one, dns::rr_at(one, 0)), "a.\t3600\tIN\tA\t1.2.3.4");
     one.clear();
     tv::check_int("new_rr empty", dns::new_rr(one, "; nothing\n"), dns::ERR_SYNTAX);
+    // An empty quoted token where a TTL might be.
+    one.clear();
+    tv::check("new_rr empty token", dns::new_rr(one, "foo.example. \"\" IN A 192.0.2.1") != dns::OK);
+    // new_rr reads no files.
+    one.clear();
+    let ri = dns::new_rr_result(one, "$INCLUDE vectors/zones/served.zone");
+    tv::check(str("new_rr $INCLUDE refused: ", ri.msg), ri.err == dns::ERR_SYNTAX && one.len == 0);
+    // No rdata: in new_rr, as dynamic update's deletes write it; not in a
+    // zone, except where the type may have none.
+    one.clear();
+    tv::check_int("new_rr without rdata", dns::new_rr(one, "old.example. A"), dns::OK);
+    var z: u8[>..] = [];
+    let re = dns::parse_zone("@ 300 IN SOA\n", opts(), z);
+    tv::check(str("zone: SOA without rdata: ", re.msg), re.err == dns::ERR_SYNTAX && z.len == 0);
+    let re2 = dns::parse_zone("@ 300 IN SOA \\# 0\n", opts(), z);
+    tv::check("zone: SOA as \\# 0", re2.err != dns::OK && z.len == 0);
+    let re3 = dns::parse_zone("@ 0 NONE A\n@ 300 IN APL\n", opts(), z);
+    tv::check_int("zone: a delete, an empty APL", re3.err, dns::OK);
+    // LOC within RFC 1876's ranges: an altitude that is infinite, NaN or
+    // past 32 bits of centimetres, latitude past the pole, seconds as NaN.
+    let loc_bad: u8[][>..] = [
+        "pe. LOC 2 N 5 E 7e750", "pe. LOC 2 N 5 E inf", "pe. LOC 2 N 5 E nan", "pe. LOC 2 N 5 E 42849673m",
+        "pe. LOC 2 N 5 E -100000.01m", "pe. LOC 90 30 N 5 E 0m", "pe. LOC 2 N 180 0 1 W 0m", "pe. LOC 2 0 nan N 5 E 0m"];
+    for t in loc_bad {
+        var lr: u8[>..] = [];
+        let le = dns::new_rr(lr, t);
+        tv::check(str("LOC refused: ", t), le != dns::OK);
+    }
+    let loc_ok: u8[][>..] = ["pe. LOC 90 0 0 S 180 0 0 W -100000m", "pe. LOC 2 N 5 E 42849672.95m"];
+    for t in loc_ok {
+        var lr: u8[>..] = [];
+        let le = dns::new_rr(lr, t);
+        tv::check(str("LOC taken: ", t), le == dns::OK);
+    }
+    one.clear();
+    let _ = dns::new_rr(one, "pe. LOC 2 N 5 E 42849672.95m");
+    let lt = dns::rr_string(one, dns::rr_at(one, 0));
+    tv::check(str("LOC highest altitude: ", lt), find(lt, " 42849672.95m ") >= 0);
     tv::done("zone");
 }

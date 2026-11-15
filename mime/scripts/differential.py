@@ -10,6 +10,13 @@ parts and truncations, forms with their limits, file extensions), has Go
 multipart bodies in pseudo-random pieces) answer each, and compares the
 answers byte for byte. Differences are reported by kind, with examples.
 
+Two of gslib's answers differ from Go's on purpose, and those differences
+are counted apart, as expected, when nothing else in the answer differs:
+a part's file name, where gslib takes a backslash as a separator too,
+drops NUL bytes and makes ".", ".." and "/" "" (Go's FileName keeps
+them); and encode_word with a charset that is not an RFC 2045 token,
+which gslib refuses ("") and Go writes into the word.
+
     python3 scripts/differential.py [-n CASES] [--seed S] [--kinds k,k] [--goose PATH]
 
 The kind "alltypes" asks for every extension and type of the system's
@@ -450,6 +457,49 @@ KINDS = {
 WEIGHT = {"mp": 4, "form": 2, "mt": 2, "dh": 2}
 
 
+def unesc(f):
+    out = bytearray()
+    i = 0
+    while i < len(f):
+        if f[i] == "\\" and f[i + 1:i + 2] == "x":
+            out.append(int(f[i + 2:i + 4], 16))
+            i += 4
+        else:
+            out += f[i].encode()
+            i += 1
+    return bytes(out)
+
+
+def is_token(b):
+    return len(b) > 0 and all(0x20 < c < 0x7F and c not in TSPECIALS for c in b)
+
+
+def safe_file_name(f):
+    # gslib's multipart::file_name, given what Go's FileName answered.
+    f = f[f.rfind(b"\\") + 1:].replace(b"\x00", b"")
+    return b"" if f in (b".", b"..", b"/") else f
+
+
+def deliberate(case, a, g):
+    """Whether the Go answer a and the gslib answer g differ only by the
+    two deviations gslib makes on purpose (see the top)."""
+    if case[0] == "ew":
+        return not is_token(case[2]) and g == ""
+    if case[0] not in ("mp", "form"):
+        return False
+    fa, fg = a.split("|"), g.split("|")
+    if len(fa) != len(fg):
+        return False
+    for x, y in zip(fa, fg):
+        if x == y:
+            continue
+        gx = unesc(x)
+        odd = b"\\" in gx or b"\x00" in gx or gx in (b".", b"..", b"/")
+        if not odd or safe_file_name(gx) != unesc(y):
+            return False
+    return True
+
+
 def find_goose(arg):
     for cand in [arg, os.environ.get("GOOSE"), shutil.which("goose"),
                  os.path.join(ROOT, "..", "..", "goose.git", "build", "goose")]:
@@ -504,17 +554,20 @@ def main():
     go_lines = go.stdout.split("\n")
     gs_lines = gs.stdout.split("\n")
     diffs = {}
+    expected = {}
     counts = {}
     for i, c in enumerate(cases):
         counts[c[0]] = counts.get(c[0], 0) + 1
         a = go_lines[i] if i < len(go_lines) else "<none>"
         g = gs_lines[i] if i < len(gs_lines) else "<none>"
         if a != g:
-            diffs.setdefault(c[0], []).append((lines.split("\n")[i], a, g))
+            into = expected if deliberate(c, a, g) else diffs
+            into.setdefault(c[0], []).append((lines.split("\n")[i], a, g))
     total = sum(len(v) for v in diffs.values())
     for k in sorted(counts):
         n = len(diffs.get(k, []))
-        print(f"{k:5} {counts[k]:6} cases  {n} differences")
+        x = len(expected.get(k, []))
+        print(f"{k:5} {counts[k]:6} cases  {n} differences" + (f"  ({x} expected: gslib's deliberate ones)" if x else ""))
         for case, a, g in diffs.get(k, [])[:3]:
             print(f"      case  {case[:300]}")
             print(f"      go    {a[:300]}")
@@ -522,7 +575,8 @@ def main():
     stray = [f for f in left if f.startswith("multipart-")]
     if stray:
         print(f"temporary files left behind: {len(stray)}")
-    print(f"\n{len(cases)} cases, {total} differences (seed {args.seed})")
+    nx = sum(len(v) for v in expected.values())
+    print(f"\n{len(cases)} cases, {total} differences, {nx} expected (seed {args.seed})")
     sys.exit(1 if total or stray else 0)
 
 

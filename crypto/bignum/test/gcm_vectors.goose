@@ -89,6 +89,14 @@ fn main() {
     d5.resize(8, 1);
     check("short tag", !bignum::gcm_decrypt(g5, short[..12], "", d5, short[..15]) && d5[0] == 0);
     check("empty tag", !bignum::gcm_decrypt(g5, short[..12], "", d5, short[..0]));
+    // A key of the wrong length or an empty nonce fails rather than
+    // aborting.
+    var sealed32: u8[32] = [0; 32];
+    let o6, ok6 = bignum::aes_gcm_open(short, short[..12], "", sealed32);
+    let o7, ok7 = bignum::aes_gcm_open(k16, "", "", sealed32);
+    check("bad key or nonce length", !ok6 && o6.len == 0 && !ok7 && o7.len == 0);
+    d5.resize(8, 1);
+    check("empty nonce in place", !bignum::gcm_decrypt(g5, "", "", d5, short[..15]) && d5[7] == 0);
     // The size limit every entry point checks, at its boundary.
     check("gcm_fits", bignum::gcm_fits(0) && bignum::gcm_fits(bignum::GCM_MAX) && !bignum::gcm_fits(bignum::GCM_MAX + 1)
           && !bignum::gcm_fits(-1) && bignum::GCM_MAX == (4294967296 - 2) * 16);

@@ -564,9 +564,12 @@ fn read_s2k(data: const u8[:], at: i64) -> S2k, i64, i64 {
         s.m = data[p + 18];
         p += 19;
         // RFC 9580 §3.7.1.4: m at least 8p KiB. Past 2^21 KiB (2 GiB, the
-        // RFC's first choice), 64 passes or 64 lanes, ERR_LIMIT.
+        // RFC's first choice), 16 lanes, or more work than that choice (t
+        // passes over 2^m KiB: 2^21 KiB-passes, the RFC's second choice of
+        // 3 passes over 64 MiB well within it), ERR_LIMIT: whoever sends a
+        // message chooses these.
         if s.t < 1 || s.p < 1 || s.m > 31 || (1 << s.m) < 8 * s.p { return s, p, ERR_MALFORMED; }
-        if s.m > 21 || s.t > 64 || s.p > 64 { return s, p, ERR_LIMIT; }
+        if s.m > 21 || s.p > 16 || s.t > 64 || s.t * (1 << s.m) > 1 << 21 { return s, p, ERR_LIMIT; }
         return s, p, OK;
     }
     if s.kind == S2K_GNU_DUMMY {

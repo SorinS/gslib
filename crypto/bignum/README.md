@@ -281,7 +281,8 @@ spread into 4-bit lanes (as in BearSSL's `ghash_ctmul64`), not with tables.
 Never reuse a nonce under one key. 12 bytes is the standard size; other
 lengths work too. A message is at most `GCM_MAX` bytes ((2^32 − 2) · 16,
 SP 800-38D): encrypting more aborts, as Go panics, and opening more fails;
-`gcm_fits(n)` is the check all four use.
+`gcm_fits(n)` is the check all four use. Opening with a key of the wrong
+length or an empty nonce returns false rather than aborting.
 
 `bignum.modes` has the other modes of Go's crypto/cipher, written once
 over any block cipher with a `cipher_encrypt` overload (AES, Camellia, DES
@@ -307,8 +308,10 @@ repeats, and are checked on all 256 bytes against RFC 3713's SBOX1.
 
 `cmac(k, msg)` is CMAC over any of these ciphers with 8- or 16-byte
 blocks (a block of tag), and `cmac_verify(k, msg, tag)` compares a tag of
-1 to a block's bytes (truncated CMACs are the leading bytes) in constant
-time.
+8 to a block's bytes (truncated CMACs are the leading bytes) in constant
+time; a shorter tag is refused, as the tag's length comes with it.
+`cmac_verify_len(k, msg, tag, tag_len)` takes the length from the caller
+(1 to a block) and refuses a tag of any other length.
 
 `des_init(key8)` and `des3_init(key24)` expand DES and triple-DES (EDE)
 keys, with `des_encrypt_block` / `des3_encrypt_block` and their decrypt
@@ -331,7 +334,8 @@ the same time. test/keywrap_vectors.goose holds RFC 3394 §4's and RFC
 
 `chacha20_poly1305_seal(key, nonce, aad, pt)` / `_open` and the in-place
 `_encrypt` / `_decrypt`, with the same contract as GCM: 32-byte key,
-12-byte nonce, 16-byte tag, nothing released on a bad tag. The pieces are
+12-byte nonce, 16-byte tag, nothing released on a bad tag; opening with a
+key or nonce of the wrong length returns false. The pieces are
 public too: `chacha20_block`, `chacha20_xor(key, counter, nonce, data)`,
 and `poly1305` one-shot or streaming. A message is at most
 `CHACHA20_POLY1305_MAX` bytes ((2^32 − 1) · 64, RFC 8439): encrypting more
@@ -498,7 +502,10 @@ kdf, aead, sk, enc, info, psk, psk_id, pk_s)` set up a context; a PSK
 selects the PSK modes and a sender key the authenticated ones (DHKEM
 only; the SHAKE KDFs, as in Go, run in base mode only). Then
 `hpke_seal(ctx, aad, pt)`, `hpke_open` (which leaves the sequence number
-alone on failure) and `hpke_export(ctx, exporter_context, n)`.
+alone on failure) and `hpke_export(ctx, exporter_context, n) -> bytes, ok`
+(false for n above HKDF's 255 * Nh, or 65535 for a SHAKE KDF). With a
+SHAKE KDF, an info, PSK or PSK id of 64 KiB or more is refused, as its
+length prefix is 16 bits.
 `hpke_seal_once` and `hpke_open_once` are Go's single-shot `Seal` and
 `Open`: the encapsulated key followed by the ciphertext.
 
@@ -545,13 +552,15 @@ few lines on top of `hkdf_expand` and is not included.
 - `salsa20_xor(key, nonce, data)`: Salsa20 for an 8-byte nonce, XSalsa20
   for a 24-byte one, in place; `hsalsa20(key, input16)`.
 - NaCl: `secretbox_seal(msg, nonce, key)` (tag first, as NaCl) and
-  `secretbox_open`; `box_keypair`, `box_precompute`, `box_seal(msg, nonce,
+  `secretbox_open` (false, not an abort, for a key or nonce of the wrong
+  length, as `box_open` for keys); `box_keypair`, `box_precompute`, `box_seal(msg, nonce,
   peer_pk, sk)`, `box_open`, `box_seal_anonymous(msg, pk)` and
   `box_open_anonymous(sealed, pk, sk)`; `nacl_sign(msg, sk64)` and
   `nacl_sign_open`; `nacl_auth(msg, key)` and `nacl_auth_verify`.
 - `bcrypt_hash(password, cost = 10) -> hash, ok` ("$2a$", false past 72
   bytes or for a cost above 31), `bcrypt_verify(hash, password)` (in
-  constant time; $2b$ and $2y$ too) and `bcrypt_cost(hash)`;
+  constant time; $2b$ and $2y$ too; false for a password past 72 bytes,
+  whose tail bcrypt would never read) and `bcrypt_cost(hash)`;
   `bcrypt_pbkdf(password, salt, rounds, key_len) -> key, ok` (false for
   an empty password or salt, rounds below 1 or a key over 1024 bytes).
 - `blowfish_init(key)`, `cast5_init(key16)`, `twofish_init(key)`,
@@ -568,7 +577,7 @@ few lines on top of `hkdf_expand` and is not included.
 | `argon2id_key(password, salt, t, m, p, len)` | Go's `argon2.IDKey`: t passes over m KiB with p lanes. The one to use for passwords. |
 | `argon2i_key(...)` | Go's `argon2.Key` (Argon2i) |
 | `argon2(kind, password, salt, secret, ad, t, m, p, len)` | `ARGON2D`, `ARGON2I` or `ARGON2ID`, with the optional secret key and associated data |
-| `scrypt(password, salt, n, r, p, len) -> key, bool` | as `scrypt.Key`; false for bad parameters |
+| `scrypt(password, salt, n, r, p, len) -> key, bool` | as `scrypt.Key`; false for bad parameters (n above 2^32 among them) |
 | `pbkdf2(hash, password, salt, iter, len)` | over HMAC with any hash id, as `crypto/pbkdf2` |
 
 The lanes of Argon2 are filled one after another, which gives the same

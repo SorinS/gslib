@@ -138,9 +138,9 @@ checks the certified object's Name, `verify_creation` its creation hash
 too. `replay_event_log` reads the TCG PC Client crypto-agile log (the
 TCG_PCR_EVENT with "Spec ID Event03" and its digest sizes, then
 TCG_PCR_EVENT2s), skips EV_NO_ACTION, starts PCR 0 at the
-StartupLocality event's locality, and refuses a log it cannot read
-whole. `make_credential` follows Part 1 §24: the seed by RSA-OAEP with
-the label "IDENTITY\0" or by ECDH and KDFe, symKey = KDFa("STORAGE",
+StartupLocality event's locality (refusing one after PCR 0's first
+extend, or a second), and refuses a log it cannot read whole.
+`make_credential` follows Part 1 §24: the seed by RSA-OAEP with the label "IDENTITY\0" or by ECDH and KDFe, symKey = KDFa("STORAGE",
 Name), encIdentity = AES-CFB of the TPM2B credential, the integrity HMAC
 over encIdentity ‖ Name.
 

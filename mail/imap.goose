@@ -55,6 +55,7 @@ let TLS_IMPLICIT:      i64 = 3;  // TLS from the first byte (993)
 let MAX_LINE:    i64 = 1 << 20;  // one line of a response, its literals apart
 let MAX_LITERAL: i64 = 1 << 26;  // c.max_literal's default: one literal, 64 MiB
 let MAX_DATA:    i64 = 1 << 28;  // c.max_data's default: a command's responses together, 256 MiB
+let MAX_SEARCH:  i64 = 1 << 20;  // numbers a SEARCH/ESEARCH answer may hold (ESEARCH's ALL 1:N expanded), 8 MiB
 let MAX_DEPTH:   i64 = 64;       // parentheses nested deeper are a malformed response
 let MAX_QUOTED:  i64 = 1000;     // a longer argument goes as a literal
 
@@ -1002,7 +1003,9 @@ fn authenticate(c: Client&, mech: i64, user: const u8[:], secret: const u8[:]) -
         if m == mail::AUTH_AUTO { return mail::ERR_AUTH; }
     }
     if mail::auth_plaintext(m) && !c.secure && !is_local(c.host) { return mail::ERR_AUTH; }
+    if !mail::sasl_fits(user, secret) { return mail::ERR_AUTH; }
     var s = mail::sasl_new(m, user, secret);
+    if m == mail::AUTH_NTLM { mail::link_sasl_target(c, s, "IMAP"); }
     var resp: u8[>..] = [];
     var line: u8[>..] = [];
     var pending = mail::sasl_initial(s, resp);
@@ -1127,7 +1130,13 @@ fn parse_list(s: const u8[:], utf8: bool, out: Mailbox&) -> bool {
     if kind_of(nodes, n) == K_LIST || !text(s, nodes, n, name) { return false; }
     if name.len > 1024 { return false; }
     var dec: u8[>..] = [];
-    if !utf8 && utf7_decode(dec, name) { put_cap(out.name, dec); } else { put_cap(out.name, name); }
+    if !utf8 && utf7_decode(dec, name) {
+        // Decoded, it can grow: refused rather than cut mid-rune.
+        if dec.len > out.name.cap { return false; }
+        put_cap(out.name, dec);
+    } else {
+        put_cap(out.name, name);
+    }
     return true;
 }
 
@@ -1408,6 +1417,10 @@ fn parse_search(word: const u8[:], rest: const u8[:], max: i64, out: i64[>..]&) 
     return true;
 }
 
+// How many numbers search() takes: a few bytes of ESEARCH ("ALL 1:N")
+// stand for N, so 8 bytes of c.max_data a number and MAX_SEARCH at most.
+fn search_max(max_data: i64) -> i64 { if max_data / 8 < MAX_SEARCH { max_data / 8 } else { MAX_SEARCH } }
+
 // SEARCH criteria: the matching messages' numbers into out. criteria is
 // IMAP's search syntax ("UNSEEN", "FROM \"bob\" SINCE 1-Jan-2026");
 // quote() makes a string for it.
@@ -1424,7 +1437,7 @@ fn search_cmd(c: Client&, verb: const u8[:], criteria: const u8[:], out: i64[>..
     let e = run(c);
     if e != mail::OK { return e; }
     var bad = false;
-    let max = c.max_data / 8;
+    let max = search_max(c.max_data);
     each_response(c) { r =>
         let w, rest = first_word(r[2..]);
         if mail::eq_fold(w, "SEARCH") || mail::eq_fold(w, "ESEARCH") {
@@ -1662,10 +1675,14 @@ fn parse_addresses(s: const u8[:], nodes: const Node[:], i: i64, out: mail::Addr
         // A group's start (host NIL) and end (mailbox NIL too) are not addresses.
         if kind_of(nodes, nth(nodes, a, 3)) != K_NIL {
             var x = mail::Address { .. };
-            put_cap(x.name, name);
             var spec: u8[>..] = [];
             spec.append(mbox);
             if host.len > 0 { spec.push('@'); spec.append(host); }
+            // Refused, not cut, when too long; and nothing that could
+            // split a header written from it (a reply, APPEND).
+            if name.len > x.name.cap || spec.len > x.addr.cap { return false; }
+            if mail::addr_has_break(name) || mail::addr_has_break(spec) { return false; }
+            put_cap(x.name, name);
             put_cap(x.addr, spec);
             out.push(x);
         }
@@ -1705,7 +1722,8 @@ fn envelope(c: const Client&, m: const Message&, env: Envelope&) -> bool {
 // section number for BODY[...] ("1", "2.1"; a multipart has the prefix its
 // parts number from: "" at the top), how deep it is, its type in lower
 // case, and the parameters and fields that say what it is. A value longer
-// than its field is cut. size and lines are -1 when not given.
+// than its field is cut, but for the section number: a BODYSTRUCTURE
+// whose numbers will not fit does not parse. size and lines are -1 when not given.
 struct Part {
     section:     u8[..64]  = [],
     depth:       i64       = 0,
@@ -1759,14 +1777,17 @@ fn disposition(p: Part&, s: const u8[:], nodes: const Node[:], d: i64) {
 
 struct Pending { node: i64, section: u8[..64], depth: i64 }
 
-// A section number: prefix, '.', k (just k without a prefix).
-fn section_of(prefix: const u8[:], k: i64) -> u8[..64] {
+// A section number: prefix, '.', k (just k without a prefix); false when
+// it is too long for a Part's (it is never cut, which would name another
+// part).
+fn section_of(prefix: const u8[:], k: i64) -> u8[..64], bool {
     var s: u8[..64] = [];
     var t: u8[>..]  = [];
     if prefix.len > 0 { t.append(prefix); t.push('.'); }
     format(t, k);
+    if t.len > s.cap { return s, false; }
     put_cap(s, t);
-    return s;
+    return s, true;
 }
 
 // A BODYSTRUCTURE's value, "(...)", into parts: every part, depth first,
@@ -1802,7 +1823,9 @@ fn parse_bodystructure(s: const u8[:], parts: Part[>..]&) -> bool {
             var k = kids.len;
             while k > 0 {
                 k--;
-                todo.push(Pending { node: kids[k], section: section_of(p.section, k + 1), depth: p.depth + 1 });
+                let sec, oks = section_of(p.section, k + 1);
+                if !oks { return false; }
+                todo.push(Pending { node: kids[k], section: sec, depth: p.depth + 1 });
             }
             continue;
         }
@@ -1835,8 +1858,9 @@ fn parse_bodystructure(s: const u8[:], parts: Part[>..]&) -> bool {
             // this part's number, a single part is number.1.
             let inner = nth(nodes, b, 8);
             let multi = kind_of(nodes, nth(nodes, inner, 0)) == K_LIST;
-            todo.push(Pending { node: inner, section: if multi { p.section } else { section_of(p.section, 1) },
-                                depth: p.depth + 1 });
+            let sec, oks = section_of(p.section, 1);
+            if !multi && !oks { return false; }
+            todo.push(Pending { node: inner, section: if multi { p.section } else { sec }, depth: p.depth + 1 });
         }
     }
     return true;

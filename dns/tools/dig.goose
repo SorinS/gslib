@@ -71,6 +71,13 @@ fn run() -> i32 {
         else if s == "-y" && i + 1 < a.len {
             i++;
             let parts = split(a[i], ':');
+            // Lengths checked here: the fields are fixed-size (name 255 with
+            // its dot, algorithm 64, secret 128).
+            let pn = parts.len;
+            if (pn == 2 || pn == 3) && (parts[pn - 2].len == 0 || parts[pn - 2].len > 254 || parts[pn - 1].len > 128 || (pn == 3 && parts[0].len > 63)) {
+                write_stderr("goose-dig: TSIG key name, algorithm or secret too long\n");
+                return 2;
+            }
             if parts.len == 2 { c.tsig_name.append(parts[0]); c.tsig_secret.append(parts[1]); }
             else if parts.len == 3 {
                 c.tsig_alg.clear();

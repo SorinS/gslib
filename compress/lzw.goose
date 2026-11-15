@@ -184,17 +184,19 @@ fn lzw_done(d: const LzwReader&) -> bool { d.err == STREAM_END && d.ppos == 8192
 
 // Decodes a whole stream, appending to `out`: 0, or an error
 // (ERR_TRUNCATED when the data ends before the end code, ERR_LIMIT when
-// the output would pass `limit` bytes; what was decoded is in out). The
+// what it appends would pass `limit` bytes, < 0 for none; out then has
+// the first `limit` of them). The
 // bytes after the end code are ignored, as Go's Reader ignores them.
-fn lzw_decode(data: const u8[:], order: i64, lit_width: i64, out: u8[>..]&, limit: i64 = 1 << 62) -> i64 {
+fn lzw_decode(data: const u8[:], order: i64, lit_width: i64, out: u8[>..]&, limit: i64 = -1) -> i64 {
     var d = lzw_reader(order, lit_width);
     var at = 0;
+    let base = out.len;
     var buf: u8[4096] = [0; 4096];
     loop {
         let used, made, st = lzw_read(d, data[at..], buf);
         at += used;
-        if out.len + made > limit {
-            out.append(buf[..limit - out.len]);
+        if limit >= 0 && out.len - base + made > limit {
+            out.append(buf[..limit - (out.len - base)]);
             return ERR_LIMIT;
         }
         out.append(buf[..made]);

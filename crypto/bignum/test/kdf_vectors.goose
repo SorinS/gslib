@@ -94,6 +94,10 @@ fn main() {
     check("r = 0", !ok3);
     let d, ok4 = bignum::scrypt("p", "s", 16, 1 << 20, 1 << 10, 32);
     check("r * p too big", !ok4);
+    // ROMix's index is a 32-bit word: n = 2^33 would index only half its
+    // table (and ask for a terabyte), so it is refused before allocating.
+    let e, ok5 = bignum::scrypt("p", "s", 1 << 33, 1, 1, 32);
+    check("n above 2^32", !ok5 && e.len == 0);
     // Go's names give the same tags.
     check("IDKey", bignum::argon2id_key("pw", "somesalt", 1, 64, 2, 32)
                    == bignum::argon2(bignum::ARGON2ID, "pw", "somesalt", "", "", 1, 64, 2, 32));

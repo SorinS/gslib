@@ -1,0 +1,5 @@
+
+a=w
+b=x; secure
+c=y; httponly
+d=z; secure; httponly

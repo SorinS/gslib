@@ -6,7 +6,10 @@
 // glue, a truncated UDP reply asked again over TCP, a zone transfer in
 // several messages signed with TSIG (refused unsigned), a dynamic update
 // signed with TSIG and seen by the next query, a query signed with the
-// wrong key answered NOTAUTH, NOTIFY, and DO bringing RRSIGs.
+// wrong key answered NOTAUTH, NOTIFY, and DO bringing RRSIGs. Then
+// updates RFC 2136 refuses (rdata cut short, meta types, TTLs on deletes
+// and prerequisites), the apex's last NS kept, and the SOA replaced only
+// by a newer one.
 import std;
 import gslib from "../..";
 import gslib.dns;
@@ -33,6 +36,72 @@ fn texts(list: const u8[:]) -> u8[>..] {
     var out: u8[>..] = [];
     dns::each_rr(list) { rr => if rr.rtype != dns::TYPE_OPT { out.append(dns::rr_string(list, rr)); out.push('\n'); } };
     return out;
+}
+
+fn owner(s: const u8[:]) -> dns::Name {
+    let n, e = dns::name_parse(s, []);
+    return n;
+}
+
+fn soa_text(server: const u8[:], r: dns::Msg&) -> u8[>..] {
+    ask(server, dns::NET_UDP, "example.org.", dns::TYPE_SOA, r);
+    return texts(r.answer);
+}
+
+// Signed updates that RFC 2136 refuses, and the zone after them; then the
+// apex's last NS kept, and an SOA replaced only by a newer one.
+fn bad_updates(server: const u8[:], cx: const dns::Client&) {
+    var r = dns::Msg { .. };
+    let soa0 = soa_text(server, r);
+    // An SOA with no rdata, and one cut short: never read, never applied.
+    var u = dns::Msg { .. };
+    dns::set_update(u, "example.org.");
+    dns::rr_append(u.ns, owner("example.org."), dns::TYPE_SOA, dns::CLASS_INET, 300, []);
+    let e1 = dns::exchange(cx, u, server, r);
+    tv::check(str("update: empty SOA refused (", e1, ")"), e1 != dns::OK || r.hdr.rcode == dns::RCODE_FORMAT_ERROR);
+    dns::set_update(u, "example.org.");
+    var names: u8[>..] = [];
+    names.append(owner("a.example.org."));
+    names.append(owner("b.example.org."));
+    dns::rr_append(u.ns, owner("example.org."), dns::TYPE_SOA, dns::CLASS_INET, 300, names);
+    let e2 = dns::exchange(cx, u, server, r);
+    tv::check(str("update: SOA cut short refused (", e2, ")"), e2 != dns::OK || r.hdr.rcode == dns::RCODE_FORMAT_ERROR);
+    tv::check_eq("update: the SOA unchanged", soa_text(server, r), soa0);
+    // §3.4.1: a meta type added, a delete with a TTL; §3.2: a prerequisite with one.
+    dns::set_update(u, "example.org.");
+    dns::rr_append(u.ns, owner("x.example.org."), dns::TYPE_ANY, dns::CLASS_INET, 300, []);
+    tv::check("update: ANY added: FORMERR", dns::exchange(cx, u, server, r) == dns::OK && r.hdr.rcode == dns::RCODE_FORMAT_ERROR);
+    dns::set_update(u, "example.org.");
+    dns::rr_append(u.ns, owner("ns1.example.org."), dns::TYPE_A, dns::CLASS_ANY, 300, []);
+    tv::check("update: delete with a TTL: FORMERR", dns::exchange(cx, u, server, r) == dns::OK && r.hdr.rcode == dns::RCODE_FORMAT_ERROR);
+    dns::set_update(u, "example.org.");
+    dns::rr_append(u.answer, owner("ns1.example.org."), dns::TYPE_A, dns::CLASS_ANY, 300, []);
+    tv::check("update: prerequisite with a TTL: FORMERR", dns::exchange(cx, u, server, r) == dns::OK && r.hdr.rcode == dns::RCODE_FORMAT_ERROR);
+    ask(server, dns::NET_UDP, "ns1.example.org.", dns::TYPE_A, r);
+    tv::check_int("update: ns1 kept", dns::rr_count(r.answer), 1);
+    // Both apex NS records deleted one by one: the last stays.
+    var nss: u8[>..] = [];
+    dns::new_rr(nss, "example.org. 3600 IN NS ns1.example.org.");
+    dns::new_rr(nss, "example.org. 3600 IN NS ns2.example.net.");
+    dns::set_update(u, "example.org.");
+    dns::remove(u, nss);
+    tv::check("update: delete every apex NS", dns::exchange(cx, u, server, r) == dns::OK && r.hdr.rcode == dns::RCODE_SUCCESS);
+    ask(server, dns::NET_UDP, "example.org.", dns::TYPE_NS, r);
+    tv::check_int("update: the last apex NS kept", dns::rr_count(r.answer), 1);
+    // An older SOA is ignored, a newer one replaces the old.
+    var old: u8[>..] = [];
+    dns::new_rr(old, "example.org. 300 IN SOA ns1.example.org. hostmaster.example.org. 2000010101 7200 3600 1209600 300");
+    dns::set_update(u, "example.org.");
+    dns::insert(u, old);
+    dns::exchange(cx, u, server, r);
+    tv::check_eq("update: older SOA ignored", soa_text(server, r), soa0);
+    var newer: u8[>..] = [];
+    dns::new_rr(newer, "example.org. 300 IN SOA ns1.example.org. hostmaster.example.org. 2024010102 7200 3600 1209600 300");
+    dns::set_update(u, "example.org.");
+    dns::insert(u, newer);
+    dns::exchange(cx, u, server, r);
+    tv::check_eq("update: newer SOA replaces", soa_text(server, r),
+        "example.org.\t300\tIN\tSOA\tns1.example.org. hostmaster.example.org. 2024010102 7200 3600 1209600 300\n");
 }
 
 fn main() {
@@ -146,5 +215,7 @@ fn main() {
     n.hdr.recursion_desired = false;
     dns::exchange(c2, n, server, r);
     tv::check("NOTIFY acknowledged", r.hdr.opcode == dns::OPCODE_NOTIFY && r.hdr.authoritative && r.hdr.rcode == 0);
+
+    bad_updates(server, cx);
     tv::done("client");
 }

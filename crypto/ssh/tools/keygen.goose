@@ -128,7 +128,7 @@ fn run() -> i32 {
         else if w == "-N" { newpass.clear(); newpass.append(v); have_new = true; }
         else if w == "-P" { oldpass.clear(); oldpass.append(v); have_old = true; }
         else if w == "-Z" { cipher.clear(); cipher.append(v); }
-        else if w == "-a" { let n, ok = parse_int(v, 10); if !ok || n < 1 { return usage(); } rounds = n; }
+        else if w == "-a" { let n, ok = parse_int(v, 10); if !ok || n < 1 || n > 2147483647 { return usage(); } rounds = n; }
         else if w == "-f" { file.clear(); file.append(v); }
         else if w == "-E" { hash.clear(); hash.append(v); }
         else { return usage(); }
@@ -186,10 +186,11 @@ fn run() -> i32 {
     } else if kind == "rsa" {
         xkind = x509::KEY_RSA;
         if bits == 0 { bits = 3072; }
-        if bits < 1024 || bits > 16384 { return fail("RSA keys are 1024 to 16384 bits"); }
+        if bits < 1024 || bits > 8192 || bits % 64 != 0 { return fail("RSA keys are 1024 to 8192 bits, a multiple of 64"); }
     } else {
         return fail(str("unknown key type ", kind));
     }
+    if comment.len > 1024 { return fail("the comment is too long (1024 bytes at most)"); }
     if file.len == 0 { file.append(str(sysnet::home_dir(), "/.ssh/id_", kind)); }
     if file_exists(file) { return fail(str(file, " already exists")); }
     var k = ssh::generate_key(xkind, bits);

@@ -433,9 +433,10 @@ fn h2_section(recs: const u8[:], kind: i64, lines: u8[>..]&, clen: i64&) -> i64 
             } else if kind == 1 {
                 if n == ":status" {
                     n_status++;
-                    if v.len != 3 { bad = true; }
+                    // Three digits, the length checked first: a long run must not overflow st.
                     var st: i64 = 0;
-                    for ch in v { if ch < '0' || ch > '9' { bad = true; } else { st = st * 10 + (ch - '0') as i64; } }
+                    if v.len != 3 { bad = true; }
+                    else { for ch in v { if ch < '0' || ch > '9' { bad = true; } else { st = st * 10 + (ch - '0') as i64; } } }
                     status = st;
                 } else { bad = true; }
             }

@@ -295,6 +295,22 @@ fn authentication() {
         sc.authorized_keys.append(ssh::marshal_authorized_key(good.public));
         let r = connect(cc, sc, false);
         check("second key", r.ok);
+        // Keys offered and refused count toward max_auth_tries, as in
+        // OpenSSH: with 2, the third key is never reached.
+        {
+            var cc3 = client_cfg();
+            let other2 = ssh::generate_key(x509::KEY_ED25519);
+            let a1 = ssh::add_key(cc3, other);
+            let a2 = ssh::add_key(cc3, other2);
+            let a3 = ssh::add_key(cc3, good);
+            var sc3 = server_cfg();
+            sc3.authorized_keys.append(ssh::marshal_authorized_key(good.public));
+            sc3.max_auth_tries = 2;
+            let r3 = connect(cc3, sc3, false);
+            check("refused key queries count", !r3.ok && r3.server_reason == ssh::DISCONNECT_NO_MORE_AUTH_METHODS_AVAILABLE);
+            sc3.max_auth_tries = 3;
+            check("refused key queries count: one more try, in", connect(cc3, sc3, false).ok);
+        }
         var cc2 = client_cfg();
         let c2 = ssh::add_key(cc2, other);
         let r2 = connect(cc2, sc, false);
@@ -403,6 +419,35 @@ fn host_keys() {
     ssh::set_password(hashed, "pw");
     hashed.known_hosts.append(ssh::known_hosts_line(hashed, hk.public, true));
     check("hashed", connect(hashed, sc, false).ok);
+    // The host's case does not matter: a hashed entry for example.com, a
+    // changed key, is found for EXAMPLE.com too (it was missed, and the key
+    // taken as unknown).
+    {
+        var lowcfg = ssh::client_config("alice", "example.com");
+        var upper = ssh::client_config("alice", "EXAMPLE.com");
+        ssh::set_password(upper, "pw");
+        upper.host_key_algs.clear();
+        upper.host_key_algs.append("ssh-ed25519");
+        upper.known_hosts.append(ssh::known_hosts_line(lowcfg, other.public, true));
+        let ru2 = connect(upper, sc, false);
+        check("hashed, the host in capitals: the changed key found", !ru2.ok && ru2.msg == "host key changed");
+        var upper2 = ssh::client_config("alice", "EXAMPLE.com");
+        ssh::set_password(upper2, "pw");
+        upper2.known_hosts.append(ssh::known_hosts_line(lowcfg, hk.public, true));
+        check("hashed, the host in capitals: known", connect(upper2, sc, false).ok);
+    }
+    // known_hosts past 64 KiB: a changed key at its end is still seen.
+    {
+        var big = ssh::client_config("alice", "example.com");
+        ssh::set_password(big, "pw");
+        big.host_key_algs.clear();
+        big.host_key_algs.append("ssh-ed25519");
+        for n in 1200 { big.known_hosts.append(str("h", n, ".example.org ", ssh::marshal_authorized_key(hk.public))); }
+        check("known_hosts past 64 KiB", big.known_hosts.len > 70000);
+        big.known_hosts.append(str("example.com ", ssh::marshal_authorized_key(other.public)));
+        let rb = connect(big, sc, false);
+        check("known_hosts past 64 KiB: the changed key found", !rb.ok && rb.msg == "host key changed");
+    }
     var port = ssh::client_config("alice", "example.com", 2222);
     ssh::set_password(port, "pw");
     port.known_hosts.append(str("[example.com]:2222 ", ssh::marshal_authorized_key(hk.public)));

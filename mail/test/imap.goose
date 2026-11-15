@@ -195,6 +195,13 @@ fn main() {
     check("esearch: nothing", imap::parse_search("ESEARCH", "(TAG \"A3\") UID", 100, found) && found.len == 0);
     check("search: bounded", !imap::parse_search("ESEARCH", "(TAG \"A\") ALL 1:1000", 100, found));
     check("search: junk", !imap::parse_search("SEARCH", "1 x", 100, found));
+    // An ESEARCH range stands for many numbers: at most MAX_SEARCH (1M).
+    check("search: max", imap::search_max(imap::MAX_DATA) == 1 << 20 && imap::search_max(800) == 100);
+    found.clear();
+    check("search: ALL 1:1048576", imap::parse_search("ESEARCH", "(TAG \"A\") ALL 1:1048576", imap::search_max(imap::MAX_DATA), found) &&
+          found.len == 1 << 20);
+    found.clear();
+    check("search: ALL 1:4294967295", !imap::parse_search("ESEARCH", "(TAG \"A\") ALL 1:4294967295", imap::search_max(imap::MAX_DATA), found));
 
     // --- Modified UTF-7, RFC 3501 §5.1.3's examples and more
     check("utf7: ascii", utf7("INBOX/Sent") == "INBOX/Sent");
@@ -270,6 +277,41 @@ fn main() {
     check("imap: bad flags", imap::store(c, "1", "+FLAGS", "\\Seen) (x") == mail::ERR_ARG);
     check("imap: bad append date", imap::append(c, "INBOX", "", "1-Jan\r\n", "x") == mail::ERR_ARG);
     check("imap: MOVE needs the capability", imap::move(c, "1", "Trash") == mail::ERR_UNSUPPORTED);
+
+    // Review fixes: what a server sends is refused, not cut, and nothing
+    // in an ENVELOPE address can split a header written from it.
+    var ee = imap::Envelope { .. };
+    check("envelope: CRLF in host", !imap::parse_envelope("(\"d\" \"s\" ((\"Eve\" NIL \"eve\" {28}\r\nevil.example>\r\nX-Injected: 1)) NIL NIL NIL NIL NIL NIL NIL)", ee));
+    check("envelope: LF in name", !imap::parse_envelope("(NIL NIL ((\"E\nX: 1\" NIL \"eve\" \"example.com\")) NIL NIL NIL NIL NIL NIL NIL)", ee));
+    check("envelope: CRLF in an encoded-word name", !imap::parse_envelope("(NIL NIL ((\"=?utf-8?q?a=0D=0AX:_1?=\" NIL \"eve\" \"example.com\")) NIL NIL NIL NIL NIL NIL NIL)", ee));
+    var lp: u8[>..] = [];
+    lp.append("ceo@bank.example");
+    for i in 310 { lp.push('a'); }
+    var env2: u8[>..] = [];
+    format(env2, "(NIL NIL ((NIL NIL {", lp.len, "}\r\n", lp, " \"evil.example\")) NIL NIL NIL NIL NIL NIL NIL)");
+    check("envelope: addr too long refused", !imap::parse_envelope(env2, ee));
+    var nm: u8[>..] = [];
+    for i in 300 { nm.push('n'); }
+    var env3: u8[>..] = [];
+    format(env3, "(NIL NIL ((\"", nm, "\" NIL \"a\" \"example.com\")) NIL NIL NIL NIL NIL NIL NIL)");
+    check("envelope: name too long refused", !imap::parse_envelope(env3, ee));
+    check("envelope: plain still parses", imap::parse_envelope("(NIL NIL ((\"Eve\" NIL \"eve\" \"example.com\")) NIL NIL NIL NIL NIL NIL NIL)", ee) && ee.from.len == 1 && ee.from[0].addr == "eve@example.com");
+    // A section number past 64 bytes: the BODYSTRUCTURE does not parse.
+    var deep: u8[>..] = [];
+    for i in 40 { deep.push('('); }
+    deep.append("\"text\" \"plain\" NIL NIL NIL \"7bit\" 1 1");
+    for i in 40 { deep.append(") \"mixed\""); }
+    var dparts: imap::Part[>..] = [];
+    check("bodystructure: section too long refused", !imap::parse_bodystructure(deep, dparts));
+    // A LIST name whose decoding passes 1024 bytes: refused, not cut mid-rune.
+    var wide: u8[>..] = [];
+    for i in 360 { wide.append("日"); }
+    var wenc: u8[>..] = [];
+    check("list: long name encodes", imap::utf7_encode(wenc, wide) && wenc.len <= 1024);
+    var wl: u8[>..] = [];
+    format(wl, "() \"/\" ", wenc);
+    var wmb = imap::Mailbox { .. };
+    check("list: decoded too long refused", !imap::parse_list(wl, false, wmb));
 
     if failures > 0 { print(failures, " failures"); exit(1); }
     print("imap: ok");

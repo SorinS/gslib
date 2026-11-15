@@ -61,6 +61,7 @@ root struct Reader {
     nl_len: i64 = 2,                 // 2 (CRLF), or 1 once the first boundary line ended in LF only
     buf: u8[>..] = [],               // the input not yet consumed is buf[pos..]
     pos: i64 = 0,
+    scanned: i64 = 0,                // buf[pos..pos + scanned] searched for a line's end, none found
     eof: bool = false,
     state: i64 = S_LINES,
     parts_read: i64 = 0,
@@ -93,6 +94,7 @@ fn init(r: Reader&, boundary: const u8[:]) {
     r.nl_len = 2;
     r.buf.clear();
     r.pos = 0;
+    r.scanned = 0;
     r.eof = false;
     r.state = S_LINES;
     r.parts_read = 0;
@@ -168,7 +170,9 @@ fn lines(r: Reader&) -> i64 {
         let rest = r.buf[r.pos..];
         let lim = ::min(rest.len, PEEK_BUFFER_SIZE);
         var k = -1;
-        for i in lim { if rest[i] == '\n' { k = i; break; } }
+        var i = r.scanned;   // what an earlier feed searched is not searched again
+        while i < lim { if rest[i] == '\n' { k = i; break; } i++; }
+        r.scanned = if k >= 0 { 0 } else { lim };
         var line_len = 0;
         var at_eof = false;
         if k >= 0 {
@@ -374,13 +378,26 @@ fn form_name(r: const Reader&) -> const u8[:] {
 }
 
 // Part.FileName: the "filename" parameter, through filepath.Base (RFC 7578
-// §4.2: no directories).
-fn file_name(r: const Reader&) -> const u8[:] {
-    if r.disp.err != 0 { return ""; }
+// §4.2: no directories), and then safer than Go's to use as a file's name:
+// a backslash is a separator on every system (browsers send Windows
+// paths), NUL bytes are dropped, and "." and ".." (and a name of
+// separators only) are "".
+fn file_name(r: const Reader&) -> u8[>..] {
+    var out: u8[>..] = [];
+    if r.disp.err != 0 { return out; }
     let f = mime::get_or(r.disp, "filename");
-    if f.len == 0 { return ""; }
-    return base_name(f);
+    if f.len == 0 { return out; }
+    var b = base_name(f);
+    var s = b.len;
+    while s > 0 && b[s - 1] != '\\' { s--; }
+    for c in b[s..] { if c != 0 { out.push(c); } }
+    if out == "." || out == ".." || out == "/" { out.clear(); }
+    return out;
 }
+
+// Whether the part has a filename parameter (it is a file, for ReadForm,
+// whatever file_name makes of it).
+fn has_file_name(r: const Reader&) -> bool { r.disp.err == 0 && mime::get_or(r.disp, "filename").len > 0 }
 
 // filepath.Base: the last element of the path, its trailing separators
 // removed; "." for "", the separator for one made of separators only.
@@ -471,8 +488,15 @@ fn form_data_content_type(w: const Writer&) -> u8[>..] {
 
 // CreatePart: the boundary line and the header, its keys sorted (each
 // key's values in their order), as written; the caller then appends the
-// part's body to out.
-fn create_part(w: Writer&, out: u8[>..]&, fields: const mime::KV[:]) {
+// part's body to out. ERR_HEADER_FIELD, and nothing written, for a key
+// that is not printable ASCII without ':' or a value with CR, LF or NUL
+// (Go writes them, splitting the header).
+fn create_part(w: Writer&, out: u8[>..]&, fields: const mime::KV[:]) -> i64 {
+    for f in fields {
+        if f.key.len == 0 { return mime::ERR_HEADER_FIELD; }
+        for c in f.key { if c <= 0x20 || c >= 0x7f || c == ':' { return mime::ERR_HEADER_FIELD; } }
+        for c in f.value { if c == '\r' || c == '\n' || c == 0 { return mime::ERR_HEADER_FIELD; } }
+    }
     if w.started { out.append("\r\n--"); } else { out.append("--"); }
     out.append(w.boundary);
     out.append("\r\n");
@@ -487,12 +511,13 @@ fn create_part(w: Writer&, out: u8[>..]&, fields: const mime::KV[:]) {
     }
     out.append("\r\n");
     w.started = true;
+    return 0;
 }
 
-fn create_part(w: Writer&, out: u8[>..]&, h: const textproto::Header&) {
+fn create_part(w: Writer&, out: u8[>..]&, h: const textproto::Header&) -> i64 {
     var kvs: mime::KV[>..] = [];
     for f in h.fields { kvs.push(mime::KV { key: f.key, value: f.value }); }
-    create_part(w, out, kvs);
+    return create_part(w, out, kvs);
 }
 
 // escapeQuotes: \ and " escaped, CR and LF percent-encoded.
@@ -522,26 +547,28 @@ fn file_content_disposition(fieldname: const u8[:], filename: const u8[:]) -> u8
 }
 
 // CreateFormFile: a part for a file field, application/octet-stream.
-fn create_form_file(w: Writer&, out: u8[>..]&, fieldname: const u8[:], filename: const u8[:]) {
+fn create_form_file(w: Writer&, out: u8[>..]&, fieldname: const u8[:], filename: const u8[:]) -> i64 {
     var cd: u8[>..] = [];
     file_content_disposition(cd, fieldname, filename);
-    create_part(w, out, [mime::KV { key: "Content-Disposition", value: cd },
+    return create_part(w, out, [mime::KV { key: "Content-Disposition", value: cd },
                          mime::KV { key: "Content-Type", value: "application/octet-stream" }]);
 }
 
 // CreateFormField: a part for a plain field.
-fn create_form_field(w: Writer&, out: u8[>..]&, fieldname: const u8[:]) {
+fn create_form_field(w: Writer&, out: u8[>..]&, fieldname: const u8[:]) -> i64 {
     var cd: u8[>..] = [];
     cd.append("form-data; name=\"");
     escape_quotes(cd, fieldname);
     cd.push('"');
-    create_part(w, out, [mime::KV { key: "Content-Disposition", value: cd }]);
+    return create_part(w, out, [mime::KV { key: "Content-Disposition", value: cd }]);
 }
 
 // WriteField: a plain field and its value.
-fn write_field(w: Writer&, out: u8[>..]&, fieldname: const u8[:], value: const u8[:]) {
-    create_form_field(w, out, fieldname);
+fn write_field(w: Writer&, out: u8[>..]&, fieldname: const u8[:], value: const u8[:]) -> i64 {
+    let e = create_form_field(w, out, fieldname);
+    if e != 0 { return e; }
     out.append(value);
+    return 0;
 }
 
 // Close: the final boundary line.

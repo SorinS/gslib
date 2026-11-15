@@ -79,8 +79,8 @@ RFC 2231 continuations and `utf-8`/`us-ascii` values).
 
 ```goose
 let B_ENCODING: u8 = 'b';    let Q_ENCODING: u8 = 'q';
-fn encode_word(out: u8[>..]&, enc: u8, charset: const u8[:], s: const u8[:])   // WordEncoder.Encode
-fn encode_word(enc: u8, charset: const u8[:], s: const u8[:]) -> u8[>..]
+fn encode_word(out: u8[>..]&, enc: u8, charset: const u8[:], s: const u8[:]) -> bool   // WordEncoder.Encode
+fn encode_word(enc: u8, charset: const u8[:], s: const u8[:]) -> u8[>..]                // "" for a bad charset
 fn decode_word(out: u8[>..]&, word: const u8[:]) -> i64                       // WordDecoder.Decode
 fn decode_header(out: u8[>..]&, header: const u8[:]) -> i64                  // WordDecoder.DecodeHeader
 fn decode_word_charset<F>(out: u8[>..]&, word: const u8[:]) -> i64           // with a CharsetReader block
@@ -157,14 +157,15 @@ fn feed(r: Reader&, data: const u8[:])     fn finish(r: Reader&)
 fn next(r: Reader&, out: u8[>..]&) -> i64             // EV_NEED_MORE, EV_PART, EV_DATA, EV_PART_END, EV_END, EV_ERROR
 fn next_part(r: Reader&) -> i64                       // NextPart: past the rest of the current part
 fn form_name(r: const Reader&) -> const u8[:]         // Part.FormName
-fn file_name(r: const Reader&) -> const u8[:]         // Part.FileName (filepath.Base)
+fn file_name(r: const Reader&) -> u8[>..]             // Part.FileName (filepath.Base), made safe
+fn has_file_name(r: const Reader&) -> bool             // a filename parameter: a file, for ReadForm
 fn message(r: const Reader&, out: u8[>..]&)
 
 struct Writer { .. }    fn new_writer() -> Writer     // a random boundary from getentropy(3)
 fn boundary(w) -> const u8[:]    fn set_boundary(w, b) -> i64    fn form_data_content_type(w) -> u8[>..]
-fn create_part(w, out, fields: const mime::KV[:])     fn create_part(w, out, h: const textproto::Header&)
-fn create_form_file(w, out, fieldname, filename)      fn create_form_field(w, out, fieldname)
-fn write_field(w, out, fieldname, value)               fn close(w, out)
+fn create_part(w, out, fields: const mime::KV[:]) -> i64     fn create_part(w, out, h: const textproto::Header&) -> i64
+fn create_form_file(w, out, fieldname, filename) -> i64      fn create_form_field(w, out, fieldname) -> i64
+fn write_field(w, out, fieldname, value) -> i64              fn close(w, out)
 fn file_content_disposition(out, fieldname, filename)  // FileContentDisposition
 
 root struct Form { max_parts: i64 = 1000, max_headers: i64 = 10000, tmp_dir: u8[>..], .. }
@@ -281,10 +282,25 @@ Deliberate, or where Go's own result depends on how its input is read:
   `strings.Reader` reading, or the whole line.
 * **ReadForm's temporary files**: one per spilled file (Go's
   `GODEBUG=multipartfiles=distinct`), named `multipart-` and 16 random hex
-  digits in `Form.tmp_dir`, else `$TMPDIR`, else `/tmp`; written with
-  `os`'s `write_file`, which has no `O_EXCL` (a name that exists is
-  refused; the name is unguessable). File contents are read whole
+  digits in `Form.tmp_dir`, else `$TMPDIR`, else `/tmp`; created with
+  `O_CREAT|O_EXCL|O_NOFOLLOW`, mode 0600 (`src/path.c`): never a file or
+  a symbolic link that is there (another random name is tried), never
+  readable by other users. File contents are read whole
   (`file_content`), not through Go's `File` (`ReaderAt`, `Seeker`).
+* **FileName** is Go's `filepath.Base` of the parameter, and then safer
+  than Go's: a backslash is a separator on every system (browsers send
+  Windows paths), NUL bytes are dropped, and `.`, `..` and a name of
+  separators only are `""`. A part with a `filename` parameter is still a
+  file to `read_form` (`has_file_name`), as in Go.
+* **The writer refuses** what Go writes and a reader would take apart:
+  `create_part` (and so `create_form_file`, `create_form_field`,
+  `write_field`) returns `ERR_HEADER_FIELD`, writing nothing, for a header
+  value with CR, LF or NUL, or a key that is empty or has `:`, a space or
+  a control character; `encode_word` refuses a charset that is not a
+  token (a `?` would end the word, CR LF the header).
+* **The preamble** (lines before the first boundary) is searched for each
+  line's end once however the body is fed: Go's 4096-byte limit per line
+  still holds, but a byte at a time no longer rescans it.
 * **GODEBUG** is not read: `Form.max_parts`, `Form.max_headers`,
   `Reader.max_headers` and `Reader.max_header_bytes` carry Go's defaults
   and are set by the caller.

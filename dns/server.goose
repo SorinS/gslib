@@ -11,15 +11,23 @@
 //
 // One request at a time, UDP and TCP from one loop. Requests that are
 // responses, or have no single question, get FORMERR (miekg's default
-// MsgAcceptFunc); other opcodes than QUERY, NOTIFY and UPDATE get NOTIMP.
+// MsgAcceptFunc); other opcodes than QUERY, NOTIFY and UPDATE get NOTIMP;
+// more than one OPT record, or options that do not parse, FORMERR, and an
+// EDNS version above 0 BADVERS (RFC 6891 §6.1.1, §6.1.3).
 // With a TSIG key, a signed request is verified first: one that fails gets
 // NOTAUTH with the TSIG error (RFC 8945 §5.2) and never reaches the
-// handler, and replies to signed requests are signed. A UDP reply is cut
-// to the client's EDNS0 size (512 without) and marked truncated; a TCP
-// reply too large for one message (a zone transfer) goes in several, each
-// signed over the one before (RFC 8945 §5.3.1). serve returns after
-// max_requests requests (0: never), or when the handler returns from
-// its own function.
+// handler, and replies to signed requests are signed. The request's time
+// must be within the server's fudge, whatever fudge the request names. A
+// UDP reply is cut to the client's EDNS0 size (512 without), but to no
+// more than max_udp_size (1232, RFC 9715's advice), and marked truncated;
+// a TCP reply too large for one message (a zone transfer) goes in several,
+// each signed over the one before (RFC 8945 §5.3.1).
+//
+// A TCP connection has idle_ms for each query, all of it, and its replies
+// as long to go out; it is closed after tcp_queries queries. While it is
+// open, UDP is served between its bytes, so a slow client holds up only
+// itself. serve returns after max_requests requests (0: never), or when
+// the handler returns from its own function.
 
 namespace dns;
 
@@ -48,9 +56,12 @@ struct ServerConfig {
     tcp:          bool      = true,
     tsig_name:    u8[..255] = "",   // a TSIG key: name (text), secret (base64)
     tsig_secret:  u8[..128] = "",
-    tsig_fudge:   u16       = 300,
+    tsig_alg:     u8[..64]  = "",   // the key's algorithm ("hmac-sha256."); "" for any tsig_hash knows
+    tsig_fudge:   u16       = 300,  // also the most a request's time may be off
     max_requests: i64       = 0,
-    idle_ms:      i32       = 8000, // how long a TCP connection may wait for its next query
+    idle_ms:      i32       = 8000, // how long a TCP connection has for each query, all of it
+    tcp_queries:  i64       = 128,  // queries on one TCP connection before it is closed (0: no limit; miekg's MaxTCPQueries)
+    max_udp_size: i64       = 1232, // the largest UDP reply, whatever the client's EDNS0 size says
 }
 
 struct Server { udp: i64, tcp: i64, port: i32, err: i64 }
@@ -92,9 +103,11 @@ fn server_close(s: Server&) {
 }
 
 // The FORMERR or NOTIMP for a request the server will not hand on, or
-// RCODE_SUCCESS for one it will (miekg's DefaultMsgAcceptFunc).
+// RCODE_SUCCESS for one it will (miekg's DefaultMsgAcceptFunc), or 0xFFFF
+// for one it drops unanswered: a response, or anything shorter than a
+// header (as miekg and BIND drop it: there is no ID to answer to).
 fn accept_check(w: const u8[:]) -> u16 {
-    if w.len < 12 { return RCODE_FORMAT_ERROR; }
+    if w.len < 12 { return 0xFFFF; }
     let flags = get16(w, 2);
     if flags & 0x8000 != 0 { return 0xFFFF; }        // a response: ignored
     let op = ((flags >> 11) & 15) as! u8;
@@ -107,13 +120,31 @@ fn accept_check(w: const u8[:]) -> u16 {
 
 // A bare reply to the raw request: its ID, opcode and question if it has
 // one that reads, the rcode.
+// Nothing for a request shorter than a header.
 fn error_reply(w: const u8[:], rcode: u16, out: u8[>..]&) {
+    if w.len < 12 { return; }
     var r = Msg { .. };
     var q = Msg { .. };
     let e = unpack(w, q);
     if e == OK { set_reply(r, q); } else { r.hdr.id = get16(w, 0); r.hdr.response = true; r.hdr.opcode = ((get16(w, 2) >> 11) & 15) as! u8; }
     r.hdr.rcode = rcode;
     pack(r, out);
+}
+
+// RCODE_SUCCESS for a request whose EDNS0 is fine (or absent); FORMERR for
+// more than one OPT or options that do not parse; BADVERS for a version
+// above 0.
+fn edns_check(req: const Msg&) -> u16 {
+    var opts = 0;
+    var rc = RCODE_SUCCESS;
+    each_rr(req.extra) { rr =>
+        if rr.rtype == TYPE_OPT {
+            opts++;
+            if opts > 1 || !options_valid(rr.rdata(req.extra)) || rr.name(req.extra).len != 1 { rc = RCODE_FORMAT_ERROR; }
+            else if opt_version(rr) != 0 { rc = RCODE_BAD_VERS; }
+        }
+    };
+    return rc;
 }
 
 // Handles one request: the reply's messages (several only for a large
@@ -138,10 +169,11 @@ fn handle<H, S>(cfg: const ServerConfig&, w: const u8[:], peer: Peer&) {
         secret.append(sec);
         let now = time_ns() / 1000000000;
         var err: u16 = 0;
-        if cfg.tsig_name.len == 0 || wn != OK || !name_equal(kn, want) || tsig_hash(name_text(an)) == 0 {
+        let pinned = cfg.tsig_alg.len == 0 || tsig_hash(name_text(an)) == tsig_hash(cfg.tsig_alg);
+        if cfg.tsig_name.len == 0 || wn != OK || !name_equal(kn, want) || tsig_hash(name_text(an)) == 0 || !pinned {
             err = RCODE_BAD_KEY;
         } else {
-            let mac, ve = tsig_verify(w, secret, [], false, now);
+            let mac, ve = tsig_verify_fudge(w, secret, [], false, now, cfg.tsig_fudge);
             if ve == ERR_TIME { err = RCODE_BAD_TIME; request_mac.append(mac); }
             else if ve != OK { err = RCODE_BAD_SIG; }
             else { request_mac.append(mac); }
@@ -168,13 +200,23 @@ fn handle<H, S>(cfg: const ServerConfig&, w: const u8[:], peer: Peer&) {
     var resp = Msg { .. };
     set_reply(resp, req);
     peer.drop = false;
-    H(req, resp, peer);
-    if peer.drop { return; }
+    let ee = edns_check(req);
+    if ee != RCODE_SUCCESS {
+        // Not the handler's: FORMERR, or BADVERS with an OPT of version 0.
+        if ee == RCODE_BAD_VERS { set_edns0(resp, 1232, false); }
+        resp.hdr.rcode = ee;
+    } else {
+        H(req, resp, peer);
+        if peer.drop { return; }
+    }
     let kn, an, ke = tsig_key(w);
     if !peer.tcp {
-        // Cut to what the client can take, leaving room for a TSIG.
+        // Cut to what the client can take (no more than max_udp_size: a
+        // small query must not draw a large reply to an address it forged),
+        // leaving room for a TSIG.
         let room = if peer.tsig == OK { 100 + kn.len + an.len + 64 } else { 0 };
-        truncate(resp, udp_size(req) - room);
+        let size = if udp_size(req) < cfg.max_udp_size { udp_size(req) } else { cfg.max_udp_size };
+        truncate(resp, size - room);
         let e = pack(resp, out);
         if e != OK { out.clear(); error_reply(w, RCODE_SERVER_FAILURE, out); }
         if peer.tsig == OK { tsig_sign(out, name_text(kn), name_text(an), secret, cfg.tsig_fudge, time_ns() / 1000000000, request_mac, false); }
@@ -223,6 +265,53 @@ fn handle<H, S>(cfg: const ServerConfig&, w: const u8[:], peer: Peer&) {
     }
 }
 
+fn more(cfg: const ServerConfig&, handled: i64) -> bool { cfg.max_requests == 0 || handled < cfg.max_requests }
+
+// One datagram off the UDP socket, handled and answered; false if none was
+// there.
+fn serve_udp<F>(srv: const Server&, cfg: const ServerConfig&, buf: u8[:], from: u8[:], flen: u8[:], text: u8[:]) -> bool {
+    let n = dnsnet_recvfrom(srv.udp, buf, from, flen);
+    if n < 0 { return false; }
+    let to = from[..flen[0]];
+    var peer = Peer { false, "", ERR_NO_SIG, false };
+    let tl = dnsnet_addr_text(to, text);
+    if tl > 0 { peer.addr.append(text[..tl]); }
+    let w = buf[..n];
+    handle(cfg, w, peer, F) { out =>
+        if dnsnet_sendto(srv.udp, out, to) != out.len {
+            // Too large for the path, or a send error: a bare truncated
+            // reply instead, which sends the client to TCP.
+            var q = Msg { .. };
+            var r = Msg { .. };
+            if unpack(w, q) == OK {
+                set_reply(r, q);
+                r.hdr.truncated = true;
+                var small: u8[>..] = [];
+                if pack(r, small) == OK { dnsnet_sendto(srv.udp, small, to); }
+            }
+        }
+    };
+    return true;
+}
+
+// Writes one framed message by deadline (clock_ns), in pieces, so a peer
+// that reads slowly gets no more time than that.
+fn write_tcp_msg_by(fd: i64, w: const u8[:], deadline: i64) -> i64 {
+    if w.len > 65535 { return ERR_BUF; }
+    var framed: u8[>..] = [];
+    put16(framed, w.len as! u16);
+    framed.append(w);
+    var i = 0;
+    while i < framed.len {
+        let left = ms_left(deadline);
+        if left == 0 { return ERR_TIMEOUT; }
+        let e = if i + 4096 < framed.len { i + 4096 } else { framed.len };
+        if net::write(fd, framed[i..e], left) != e - i { return ERR_IO; }
+        i = e;
+    }
+    return OK;
+}
+
 // Serves until max_requests requests (0: for ever).
 fn serve<F>(srv: Server&, cfg: const ServerConfig&) {
     var handled = 0;
@@ -231,43 +320,57 @@ fn serve<F>(srv: Server&, cfg: const ServerConfig&) {
     var from: u8[>..] = [];
     from.resize(256, 0);
     var flen: u8[1] = [0];
-    var peer = Peer { false, "", ERR_NO_SIG, false };
+    var peer = Peer { true, "", ERR_NO_SIG, false };
     var text: u8[64] = [0; 64];
-    while cfg.max_requests == 0 || handled < cfg.max_requests {
+    var req: u8[>..] = [];
+    var chunk: u8[>..] = [];
+    chunk.resize(65537, 0);
+    let idle_ns = cfg.idle_ms as i64 * 1000000;
+    while more(cfg, handled) {
         let ready = dnsnet_wait2(srv.udp, srv.tcp, 0);
         if ready < 0 { continue; }
         if ready & 1 != 0 {
-            let n = dnsnet_recvfrom(srv.udp, buf, from, flen);
-            if n >= 0 {
-                let to = from[..flen[0]];
-                peer.tcp = false;
-                peer.addr.clear();
-                let tl = dnsnet_addr_text(to, text);
-                if tl > 0 { peer.addr.append(text[..tl]); }
-                handle(cfg, buf[..n], peer, F) { out => dnsnet_sendto(srv.udp, out, to); };
-                handled++;
-            }
+            if serve_udp(srv, cfg, buf, from, flen, text, F) { handled++; }
         }
-        if ready & 2 != 0 {
-            let c = dnsnet_accept(srv.tcp, 1000);
-            if c >= 0 {
-                peer.tcp = true;
-                peer.addr.clear();
-                if dnsnet_peername(c, from, flen) >= 0 {
-                    let tl = dnsnet_addr_text(from[..flen[0]], text);
-                    if tl > 0 { peer.addr.append(text[..tl]); }
-                }
-                // Queries on the connection until it closes or idles.
-                var req: u8[>..] = [];
-                while cfg.max_requests == 0 || handled < cfg.max_requests {
-                    req.clear();
-                    let e = read_tcp_msg(c, req, cfg.idle_ms);
-                    if e != OK { break; }
-                    handle(cfg, req, peer, F) { out => write_tcp_msg(c, out, cfg.idle_ms); };
-                    handled++;
-                }
-                net::close(c);
-            }
+        if ready & 2 == 0 || !more(cfg, handled) { continue; }
+        let c = dnsnet_accept(srv.tcp, 1000);
+        if c < 0 { continue; }
+        peer.addr.clear();
+        if dnsnet_peername(c, from, flen) >= 0 {
+            let tl = dnsnet_addr_text(from[..flen[0]], text);
+            if tl > 0 { peer.addr.append(text[..tl]); }
         }
+        // Queries on the connection until it closes, is slow, or has had
+        // its tcp_queries. Each is read as its bytes come, by its deadline,
+        // with datagrams served between.
+        var queries = 0;
+        var alive = true;
+        while alive && more(cfg, handled) && (cfg.tcp_queries == 0 || queries < cfg.tcp_queries) {
+            let deadline = clock_ns() + idle_ns;
+            req.clear();
+            var need = 2;
+            while req.len < need && more(cfg, handled) {
+                let left = ms_left(deadline);
+                if left == 0 { alive = false; break; }
+                let r = dnsnet_wait2(srv.udp, c, left);
+                if r < 0 { alive = false; break; }
+                if r & 1 != 0 && more(cfg, handled) {
+                    if serve_udp(srv, cfg, buf, from, flen, text, F) { handled++; }
+                }
+                if r & 2 != 0 {
+                    let n = net::read(c, chunk[.. need - req.len], 1);
+                    if n <= 0 { alive = false; break; }
+                    req.append(chunk[..n]);
+                    if need == 2 && req.len == 2 { need = 2 + get16(req, 0) as i64; }
+                }
+            }
+            if !alive || !more(cfg, handled) { break; }
+            queries++;
+            handle(cfg, req[2..], peer, F) { out =>
+                if alive && write_tcp_msg_by(c, out, clock_ns() + idle_ns) != OK { alive = false; }
+            };
+            handled++;
+        }
+        net::close(c);
     }
 }

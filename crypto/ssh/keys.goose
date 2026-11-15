@@ -361,7 +361,8 @@ fn fingerprint_md5(k: const PublicKey&) -> u8[>..] {
 
 let OPENSSH_MAGIC: const u8[:] = "openssh-key-v1\x00";
 
-// A private key from its x509 form, with its public key.
+// A private key from its x509 form, with its public key, and its comment
+// (one longer than 1024 bytes left out: never a part of it).
 fn private_key(key: const x509::PrivateKey&, comment: const u8[:] = "") -> PrivateKey, bool {
     let pub, ok = public_of(key);
     var k = PrivateKey { key: key, public: pub, comment: [] };
@@ -540,6 +541,9 @@ fn parse_openssh_private(b: const u8[:], priv: Rd, pub_blob: const u8[:]) -> Pri
         let c = curve_of(kind);
         let sk, okp = pad_be(bytes(b, d), c.len);
         if p.bad || !okd || !okp || bytes(b, cn) != curve_name(kind) { return none, KEY_MALFORMED; }
+        // 1 <= d < n, as the PKCS#8 and SEC 1 readers hold it.
+        let sc, oks = bignum::ec_scalar(c, sk);
+        if !oks { return none, KEY_MALFORMED; }
         key.ec_sk.append(sk);
     } else if kind == x509::KEY_RSA {
         let n, ok1 = get_mpint(p, b);

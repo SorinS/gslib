@@ -7,6 +7,12 @@ their text form, zone files, EDNS0, DNSSEC, TSIG and SIG(0), dynamic
 updates, zone transfers, a client and a server; and two tools,
 `goose-dig` and `goose-dnsd`.
 
+DNSSEC here is the primitives (signing, verifying one RRSIG with one
+DNSKEY, DS, NSEC3 hashing and matching), as in miekg: there is no
+validating resolver, nothing that builds a chain of trust from a root
+anchor or proves non-existence. A caller who needs validated answers
+must do that walk itself, or ask a validating resolver it trusts.
+
 | Module | What |
 |---|---|
 | `dns` | errors; the numbers and names of types, classes, rcodes and opcodes; domain names: wire and text forms, escapes, labels, comparison, canonical order, `reverse_addr` |
@@ -116,12 +122,18 @@ body. To answer early, fill in `resp` and end that call of the block with
   [alg:]name:secret] [-x address] [name] [type] [class]`; AXFR and
   IXFR=serial transfer the zone.
 - **goose-dnsd** (`tools/dnsd.goose`), an authoritative server for zone
-  files: `goose-dnsd [-a address] [-p port] [-y name:secret] [-n requests]
-  [-v] origin=file ...`. Answers, CNAMEs followed within the zone,
-  wildcards, referrals with glue, NXDOMAIN and NODATA with the SOA, RRSIGs
-  from the zone when DO is set, AXFR and IXFR (the whole zone) over TCP,
-  NOTIFY, dynamic updates applied in memory; with `-y`, transfers and
-  updates must be signed.
+  files: `goose-dnsd [-a address] [-p port] [-y [alg:]name:secret] [-u]
+  [-n requests] [-v] origin=file ...`. Answers, CNAMEs followed within the
+  zone, wildcards, referrals with glue, NXDOMAIN and NODATA with the SOA,
+  RRSIGs from the zone when DO is set, AXFR and IXFR (the whole zone) over
+  TCP, NOTIFY, dynamic updates applied in memory. Transfers and updates
+  must be signed with the `-y` key (an algorithm given pins it); **without
+  `-y` they are REFUSED** unless `-u` allows them unsigned from anyone (an
+  earlier version allowed them by default). Updates get RFC 2136's checks:
+  §3.2's on prerequisites and §3.4.1's prescan (class, meta types, TTLs and
+  rdata of deletes, complete rdata on adds), FORMERR for what fails; an
+  added SOA replaces the old only when its serial is newer, and the apex
+  keeps its last NS.
 
 ## Examples
 
@@ -152,13 +164,14 @@ at -O0, -O2 and `--debug` (natively too with `--native`):
 | Test | What |
 |---|---|
 | rr | 160 records of every type, in many forms (escapes, quoted and bare strings, `\#` for known types, odd addresses, LOC, APL, SVCB parameters, TTL units, classes), read into miekg's wire bytes, written as miekg's text, and read back; 23 lines miekg refuses, refused |
-| msg | 52 messages of those records in every section, with EDNS0 options, extended rcodes and opcodes: packed with compression into miekg's bytes, miekg's unpacked and written as its `Msg.String()` |
-| zone | a zone file with `$ORIGIN`, `$TTL`, `$INCLUDE` (with and without an origin), `$GENERATE`, omitted owners and TTLs, parentheses and comments, read into the records miekg's `ZoneParser` reads, stopping at the same error on the same line; the same with CRLF line ends |
-| dnssec | miekg's keys (RSASHA1, RSASHA1-NSEC3-SHA1, RSASHA256, RSASHA512, ECDSA P-256 and P-384, Ed25519) read from its private-key files and written back the same; its signatures over 5 RRsets (case, wildcards, duplicates) verified, and refused after a byte changes; the same RRsets signed here into the same signatures (RSA, Ed25519) or ones that verify (ECDSA); DS and key tags; NSEC3 hashes (RFC 5155's too); RFC 8080's Ed25519 RRSIG remade exactly, RFC 6605's ECDSA one verified |
-| tsig | for HMAC-SHA1, -SHA224, -SHA256, -SHA384 and -SHA512, miekg's signed query, reply (over the query's MAC) and timers-only message remade byte for byte and verified, and refused with a changed byte, a wrong secret, or the time outside the fudge; HMAC-MD5 with itself |
-| sig0 | miekg's SIG(0) messages (RSASHA256, ECDSA P-256) verified, refused expired or changed; messages signed here with miekg's keys verified |
-| misc | the name functions, resolv.conf and `NameList`, an update built with every helper (miekg's bytes and text), EDNS0 options (miekg's bytes and text), and `Truncate` at four sizes (miekg's bytes) |
-| client | against goose-dnsd on 127.0.0.1: UDP and TCP, CNAME chains, NXDOMAIN, NODATA, wildcards, referrals, truncation and TCP fallback, DO, an AXFR of 5024 records in several TSIG-signed messages (refused unsigned), signed updates and their prerequisites, a wrong key answered NOTAUTH, NOTIFY |
+| msg | 52 messages of those records in every section, with EDNS0 options, extended rcodes and opcodes: packed with compression into miekg's bytes, miekg's unpacked and written as its `Msg.String()`; hostile ones: HIP past 65535 bytes decompressed, SOA, RRSIG, NSEC3 and MX cut short or empty refused, update deletes and empty bitmaps taken |
+| zone | a zone file with `$ORIGIN`, `$TTL`, `$INCLUDE` (with and without an origin), `$GENERATE`, omitted owners and TTLs, parentheses and comments, read into the records miekg's `ZoneParser` reads, stopping at the same error on the same line; the same with CRLF line ends; `new_rr` refusing `$INCLUDE` and an empty token; records without rdata |
+| dnssec | miekg's keys (RSASHA1, RSASHA1-NSEC3-SHA1, RSASHA256, RSASHA512, ECDSA P-256 and P-384, Ed25519) read from its private-key files and written back the same; its signatures over 5 RRsets (case, wildcards, duplicates) verified, and refused after a byte changes; the same RRsets signed here into the same signatures (RSA, Ed25519) or ones that verify (ECDSA); DS and key tags; NSEC3 hashes (RFC 5155's too); RFC 8080's Ed25519 RRSIG remade exactly, RFC 6605's ECDSA one verified; a revoked key; NSEC3 records cut short or over 150 iterations |
+| tsig | for HMAC-SHA1, -SHA224, -SHA256, -SHA384 and -SHA512, miekg's signed query, reply (over the query's MAC) and timers-only message remade byte for byte and verified, and refused with a changed byte, a wrong secret, or the time outside the fudge; HMAC-MD5 with itself; a MAC size past the message, BADKEY for an unknown algorithm, the server's fudge cap, a keyed AXFR refusing an unsigned message |
+| sig0 | miekg's SIG(0) messages (RSASHA256, ECDSA P-256) verified, refused expired or changed; messages signed here with miekg's keys verified; a signer past the rdata refused |
+| misc | the name functions, resolv.conf and `NameList`, an update built with every helper (miekg's bytes and text), EDNS0 options (miekg's bytes and text), and `Truncate` at four sizes (miekg's bytes); EDE text escaped |
+| client | against goose-dnsd on 127.0.0.1: UDP and TCP, CNAME chains, NXDOMAIN, NODATA, wildcards, referrals, truncation and TCP fallback, DO, an AXFR of 5024 records in several TSIG-signed messages (refused unsigned), signed updates and their prerequisites, a wrong key answered NOTAUTH, NOTIFY; updates RFC 2136 refuses (rdata cut short, meta types, TTLs on deletes and prerequisites), the apex's last NS kept, an SOA replaced only by a newer one |
+| server | in one process: the handler's Peer over UDP and TCP on 127.0.0.1 and ::1; UDP replies capped at 1232; BADVERS, and FORMERR for two OPTs or a short option; a TCP client stopped mid-query holding up no UDP query; `tcp_queries` |
 
 `python3 scripts/interop.py` (`make interop-dns`, needs Go; dig if
 installed): dig against goose-dnsd (answers, truncation, a TSIG-signed AXFR
@@ -189,15 +202,53 @@ yet (the top README's Requirements).
   when it packs it.
 - **RFC 3597 rdata** (`\# n hex`) for a known type must fit that type
   exactly; miekg keeps what it can read and drops the rest.
-- **The server** handles one request at a time, UDP and TCP from one loop
-  (Goose threads need a native build). A request with a bad TSIG is
-  answered NOTAUTH by the server itself (RFC 8945 §5.2), before the
-  handler; in miekg the handler checks `TsigStatus`. Replies to signed
-  requests are signed by the server.
+- **The server** drops a request shorter than a DNS header unanswered (as
+  miekg and BIND do), and handles one request at a time, UDP and TCP from one loop
+  (Goose threads need a native build). A TCP connection has `idle_ms`
+  (8 s) for each query, all of its bytes, and as long for each reply to go
+  out; it is closed after `tcp_queries` (128) queries, and UDP is served
+  between its bytes, so a slow client stalls no one else. A UDP reply is
+  cut to the client's EDNS0 size but to no more than `max_udp_size`
+  (1232), so a forged small query draws no large reply; when a datagram
+  cannot be sent, a bare truncated reply goes instead. More than one OPT
+  record or options cut short get FORMERR, an EDNS version above 0 BADVERS
+  (RFC 6891). A request with a bad TSIG is answered NOTAUTH by the server
+  itself (RFC 8945 §5.2), before the handler; in miekg the handler checks
+  `TsigStatus`. Its time must be within the server's `tsig_fudge`, not the
+  fudge the request names, and `tsig_alg` pins the key's algorithm.
+  Replies to signed requests are signed by the server.
+- **Rdata must be complete**: miekg's unpacker stops quietly at any field
+  boundary (an SOA of two names, an RRSIG without its signature); here
+  every field of the type must be there, and only the fields that run to
+  the end (bitmaps, hex, base64, SVCB parameters) may be empty. SVCB and
+  HTTPS parameters are checked inside, as miekg unpacks them: alpn's ids
+  fill it exactly, mandatory is pairs of bytes, port two bytes, the hints
+  whole addresses, no-default-alpn and ohttp empty. Rdata may
+  be empty only in dynamic update's deletes and prerequisites (class ANY
+  or NONE) or where the whole of it may be; the same holds for `list_valid`
+  and for zone files (`ZoneOptions.empty_rdata` allows it; `new_rr` sets it,
+  for update deletes written as text). Rdata that decompresses past 65535
+  bytes is ERR_BUF.
+- **LOC** in text is held to RFC 1876's ranges: latitude to 90°,
+  longitude to 180°, altitude from -100000 m to 42849672.95 m; an
+  infinite or NaN number is refused.
+- **`new_rr` reads no `$INCLUDE`** (miekg's `NewRR` does): text from
+  elsewhere would otherwise read files. `parse_zone` reads it when
+  `ZoneOptions.include` is set.
+- **Zone transfers with a key**: every message must be signed. RFC 8945
+  §5.3.1 lets a server sign only every 100th, and miekg takes the unsigned
+  ones between, but those could come from anyone on the path.
+- **NSEC3**: `nsec3_match` and `nsec3_cover` take no record with more than
+  150 iterations (`NSEC3_MAX_ITERATIONS`, RFC 9276 §3.2) and no malformed
+  one. A DNSKEY with the REVOKE flag (RFC 5011) verifies only an RRSIG over
+  the DNSKEY RRset.
+- **EDNS0 text** (NSID, EDE, ESU, ZONEVERSION) is written with bytes outside
+  printable ASCII as `\DDD`; miekg writes them as they are.
 - **Message IDs** come from the runtime's entropy (`random_seed`), not
   crypto/bignum's. Only dns.dnssec and dns.sig0 need bignum's random bytes
   (for keys), so the client, the server, TSIG and both tools run on
-  Windows too.
+  Windows too; there `random_seed` may fall back to the clocks, which
+  makes IDs guessable (use TSIG, or TCP, against spoofing there).
 - **RRSIG records made here** have the RRset's TTL (RFC 4034 §3); miekg
   leaves the RRSIG's own TTL to the caller.
 
@@ -217,3 +268,4 @@ Kept as miekg has them: `$GENERATE`'s records default to TTL 3600, not the
   `idn` package).
 - goose-dnsd gives no NSEC or NSEC3 proofs of non-existence, and IXFR is
   always the whole zone.
+- No validating resolver (above): DNSSEC primitives only.

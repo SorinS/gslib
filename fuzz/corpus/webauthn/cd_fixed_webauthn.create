@@ -1,0 +1,1 @@
+{"type":"webauthn.create","challenge":"MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY","origin":"https://example.org","crossOrigin":true,"topOrigin":"https://top.example"}

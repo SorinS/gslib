@@ -1,1 +1,1 @@
-xcrypto vectors: 265 checks, 0 failed
+xcrypto vectors: 269 checks, 0 failed

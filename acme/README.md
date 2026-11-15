@@ -148,7 +148,14 @@ And what a hostile server might send: tokens that are not base64url
 (`../../victim`, line ends, NUL) refused before anything is published, so
 http-01 never writes outside the web root; directory, order and
 authorization URLs too long to keep, or with a line end, refuse the whole
-document rather than lose the URL; and `obtain` publishes nothing for an
+document rather than lose the URL, as do an expires or profile over 64
+bytes, a challenge type over 32, more than 8 challenges and an embedded
+problem whose type is over 256 bytes (a problem response with one keeps
+its status, without the type). Only text for people is cut: a problem's
+detail at 1024 bytes (`truncated` set); and the directory's profile
+names, which the client decides nothing by, are left empty rather than
+cut when over 1024 bytes or a name has a line end
+(`profiles_truncated`). `obtain` publishes nothing for an
 authorization whose identifier was not ordered (compared without regard to
 case, wildcards by their base name).
 

@@ -1,0 +1,4 @@
+nameserver 192.0.2.53
+nameserver 2001:db8::53
+search example.org corp.example.org
+options ndots:2 timeout:3 attempts:4

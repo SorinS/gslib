@@ -203,6 +203,21 @@ fn event_logs() {
     bad4[start + 89 + 8] = 0xff;    // digest count
     let r5, e5 = tpm2::replay_event_log(bad4, tpm2::ALG_SHA256);
     check("event log with 255 digests in an event", e5 == tpm2::ERR_EVENTLOG);
+    // StartupLocality only before PCR 0's first extend, and once: else events
+    // put before it would be thrown away and the real PCR 0 still match.
+    let loc = log[start..start + 89];
+    var twice: u8[>..] = [];
+    twice.append(log[..start + 89]);
+    twice.append(loc);
+    twice.append(log[start + 89..]);
+    let r6, e6 = tpm2::replay_event_log(twice, tpm2::ALG_SHA256);
+    check("event log with two StartupLocality events", e6 == tpm2::ERR_EVENTLOG);
+    var late: u8[>..] = [];
+    late.append(log[..start]);
+    late.append(log[start + 89..]);
+    late.append(loc);
+    let r7, e7 = tpm2::replay_event_log(late, tpm2::ALG_SHA256);
+    check("event log with StartupLocality after PCR 0 was extended", e7 == tpm2::ERR_EVENTLOG);
 }
 
 // ActivateCredential in software, with the EK's private key: what the TPM

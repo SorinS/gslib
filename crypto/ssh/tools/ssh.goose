@@ -375,8 +375,8 @@ fn run() -> i32 {
                 s.opened = true;
                 if s.pty && interactive_stdin { s.raw = sysnet::tty_raw(0) == 0; }
             } else if e.kind == ssh::EV_CHANNEL_OPEN_FAILED {
-                if stdio { sysnet::eprint(str("goose-ssh: -W ", login::host_port(stdio_host, stdio_port), ": ", d, "\n")); }
-                else { sysnet::eprint(str("goose-ssh: channel refused: ", d, "\n")); }
+                if stdio { sysnet::eprint(str("goose-ssh: -W ", login::host_port(stdio_host, stdio_port), ": ", sysnet::safe_text(d), "\n")); }
+                else { sysnet::eprint(str("goose-ssh: channel refused: ", sysnet::safe_text(d), "\n")); }
                 s.failed = stdio;
                 s.done = true;
             } else if e.kind == ssh::EV_DATA {
@@ -387,13 +387,13 @@ fn run() -> i32 {
             } else if e.kind == ssh::EV_EXIT_STATUS {
                 s.exit = e.value;
             } else if e.kind == ssh::EV_EXIT_SIGNAL {
-                sysnet::eprint(str("goose-ssh: remote command killed by signal ", d, "\n"));
+                sysnet::eprint(str("goose-ssh: remote command killed by signal ", sysnet::safe_text(d), "\n"));
                 s.exit = 255;
             } else if e.kind == ssh::EV_CLOSE {
                 ssh::disconnect(c, out);
                 s.done = true;
             } else if e.kind == ssh::EV_DISCONNECT {
-                if !s.done { sysnet::eprint(str("goose-ssh: disconnected: ", d, "\n")); }
+                if !s.done { sysnet::eprint(str("goose-ssh: disconnected: ", sysnet::safe_text(d), "\n")); }
                 s.done = true;
             }
         }

@@ -1,0 +1,8 @@
+# head
+a: 1 # line
+# between
+b: # after key
+  - x # item
+  # inside
+  - y
+# foot

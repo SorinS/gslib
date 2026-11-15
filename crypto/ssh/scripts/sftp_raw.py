@@ -242,6 +242,9 @@ def script(srv, root, home):
     q("copy-data: past the end", "EXTENDED", s("copy-data") + s(h1) + u64(511000) + u64(5000) + s(h2) + u64(0))
     q("close", "CLOSE", s(h1))
     q("close", "CLOSE", s(h2))
+    h3 = qh("open c to read and write", "OPEN", s("c") + u32(READ | WRITE) + attrs())
+    q("copy-data: one handle both ways, refused", "EXTENDED", s("copy-data") + s(h3) + u64(0) + u64(0) + s(h3) + u64(100))
+    q("close", "CLOSE", s(h3))
     q("stat c", "STAT", s("c"))
     q("an extension no one has", "EXTENDED", s("nosuch@example.com"))
     return out
@@ -292,6 +295,21 @@ def main():
         check("a request missing its fields: a bad message", rep == ("STATUS", 5, "Bad message"), rep)
         rep = summary(srv.req("STAT", s("x" * 5000)), root)
         check("a path too long: a bad message", rep == ("STATUS", 5, "Bad message"), rep)
+        # copy-data "to the end" between two handles on one file, writing
+        # ahead of the reads. Opened by the same path: refused, as by
+        # OpenSSH's; by another path to it (which OpenSSH's sftp-server
+        # copies forever, so it is not asked): to where the file ended.
+        with open(os.path.join(root, "cd"), "wb") as f: f.write(b"A" * 100)
+        hr = handle_of(srv.req("OPEN", s("cd") + u32(READ) + attrs()))
+        hw = handle_of(srv.req("OPEN", s("cd") + u32(WRITE) + attrs()))
+        rep = summary(srv.req("EXTENDED", s("copy-data") + s(hr) + u64(0) + u64(0) + s(hw) + u64(100)), root)
+        check("copy-data between two handles opened by one path: refused", rep[:2] == ("STATUS", 4) and
+              os.path.getsize(os.path.join(root, "cd")) == 100, (rep, os.path.getsize(os.path.join(root, "cd"))))
+        hw2 = handle_of(srv.req("OPEN", s("./cd") + u32(WRITE) + attrs()))
+        rep = summary(srv.req("EXTENDED", s("copy-data") + s(hr) + u64(0) + u64(0) + s(hw2) + u64(100)), root)
+        check("copy-data into the same file by another path, to its end: what was there", rep[:2] == ("STATUS", 0) and
+              os.path.getsize(os.path.join(root, "cd")) == 200, (rep, os.path.getsize(os.path.join(root, "cd"))))
+        for h in (hr, hw, hw2): srv.req("CLOSE", s(h))
         handles = []
         for i in range(70):
             r = srv.req("OPENDIR", s("."))

@@ -1,0 +1,5 @@
+dn: cn=a
+changetype: modify
+increment: n
+n: 1
+n: 2

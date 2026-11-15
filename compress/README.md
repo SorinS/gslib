@@ -53,7 +53,9 @@ Every module is in namespace `compress`, so names carry their format:
   `compress::X_write(w, input, out)`, `X_flush(w, out)`, `X_close(w, out)`.
 * **Whole buffers**: `compress::X_decode(data, out, limit)` and
   `compress::X_encode(data, out, ...)` for when everything is in memory;
-  `limit` caps the output (`ERR_LIMIT`), < 0 for none.
+  `limit` caps the bytes the call appends to `out`, not counting what
+  `out` had before (`ERR_LIMIT`), < 0 for none (`lzw_decode` too, whose
+  default is none).
 * **Memory** is bounded by the state's size (plus, for xz, a dictionary
   capped by a limit the caller can set); output is bounded by the room the
   caller gives, so a decompression bomb costs only what the caller lets it.
@@ -326,6 +328,11 @@ ErrInsecurePath with the entries kept when the check is on (off by
 default, as in Go 1.27; `r.insecure` says either way). The writer writes
 Go's bytes: stored archives, raw files, copies and ZIP64 records are
 byte-identical to Go's writer's. A `ZipFile` is about 37 KB (an inflater).
+Where Go's `Copy` copies what there is of a file whose data runs past the
+archive's end (or its local header says it starts there), `zip_copy`
+refuses it with `ERR_TRUNCATED`, before it writes anything. `zip_comment`,
+`zip_name` and the like give "" for a span the buffer does not hold (a
+reader that failed to open, another buffer).
 
 Errors: ErrFormat `ERR_FORMAT`, ErrAlgorithm `ERR_UNSUPPORTED`,
 ErrChecksum `ERR_CHECKSUM`, ErrInsecurePath `ERR_INSECURE_PATH`,
@@ -373,7 +380,8 @@ let used, made, st = compress::tar_read(r, input, out);
 //   write its contents into out (tar_in_entry(r) turns false at the call that ends them;
 //   tar_skip(r) passes over them); 0: more input or room; STREAM_END: two zero blocks
 compress::tar_finish(r)                         // at the end of the input: STREAM_END or ERR_TRUNCATED
-compress::tar_each(data) { h, contents => ... } // a whole archive in memory
+compress::tar_each(data) { h, contents => ... } // a whole archive in memory; contents up to 1 GiB
+                                                // (tar_each(data, limit)), the buffer growing as data comes
 
 var w = compress::tar_writer();
 compress::tar_write_header(w, compress::TarHeader { typeflag: '0', name: "a.txt", size: 5, mtime: compress::tar_time(t), .. }, out);

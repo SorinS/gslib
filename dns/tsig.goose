@@ -118,7 +118,8 @@ fn tsig_sign_error(w: u8[>..]&, key_name0: const u8[:], alg0: const u8[:], secre
                    time_signed: i64, request_mac: const u8[:], timers_only: bool, error: u16, other: const u8[:]) -> u8[>..], i64 {
     var mac: u8[>..] = [];
     let h = tsig_hash(alg0);
-    if h == 0 { return mac, ERR_ALG; }
+    // BADKEY carries no MAC, so it can answer an algorithm not done here.
+    if h == 0 && error != RCODE_BAD_KEY { return mac, ERR_ALG; }
     let key_name, e1 = name_parse(key_name0, []);
     let alg, e2 = name_parse(alg0, []);
     if e1 != OK || e2 != OK || w.len < 12 { return mac, ERR_NAME; }
@@ -170,6 +171,13 @@ fn tsig_key(w: const u8[:]) -> Name, Name, i64 {
 // (ERR_TIME). The MAC, for the reply, and OK. A message whose rcode is
 // NOTAUTH is ERR_AUTH, as in miekg.
 fn tsig_verify(w: const u8[:], secret: const u8[:], request_mac: const u8[:], timers_only: bool, now: i64) -> u8[>..], i64 {
+    return tsig_verify_fudge(w, secret, request_mac, timers_only, now, 65535);
+}
+
+// The same with the fudge the message gives capped at max_fudge: a server
+// checks a request's time against its own fudge, not one the sender chose.
+fn tsig_verify_fudge(w: const u8[:], secret: const u8[:], request_mac: const u8[:], timers_only: bool, now: i64,
+                     max_fudge: u16) -> u8[>..], i64 {
     var mac: u8[>..] = [];
     if w.len >= 12 && get16(w, 2) & 15 == RCODE_NOT_AUTH { return mac, ERR_AUTH; }
     let off, rd, e = find_tsig(w);
@@ -202,7 +210,7 @@ fn tsig_verify(w: const u8[:], secret: const u8[:], request_mac: const u8[:], ti
     if diff != 0 { return mac, ERR_SIG; }
     let t = time_signed as i64;
     let d = if now >= t { now - t } else { t - now };
-    if d > fudge { return mac, ERR_TIME; }
+    if d > fudge || d > max_fudge { return mac, ERR_TIME; }
     return mac, OK;
 }
 
@@ -215,6 +223,7 @@ fn tsig_strip(w: const u8[:], out: u8[>..]&) -> i64 {
     out.append(w[..off]);
     set16(out[start..], 10, get16(out, start + 10) - 1);
     let alg, p, e2 = read_name(w, rd);
+    if e2 != OK || p + 10 > w.len || p + 12 + get16(w, p + 8) > w.len { out.resize(start); return ERR_RDATA; }
     let ms = get16(w, p + 8) as i64;
     set16(out[start..], 0, get16(w, p + 10 + ms));
     return OK;

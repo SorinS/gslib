@@ -113,8 +113,10 @@ fn exchange_udp(c: const Client&, query: const u8[:], host: const u8[:], port: i
     defer dnsnet_close(fd);
     if dnsnet_send(fd, query) != query.len { return ERR_IO; }
     let deadline = clock_ns() + c.timeout_ms as i64 * 1000000;
+    // Room for any datagram, whatever was asked for: one larger than
+    // bufsize is not cut short (and misread) by the receive.
     var buf: u8[>..] = [];
-    buf.resize(bufsize, 0);
+    buf.resize(65535, 0);
     while true {
         let left = (deadline - clock_ns()) / 1000000;
         if left <= 0 { return ERR_TIMEOUT; }
@@ -128,25 +130,39 @@ fn exchange_udp(c: const Client&, query: const u8[:], host: const u8[:], port: i
     return ERR_TIMEOUT;
 }
 
-// Reads exactly n bytes from a TCP connection onto out.
-fn read_full(fd: i64, n: i64, out: u8[>..]&, timeout_ms: i32) -> i64 {
+// Milliseconds left until deadline (clock_ns); 0 once it has passed.
+fn ms_left(deadline: i64) -> i32 {
+    let l = (deadline - clock_ns()) / 1000000;
+    return if l <= 0 { 0 } else if l > 0x7fffffff { 0x7fffffff } else { l as! i32 };
+}
+
+// Reads exactly n bytes from a TCP connection onto out, all of them by
+// deadline (clock_ns): a peer that trickles them in gets no more time.
+fn read_full(fd: i64, n: i64, out: u8[>..]&, deadline: i64) -> i64 {
     let start = out.len;
     out.resize(start + n, 0);
     var got = 0;
     while got < n {
-        let r = net::read(fd, out[start + got .. start + n], timeout_ms);
+        let left = ms_left(deadline);
+        if left == 0 { out.resize(start); return ERR_TIMEOUT; }
+        let r = net::read(fd, out[start + got .. start + n], left);
         if r <= 0 { out.resize(start); return if r == 0 { ERR_IO } else { net_error(r) }; }
         got += r;
     }
     return OK;
 }
 
-// One message off a TCP stream (RFC 1035 §4.2.2's two-byte length first).
+// One message off a TCP stream (RFC 1035 §4.2.2's two-byte length first),
+// the whole of it within timeout_ms.
 fn read_tcp_msg(fd: i64, out: u8[>..]&, timeout_ms: i32) -> i64 {
+    return read_tcp_msg_by(fd, out, clock_ns() + timeout_ms as i64 * 1000000);
+}
+
+fn read_tcp_msg_by(fd: i64, out: u8[>..]&, deadline: i64) -> i64 {
     var len: u8[>..] = [];
-    let e = read_full(fd, 2, len, timeout_ms);
+    let e = read_full(fd, 2, len, deadline);
     if e != OK { return e; }
-    return read_full(fd, get16(len, 0), out, timeout_ms);
+    return read_full(fd, get16(len, 0), out, deadline);
 }
 
 fn write_tcp_msg(fd: i64, w: const u8[:], timeout_ms: i32) -> i64 {
@@ -223,20 +239,47 @@ fn query(server: const u8[:], qname: const u8[:], qtype: u16, r: Msg&) -> i64 {
 
 // --- Zone transfers ------------------------------------------------------------------
 
-// The serial of an SOA record's rdata.
-fn soa_serial(rd: const u8[:]) -> u32 {
+// The serial of an SOA record's rdata; false if the rdata is not an SOA's.
+fn soa_serial_of(rd: const u8[:]) -> u32, bool {
+    if !rdata_valid(TYPE_SOA, rd) { return 0, false; }
     let a = name_len_at(rd, 0);
     let b = name_len_at(rd, a);
-    return get32(rd, a + b);
+    return get32(rd, a + b), true;
+}
+
+// The serial of an SOA record's rdata, 0 if the rdata is not an SOA's.
+fn soa_serial(rd: const u8[:]) -> u32 {
+    let s, ok = soa_serial_of(rd);
+    return s;
+}
+
+// One message of a zone transfer's reply, raw, to the query w, into r:
+// it must answer w, say NOERROR, and, when the client has a key, be
+// signed over mac (the request's MAC for the first, else the message
+// before's), which then becomes its MAC.
+fn xfr_message(c: const Client&, w: const u8[:], raw: const u8[:], r: Msg&, mac: u8[>..]&, first: bool) -> i64 {
+    if !reply_matches(w, raw) { return ERR_ID; }
+    let ue = unpack(raw, r);
+    if ue != OK { return ue; }
+    if r.hdr.rcode != RCODE_SUCCESS { return ERR_XFR; }
+    if c.tsig_name.len > 0 {
+        let m2, te = check_reply_tsig(c, raw, mac, !first);
+        if te != OK { return te; }
+        mac.clear();
+        mac.append(m2);
+    }
+    return OK;
 }
 
 // A zone transfer in (miekg's Transfer.In): m is an AXFR query, or an
 // IXFR query with the SOA the client has in its authority section. Every
 // message of the reply is passed to F(r) as it arrives, TSIG-verified
 // when the client has a key (the first over the request's MAC, the rest
-// over the one before, timers only, as miekg does); the transfer ends
-// at the closing SOA. ERR_XFR for a refused or broken transfer, ERR_SOA
-// when the first record is not an SOA.
+// over the one before, timers only); the transfer ends at the closing SOA.
+// With a key every message must be signed: RFC 8945 §5.3.1 lets a server
+// sign only every 100th, and miekg takes the unsigned ones between, but
+// those could be anyone's. ERR_XFR for a refused or broken transfer,
+// ERR_SOA when the first record is not an SOA.
 fn transfer_in<F>(c: const Client&, m: Msg&, server: const u8[:]) -> i64 {
     let host, port, ok = split_host_port(server);
     if !ok { return ERR_IO; }
@@ -259,23 +302,22 @@ fn transfer_in<F>(c: const Client&, m: Msg&, server: const u8[:]) -> i64 {
         raw.clear();
         let e = read_tcp_msg(fd, raw, c.timeout_ms);
         if e != OK { return e; }
-        if !reply_matches(w, raw) { return ERR_ID; }
-        let ue = unpack(raw, r);
-        if ue != OK { return ue; }
-        if r.hdr.rcode != RCODE_SUCCESS { return ERR_XFR; }
-        if c.tsig_name.len > 0 {
-            let m2, te = check_reply_tsig(c, raw, mac, !first);
-            if te != OK && (first || te != ERR_NO_SIG) { return te; }
-            if te == OK { mac.clear(); mac.append(m2); }
-        }
+        let xe = xfr_message(c, w, raw, r, mac, first);
+        if xe != OK { return xe; }
         var done = false;
         var k = 0;
         each_rr(r.answer) { rr =>
+            var serial: u32 = 0;
+            if rr.rtype == TYPE_SOA {
+                let s, sok = soa_serial_of(rr.rdata(r.answer));
+                if !sok { return ERR_XFR; }
+                serial = s;
+            }
             if first && k == 0 {
                 if rr.rtype != TYPE_SOA { return ERR_SOA; }
-                first_serial = soa_serial(rr.rdata(r.answer));
+                first_serial = serial;
             }
-            if rr.rtype == TYPE_SOA && soa_serial(rr.rdata(r.answer)) == first_serial {
+            if rr.rtype == TYPE_SOA && serial == first_serial {
                 soas++;
                 // AXFR: the second SOA closes it. IXFR: the first SOA's serial again,
                 // as the last record, closes it (one SOA alone: nothing changed).

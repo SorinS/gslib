@@ -64,12 +64,12 @@ fn good() {
     // Sealing after the mechListMICs (RC4 reset, sequence numbers on).
     for i in 3 {
         var w: u8[>..] = [];
-        tv::check_err("wrap", ntlm::wrap(krb5::spnego_ntlm_session(cli), "secret", w), ntlm::OK);
+        tv::check_err("wrap", ntlm::wrap(krb5::spnego_ntlm_session(cli), "secret", true, w), ntlm::OK);
         var p: u8[>..] = [];
         tv::check_err("unwrap", ntlm::unwrap(krb5::spnego_ntlm_session(srv), w, p), ntlm::OK);
         tv::check("text", p[..] == "secret");
         var w2: u8[>..] = [];
-        ntlm::wrap(krb5::spnego_ntlm_session(srv), "back", w2);
+        ntlm::wrap(krb5::spnego_ntlm_session(srv), "back", true, w2);
         var p2: u8[>..] = [];
         tv::check_err("unwrap back", ntlm::unwrap(krb5::spnego_ntlm_session(cli), w2, p2), ntlm::OK);
     }

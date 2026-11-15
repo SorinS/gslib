@@ -16,13 +16,15 @@ import saml.metadata;
 
 // What reading a message that came in may take: the clock (seconds), the
 // skew allowed, SHA-1, whether it must be signed, the endpoint it must be
-// addressed to, and the size limit.
+// addressed to, the size limit, and how old (seconds, besides the skew) a
+// LogoutRequest's IssueInstant may be.
 struct Checks {
     now:            i64  = 0,
     skew:           i64  = 120,
     allow_sha1:     bool = false,
     require_signed: bool = false,
     max:            i64  = DEFAULT_MAX_MESSAGE,
+    max_age:        i64  = 300,
 }
 
 // What a message said and what its checks found: the code and why, and
@@ -60,6 +62,7 @@ root struct Message {
     sp_name_qualifier: u8[>..]   = [],
     session_indexes:   u8[][>..] = [],
     not_on_or_after:   i64       = 0,
+    replay_until:      i64       = 0,    // a LogoutRequest's: remember its ID until then (seconds)
 }
 
 fn reset_message(r: Message&) {
@@ -71,7 +74,7 @@ fn reset_message(r: Message&) {
     r.acs_url.clear(); r.acs_binding = BINDING_POST; r.acs_index = -1; r.force_authn = false; r.is_passive = false;
     r.name_id_policy.clear(); r.allow_create = false; r.authn_context.clear();
     r.name_id.clear(); r.name_id_format.clear(); r.name_qualifier.clear(); r.sp_name_qualifier.clear();
-    r.session_indexes.clear(); r.not_on_or_after = 0;
+    r.session_indexes.clear(); r.not_on_or_after = 0; r.replay_until = 0;
 }
 
 fn fail_message(r: Message&, code: i64, why: const u8[:]) -> i64 { r.code = code; set_msg(r.message, why); return code; }
@@ -222,8 +225,10 @@ fn logout_response_to(issuer: const u8[:], s: const Signer&, sign: bool, peer: c
 }
 
 // Reads a LogoutRequest from peer to my_url: check_message's checks, then
-// NotOnOrAfter (not passed), the NameID (whole text; no elements in it)
-// and the SessionIndexes, into r.
+// IssueInstant no older than c.max_age (with the skew), NotOnOrAfter (not
+// passed), the NameID (whole text; no elements in it) and the
+// SessionIndexes, into r; r.replay_until says how long a replay cache must
+// keep r.id (read_logout_request_replay).
 fn read_logout_request(m: const Received&, peer: const Entity&, peer_role: u8, my_url: const u8[:], c: const Checks&, r: Message&) -> i64 {
     reset_message(r);
     if !m.is_request { return fail_message(r, ERR_BINDING, "not a SAMLRequest"); }
@@ -231,13 +236,17 @@ fn read_logout_request(m: const Received&, peer: const Entity&, peer_role: u8, m
     if parse_received(d, m, c, r) < 0 { return r.code; }
     let root = check_message(d, m, "LogoutRequest", peer, peer_role, my_url, c, r);
     if root < 0 { return r.code; }
+    if r.issue_instant < c.now - c.skew - c.max_age { return fail_message(r, ERR_EXPIRED, "the LogoutRequest's IssueInstant is too old"); }
+    var until = r.issue_instant + c.max_age;
     let noa, hasnoa = xml::attr(d, root, "NotOnOrAfter");
     if hasnoa {
         let t, ok = parse_time(noa);
         if !ok { return fail_message(r, ERR_TIME, "NotOnOrAfter is not a time"); }
         r.not_on_or_after = t;
         if c.now - c.skew >= t { return fail_message(r, ERR_EXPIRED, "the LogoutRequest has expired"); }
+        if t < until { until = t; }
     }
+    r.replay_until = until + c.skew;
     if xml::count_children(d, root, SAML_NS, "NameID") != 1 {
         return fail_message(r, ERR_SUBJECT, "not exactly one NameID (BaseID and EncryptedID are not supported)");
     }
@@ -260,6 +269,17 @@ fn read_logout_request(m: const Received&, peer: const Entity&, peer_role: u8, m
         }
         c2 = xml::next_element(d, c2);
     }
+    return OK;
+}
+
+// read_logout_request, and then the replay check: F(id, until) says
+// whether the request ID is new (and remembers it until `until`,
+// seconds); ERR_REPLAY when it is not.
+fn read_logout_request_replay<F>(m: const Received&, peer: const Entity&, peer_role: u8, my_url: const u8[:], c: const Checks&,
+                                 r: Message&) -> i64 {
+    let e = read_logout_request(m, peer, peer_role, my_url, c, r);
+    if e != OK { return e; }
+    if !F(r.id[..], r.replay_until) { return fail_message(r, ERR_REPLAY, "the LogoutRequest was seen before"); }
     return OK;
 }
 

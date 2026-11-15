@@ -146,6 +146,7 @@ fn set_keys(c: Client&, jwks: const u8[:]) -> i64 {
 // Fetches the issuer's JWKS from its jwks_uri.
 fn fetch_jwks(c: Client&, hc: http::Client&) -> i64 {
     if c.meta.jwks_uri.len == 0 { return ERR_ARG; }
+    if !url_allowed(c, c.meta.jwks_uri) { return ERR_INSECURE; }
     c.jwks_fetches++;
     c.jwks_fetched_ns = clock_ns();
     let r = http::request(hc, "GET", c.meta.jwks_uri, "Accept: application/json\r\n", "");
@@ -264,6 +265,13 @@ fn typ_is(typ: const u8[:], want: const u8[:]) -> bool {
     return typ.len == app.len + want.len && eq_fold(typ[..app.len], app) && eq_fold(typ[app.len..], want);
 }
 
+// Whether a typ names some kind of JWT other than a plain one: "+jwt"
+// at its end, with or without "application/".
+fn other_jwt(typ: const u8[:]) -> bool {
+    let suffix = "+jwt";
+    return typ.len >= suffix.len && eq_fold(typ[typ.len - suffix.len..], suffix);
+}
+
 // Validates an ID token (OIDC Core §3.1.3.7) for this client: `nonce` is
 // the authorization request's (ar.nonce; must match when not empty);
 // `access_token` and `code`, when given, are checked against at_hash and
@@ -276,8 +284,10 @@ fn validate_id_token(c: Client&, hc: http::Client&, token: const u8[:], nonce: c
     let ve = verify_signed(c, hc, m, token);
     if ve != OK { return id, ve; }
     let alg = m.sigs[0].header.alg;
-    // An access token (RFC 9068) is not an ID token.
-    if typ_is(m.sigs[0].header.typ, "at+jwt") { return id, ERR_TYP; }
+    // An access token (RFC 9068), a logout token (OIDC Back-Channel Logout
+    // §2.4), or any other explicitly typed JWT (RFC 8725 §3.11) is not an
+    // ID token.
+    if other_jwt(m.sigs[0].header.typ) { return id, ERR_TYP; }
     id.alg = alg;
     id.kid.append(m.sigs[0].header.kid);
     var cl = jwt::new_claims();
@@ -294,6 +304,9 @@ fn validate_id_token(c: Client&, hc: http::Client&, token: const u8[:], nonce: c
     var decoded: u8[>..]         = [];
     let root, msg = json::parse(m.payload, doc, decoded);
     guard root else { return id, ERR_MALFORMED; }
+    // A logout token carries "events"; one typed as a plain JWT is still
+    // not an ID token.
+    if json::member(root, "events") { return id, ERR_TYP; }
     // Each whole or the token refused: an azp, nonce, at_hash or c_hash
     // that is not a string would otherwise read as absent, and its check
     // be passed over.

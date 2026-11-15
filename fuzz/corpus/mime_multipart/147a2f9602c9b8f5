@@ -1,0 +1,12 @@
+foo
+--foo
+Content-Type: multipart/alternative; boundary="foo-bar"
+
+--foo-bar
+
+Body
+--foo-bar
+
+Body2
+--foo-bar--
+--foo--

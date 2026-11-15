@@ -400,8 +400,100 @@ fn repeated() {
     }
 }
 
+// The work an attacker's message can ask for: recipients capped, PBES2
+// counts charged together, tries in a key set bounded, many header
+// members compared sorted rather than pairwise.
+fn costs() {
+    var shared = jwe::Header { .. };
+    shared.enc = jwa::A128GCM;
+    var rs: jwe::Recipient[>..] = [];
+    for i in jwe::MAX_RECIPIENTS + 1 { rs.push(jwe::Recipient { alg: jwa::A128KW, key: jwk::generate_oct(16), .. }); }
+    let t, e = jwe::encrypt_json("x", shared, rs);
+    tv::check_int("17 recipients encrypted", e, jwx::OK);
+    let x, ex = jwe::decrypt(t, jwa::A128KW, rs[16].key);
+    tv::check_int("17 recipients refused", ex, jwx::ERR_LIMIT);
+    let y, ey = jwe::decrypt(t, jwa::A128KW, rs[16].key, jwe::MAX_P2C, jwe::MAX_INFLATE, jwe::MIN_P2C, 17);
+    tv::check("17 recipients under a raised limit", ey == jwx::OK && y == "x");
+    // A key set of two keys without "kid", against 16 recipients naming
+    // none: at most 2 + 16 tries, not 32.
+    var many: jwe::Recipient[>..] = [];
+    for i in 16 { many.push(jwe::Recipient { alg: jwa::A128KW, key: jwk::generate_oct(16), .. }); }
+    let tm, em = jwe::encrypt_json("x", shared, many);
+    var set: jwk::Key[>..] = [];
+    for i in 2 {
+        var k = jwk::generate_oct(16);
+        k.alg = jwa::A128KW;
+        set.push(k);
+    }
+    let z, ez = jwe::decrypt_set(tm, set);
+    tv::check_int("key set tries bounded", ez, jwx::ERR_LIMIT);
+    set.push(copy(many[0].key));
+    set[2].alg = jwa::A128KW;
+    let z2, ez2 = jwe::decrypt_set(tm, set);
+    tv::check("key set finds the first recipient's key", ez2 == jwx::OK && z2 == "x");
+
+    // PBES2 counts add up across recipients: the attacker's recipient
+    // first, at 2000, then the real one at 2000.
+    let attacker = jwk::from_oct("attacker-password");
+    let victim = jwk::from_oct("server-password");
+    var ps: jwe::Recipient[>..] = [];
+    ps.push(jwe::Recipient { alg: jwa::PBES2_HS256_A128KW, key: attacker, .. });
+    ps.push(jwe::Recipient { alg: jwa::PBES2_HS256_A128KW, key: victim, .. });
+    var o = jwe::Options { .. };
+    o.p2c = 2000;
+    let pt, ep = jwe::encrypt_json_options("x", shared, ps, "", false, o);
+    tv::check_int("two PBES2 recipients encrypted", ep, jwx::OK);
+    let p1, ep1 = jwe::decrypt(pt, jwa::PBES2_HS256_A128KW, victim, 3000);
+    tv::check("PBES2 counts over the limit together refused", ep1 == jwx::ERR_LIMIT && p1.len == 0);
+    let p2, ep2 = jwe::decrypt(pt, jwa::PBES2_HS256_A128KW, victim, 4000);
+    tv::check("PBES2 counts within the limit together", ep2 == jwx::OK && p2 == "x");
+    var pset: jwk::Key[>..] = [];
+    pset.push(copy(victim));
+    pset[0].alg = jwa::PBES2_HS256_A128KW;
+    let p3, ep3 = jwe::decrypt_set(pt, pset, false, 3000);
+    tv::check("key set: PBES2 counts over the limit together refused", ep3 == jwx::ERR_LIMIT && p3.len == 0);
+    let p4, ep4 = jwe::decrypt_set(pt, pset, false, 4000);
+    tv::check("key set: PBES2 counts within the limit together", ep4 == jwx::OK && p4 == "x");
+
+    // As jws::verify reads a header of 20000 members before any signature
+    // (review/jose/dup_dos.goose: 32000 took 20 s pairwise).
+    let ek = jwk::generate_ec(jwa::CRV_P256);
+    let epub = jwk::public_key(ek);
+    for dup in [false, true] {
+        var jh: u8[>..] = [];
+        jh.append("{\"alg\":\"ES256\"");
+        for i in 20000 { format(jh, ",\"m", i, "\":0"); }
+        if dup { jh.append(",\"m7\":0"); }
+        jh.push('}');
+        var jt: u8[>..] = [];
+        jwx::b64_append(jt, jh);
+        jt.append(".e30.AAAA");
+        var jm = jws::Message { .. };
+        tv::check_int(str("JWS header of 20000 members, duplicate ", dup), jws::parse(jm, jt),
+                      if dup { jwx::ERR_MALFORMED } else { jwx::OK });
+        let jp, ej = jws::verify(jt, jwa::ES256, epub);
+        tv::check(str("JWS of 20000 members refused, duplicate ", dup), ej != jwx::OK);
+    }
+    // A header of 20000 members: duplicates found (or not) sorted.
+    let prot = jwx::b64_encode("{\"alg\":\"A128KW\",\"enc\":\"A128GCM\"}");
+    for dup in [false, true] {
+        var hdr: u8[>..] = [];
+        hdr.append("{\"kid\":\"a\"");
+        for i in 20000 { format(hdr, ",\"m", i, "\":0"); }
+        if dup { hdr.append(",\"m7\":0"); }
+        hdr.push('}');
+        let token = str("{\"protected\":\"", prot, "\",\"header\":", hdr,
+                        ",\"encrypted_key\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"iv\":\"AAAAAAAAAAAAAAAA\",",
+                        "\"ciphertext\":\"AAAA\",\"tag\":\"AAAAAAAAAAAAAAAAAAAAAA\"}");
+        var m = jwe::Message { .. };
+        tv::check_int(str("20000 header members, duplicate ", dup), jwe::parse(m, token),
+                      if dup { jwx::ERR_MALFORMED } else { jwx::OK });
+    }
+}
+
 fn main() {
     repeated();
+    costs();
     for f in ["jwe/5_1.key_encryption_using_rsa_v15_and_aes-hmac-sha2.json",
               "jwe/5_2.key_encryption_using_rsa-oaep_with_aes-gcm.json",
               "jwe/5_3.key_wrap_using_pbes2-aes-keywrap_with-aes-cbc-hmac-sha2.json",

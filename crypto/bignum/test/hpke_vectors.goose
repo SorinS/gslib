@@ -145,7 +145,9 @@ fn main() {
         } else if w[0] == "export" {
             let ctx = unhex(w[1]);
             let n = num(w[2]);
-            check("export", bignum::hpke_export(tx, ctx, n) == unhex(w[3]) && bignum::hpke_export(rx, ctx, n) == unhex(w[3]));
+            let xt, okt = bignum::hpke_export(tx, ctx, n);
+            let xr, okr = bignum::hpke_export(rx, ctx, n);
+            check("export", okt && okr && xt == unhex(w[3]) && xr == unhex(w[3]));
         }
     }
     // Fresh keys through every KEM, single-shot and with contexts.
@@ -184,6 +186,30 @@ fn main() {
     }
     let e5, c5, oku = bignum::hpke_sender(0x0021, 1, 1, "", "");
     check("unknown KEM", !oku);
+    // Export lengths past the KDF's limit fail rather than aborting:
+    // 255 * Nh for HKDF, 65535 for SHAKE (a 16-bit prefix).
+    let skx, pkx = bignum::hpke_keygen(bignum::HPKE_DHKEM_X25519);
+    let ex, cx, okx = bignum::hpke_sender(bignum::HPKE_DHKEM_X25519, bignum::HPKE_HKDF_SHA256, bignum::HPKE_EXPORT_ONLY, pkx, "info");
+    let x1, okx1 = bignum::hpke_export(cx, "ctx", 8160);
+    let x2, okx2 = bignum::hpke_export(cx, "ctx", 8161);
+    let x3, okx3 = bignum::hpke_export(cx, "ctx", -1);
+    check("export at HKDF's limit", okx && okx1 && x1.len == 8160 && !okx2 && x2.len == 0 && !okx3);
+    let ey, cy, oky = bignum::hpke_sender(bignum::HPKE_DHKEM_X25519, bignum::HPKE_SHAKE128, bignum::HPKE_EXPORT_ONLY, pkx, "info");
+    let y1, oky1 = bignum::hpke_export(cy, "ctx", 0xffff);
+    let y2, oky2 = bignum::hpke_export(cy, "ctx", 0x10000);
+    check("export at SHAKE's limit", oky && oky1 && y1.len == 0xffff && !oky2);
+    // A one-stage KDF prefixes info with 16 bits of length: 64 KiB of info
+    // would wrap to a prefix of 0, so it is refused on both sides.
+    var big_info: u8[>..] = [];
+    big_info.resize(0x10000, 'i');
+    let ez, cz, okz = bignum::hpke_sender(bignum::HPKE_DHKEM_X25519, bignum::HPKE_SHAKE256, bignum::HPKE_AES128GCM, pkx, big_info);
+    let ez2, cz2, okz2 = bignum::hpke_sender(bignum::HPKE_DHKEM_X25519, bignum::HPKE_SHAKE256, bignum::HPKE_AES128GCM, pkx,
+                                             big_info[..0xffff]);
+    let rz, okrz = bignum::hpke_recipient(bignum::HPKE_DHKEM_X25519, bignum::HPKE_SHAKE256, bignum::HPKE_AES128GCM, skx, ez2,
+                                          big_info);
+    check("one-stage info of 64 KiB", !okz && okz2 && !okrz);
+    let eh, ch, okh = bignum::hpke_sender(bignum::HPKE_DHKEM_X25519, bignum::HPKE_HKDF_SHA256, bignum::HPKE_AES128GCM, pkx, big_info);
+    check("two-stage info of 64 KiB", okh);
     print("hpke vectors: ", checks, " checks, ", failures, " failed");
     assert(failures == 0);
 }

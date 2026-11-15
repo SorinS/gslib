@@ -533,6 +533,27 @@ fn decode_body(h: const u8[:], body: const u8[:]) -> u8[>..], bool {
     return out, !has || mail::eq_fold(cte, "7bit") || mail::eq_fold(cte, "8bit") || mail::eq_fold(cte, "binary");
 }
 
+// Whether a boundary match ending at q is a delimiter line (RFC 2046
+// §5.1.1): "--" for the close, then only white space to the line's end.
+// A longer boundary that starts with this one is not.
+fn delim_end(body: const u8[:], q0: i64) -> bool {
+    var q = q0;
+    if starts_with(body, q, "--") { q += 2; }
+    while q < body.len && (body[q] == ' ' || body[q] == '\t') { q++; }
+    return q == body.len || starts_with(body, q, "\r\n");
+}
+
+// The next "\r\n--boundary" at or after from that is a delimiter line; -1.
+fn find_delim(body: const u8[:], d: const u8[:], from: i64) -> i64 {
+    var at = from;
+    loop {
+        let e = find(body, d, at);
+        if e < 0 || delim_end(body, e + d.len) { return e; }
+        at = e + 1;
+    }
+    return -1;
+}
+
 // multipart/signed's body split at its boundary: the first part exactly
 // (without the CRLF before the next delimiter, which is the delimiter's),
 // and the second, the signature, as an entity.
@@ -542,8 +563,12 @@ fn split_signed(body: const u8[:], boundary: const u8[:]) -> i64, i64, i64, i64,
     d.append(boundary);
     let dd = d[2..];
     // The first delimiter, at the start or after the preamble.
-    var p = if starts_with(body, 0, dd) { 0 } else { find(body, d, 0) + 2 };
-    if p < 2 && !starts_with(body, 0, dd) { return 0, 0, 0, 0, false; }
+    var p = 0;
+    if !starts_with(body, 0, dd) || !delim_end(body, dd.len) {
+        let f = find_delim(body, d, 0);
+        if f < 0 { return 0, 0, 0, 0, false; }
+        p = f + 2;
+    }
     var parts: i64[4] = [0; 4];
     for k in 2 {
         var q = p + dd.len;
@@ -551,7 +576,7 @@ fn split_signed(body: const u8[:], boundary: const u8[:]) -> i64, i64, i64, i64,
         while q < body.len && (body[q] == ' ' || body[q] == '\t') { q++; }
         if !starts_with(body, q, "\r\n") { return 0, 0, 0, 0, false; }
         q += 2;
-        let e = find(body, d, q);
+        let e = find_delim(body, d, q);
         if e < 0 { return 0, 0, 0, 0, false; }
         parts[2 * k] = q;
         parts[2 * k + 1] = e;

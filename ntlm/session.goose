@@ -10,7 +10,8 @@
 // GSS-API's calls on it: get_mic and verify_mic (a signature alone), wrap
 // and unwrap (the signature, then the message, sealed when SEAL was
 // negotiated: as SSPI, gss-ntlmssp and pyspnego lay it out). Messages are
-// taken in order: the RC4 state and sequence numbers run on.
+// taken in order: the RC4 state and sequence numbers run on, the incoming
+// ones only past a message that verified.
 
 namespace ntlm;
 
@@ -91,18 +92,30 @@ fn get_mic(s: Session&, msg: const u8[:], out: u8[>..]&) -> i64 {
     return OK;
 }
 
-// Whether sig is the peer's next signature of msg (GSS_VerifyMIC).
+// Whether sig is the peer's next signature of msg (GSS_VerifyMIC). A
+// signature that does not verify leaves the incoming RC4 state and
+// sequence number as they were, so a forged message cannot desynchronise
+// the session.
 fn verify_mic(s: Session&, msg: const u8[:], sig: const u8[:]) -> i64 {
     if !s.keys { return ERR_NO_SESSION; }
     if sig.len != 16 { return ERR_SIGNATURE; }
+    let rc4 = s.seal_in;
+    let seq = s.seq_in;
     let want = mac_of(s, false, msg);
-    return if same(want, sig) { OK } else { ERR_SIGNATURE };
+    if same(want, sig) { return OK; }
+    s.seal_in = rc4;
+    s.seq_in = seq;
+    return ERR_SIGNATURE;
 }
 
 // GSS_Wrap: the signature and the message, sealed when SEAL was
-// negotiated, else signed only (SIGN); ERR_NO_SESSION with neither.
-fn wrap(s: Session&, msg: const u8[:], out: u8[>..]&) -> i64 {
+// negotiated, else signed only (SIGN). With `conf` (GSS's conf_req) the
+// message must be sealed: ERR_NO_SESSION when SEAL was not negotiated,
+// rather than the message going out in the clear. ERR_NO_SESSION with
+// neither SIGN nor SEAL.
+fn wrap(s: Session&, msg: const u8[:], conf: bool, out: u8[>..]&) -> i64 {
     if !s.keys || s.flags & (NEGOTIATE_SEAL | NEGOTIATE_SIGN) == 0 { return ERR_NO_SESSION; }
+    if conf && s.flags & NEGOTIATE_SEAL == 0 { return ERR_NO_SESSION; }
     if s.flags & NEGOTIATE_SEAL != 0 {
         var c: u8[>..] = [];
         c.append(msg);
@@ -116,16 +129,27 @@ fn wrap(s: Session&, msg: const u8[:], out: u8[>..]&) -> i64 {
     return OK;
 }
 
+// Whether wrap seals (SEAL was negotiated), the token itself not saying.
+fn sealed(s: const Session&) -> bool { s.keys && s.flags & NEGOTIATE_SEAL != 0 }
+
 // GSS_Unwrap: the message of a wrap token from the peer, its signature
-// checked (and its sealing undone). Nothing goes to `out` on failure.
+// checked (and its sealing undone); sealed(s) tells whether it was
+// sealed. Nothing goes to `out` on failure, and the incoming RC4 state and
+// sequence number are left as they were.
 fn unwrap(s: Session&, token: const u8[:], out: u8[>..]&) -> i64 {
     if !s.keys || s.flags & (NEGOTIATE_SEAL | NEGOTIATE_SIGN) == 0 { return ERR_NO_SESSION; }
     if token.len < 16 { return ERR_SIGNATURE; }
+    let rc4 = s.seal_in;
+    let seq = s.seq_in;
     var m: u8[>..] = [];
     m.append(token[16..]);
     if s.flags & NEGOTIATE_SEAL != 0 { bignum::rc4_xor(s.seal_in, m); }
     let want = mac_of(s, false, m);
-    if !same(want, token[..16]) { return ERR_SIGNATURE; }
+    if !same(want, token[..16]) {
+        s.seal_in = rc4;
+        s.seq_in = seq;
+        return ERR_SIGNATURE;
+    }
     out.append(m);
     return OK;
 }

@@ -66,7 +66,8 @@ words it): after the connection closed, while StartTLS waits for its
 response, an empty password to `bind` (`unauthenticated_bind` sends one
 on purpose), a filter that does not compile. A successful StartTLS sets
 `c.tls_ready`: the transport then speaks TLS, and the plaintext goes on
-being fed here. A response to a request no longer outstanding (an
+being fed here; anything that came in the clear after that response is
+dropped, not read as LDAP (the STARTTLS injection of CVE-2011-0411). A response to a request no longer outstanding (an
 abandoned one) is dropped, as go-ldap drops it; one of the wrong kind, a
 message that is not well formed, or one over `c.max_message` (64 MiB)
 fails the connection. Messages are read as BER, as servers send it:
@@ -121,6 +122,9 @@ Where go-ldap is not RFC 4514 and 4515, this is:
   takes `(!a=b)`);
 - an `=` in a DN's value is part of it (`cn=a=b` is cn `a=b`; go-ldap
   makes the type `a`);
+- a DN's attribute type must be a descr (`cn`, `x-a1`) or a numericoid
+  (`2.5.4.3`) with no escapes (RFC 4514 §3); go-ldap takes any bytes, and
+  `ou\=x\,cn=y` written back would be two RDNs;
 - a DN's last AVA with an empty value is kept, and a trailing `,`, `+`
   or `\` is refused (go-ldap drops the AVA);
 - BOOLEAN TRUE goes as FF (RFC 4511 §5.1), where go-ldap writes 01;

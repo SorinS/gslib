@@ -520,7 +520,61 @@ fn tail_and_stream() {
     }
 }
 
+// A file whose local header says its data starts past the archive's end:
+// zip_copy refuses it before it writes anything, and zip_extract too.
+fn bad_local_header() {
+    var a: u8[>..] = [];
+    var w = compress::zip_writer();
+    if compress::zip_create(w, "f", a) != 0 { fail("bad local header: create"); }
+    compress::zip_write(w, "some bytes", a);
+    compress::zip_close(w, a);
+    var whole = copy(a);
+    a[28] = 0xff;                        // the local header's extra length
+    a[29] = 0xff;
+    let r = compress::zip_open(a);
+    if r.err != 0 || r.entries.len != 1 { fail("bad local header: open"); return; }
+    var w2 = compress::zip_writer();
+    var out: u8[>..] = [];
+    if compress::zip_copy(w2, r, a, r.entries[0], out) != compress::ERR_TRUNCATED || out.len != 0 { fail("bad local header: zip_copy"); }
+    var x: u8[>..] = [];
+    if compress::zip_extract(r, a, r.entries[0], x) == 0 { fail("bad local header: zip_extract"); }
+    // And a good one copies, with zip_extract's limit counting what it appends.
+    let r2 = compress::zip_open(whole);
+    var w3 = compress::zip_writer();
+    var out3: u8[>..] = [];
+    if compress::zip_copy(w3, r2, whole, r2.entries[0], out3) != 0 { fail("good local header: zip_copy"); }
+    var pre: u8[>..] = [];
+    pre.append("0123456789");
+    if compress::zip_extract(r2, whole, r2.entries[0], pre, 10) != 0 || pre[..] != "0123456789some bytes" { fail("zip_extract limit"); }
+}
+
+// A reader that failed to open, or a buffer other than its own: the
+// comment and the names are "", not a fault.
+fn failed_reader() {
+    var a: u8[>..] = [];
+    var w = compress::zip_writer();
+    if compress::zip_create(w, "name.txt", a) != 0 { fail("failed reader: create"); }
+    compress::zip_write(w, "data", a);
+    let ce = compress::zip_set_comment(w, "a comment");
+    compress::zip_close(w, a);
+    let tail = a[a.len - 30..];
+    let r = compress::zip_open_tail(tail, a.len);
+    if r.err == 0 { fail("failed reader: opened a tail without its directory"); }
+    if compress::zip_comment(r, tail).len != 0 { fail("failed reader: comment"); }
+    var bad = copy(a);
+    bad[bad.len - 16] = 0x7f;             // the end record's directory size: past the start
+    let r2 = compress::zip_open(bad);
+    if r2.err == 0 { fail("failed reader: opened a bad directory"); }
+    if compress::zip_comment(r2, bad[..4]).len != 0 { fail("failed reader: comment, short buffer"); }
+    let r3 = compress::zip_open(a);
+    if r3.err != 0 || compress::zip_comment(r3, a) != "a comment" { fail("failed reader: good comment"); return; }
+    if compress::zip_name(r3, a[..10], r3.entries[0]).len != 0 || compress::zip_comment(r3, a[..10]).len != 0 {
+        fail("failed reader: another buffer");
+    }
+}
+
 fn main() {
+    failed_reader();
     go_testdata("vectors/zip/go_dump.txt", false, 65536);
     go_testdata("vectors/zip/go_dump_check.txt", true, 7);
     writer_tests();
@@ -529,6 +583,7 @@ fn main() {
     over_65k();
     zip64_sizes();
     tail_and_stream();
+    bad_local_header();
     if failures > 0 { print(failures, " failures"); exit(1); }
     print("zip: all passed");
 }

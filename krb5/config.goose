@@ -350,8 +350,9 @@ fn conf_duration(cfg: const Config&, path: const u8[:], dflt: i64) -> i64 {
     return if nok { n } else { dflt };
 }
 
-// MIT 1.22's default enctype list.
-let DEFAULT_ETYPES: i32[8] = [18, 17, 20, 19, 16, 23, 26, 25];
+// MIT 1.22's default enctype list less des3 and rc4, which only
+// allow_des3 and allow_rc4 let in (see conf_etypes).
+let DEFAULT_ETYPES: i32[6] = [18, 17, 20, 19, 26, 25];
 
 // An enctype list (MIT's): names, numbers and families (aes, aes-sha1,
 // aes-sha2, des3, rc4, camellia, DEFAULT), separated by spaces or commas,
@@ -397,16 +398,23 @@ fn parse_etypes(s: const u8[:]) -> i32[>..] {
     return out;
 }
 
-// The enctypes a libdefaults relation lists, or MIT's defaults.
+// The enctypes a libdefaults relation lists, or the defaults; des3 and
+// rc4 left out, even when listed, unless libdefaults' allow_des3 or
+// allow_rc4 is true (MIT 1.21's relations; both default false here).
 fn conf_etypes(cfg: const Config&, name: const u8[:]) -> i32[>..] {
     // default_tkt_enctypes and default_tgs_enctypes fall back to
     // permitted_enctypes, as in MIT.
+    var listed: i32[>..] = [];
     let v, ok = conf_get(cfg, path2("libdefaults", name));
-    if ok { return parse_etypes(v); }
     let w, ok2 = conf_get(cfg, "libdefaults/permitted_enctypes");
-    if ok2 { return parse_etypes(w); }
+    if ok { listed = parse_etypes(v); } else if ok2 { listed = parse_etypes(w); } else { listed.append(DEFAULT_ETYPES); }
+    let des3 = conf_bool(cfg, "libdefaults/allow_des3", false);
+    let rc4 = conf_bool(cfg, "libdefaults/allow_rc4", false);
     var d: i32[>..] = [];
-    d.append(DEFAULT_ETYPES);
+    for e in listed {
+        if (e == ETYPE_DES3_CBC_SHA1_KD && !des3) || (e == ETYPE_RC4_HMAC && !rc4) { continue; }
+        d.push(e);
+    }
     return d;
 }
 

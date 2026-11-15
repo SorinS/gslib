@@ -416,8 +416,9 @@ fn certs_not_a_tsas(root: const u8[:], root_key: const x509::PrivateKey&, roots:
         check(str("signed by a certificate not a TSA's ", which), okt && ve == tsp::ERR_TSA_CERT);
     }
     // signingCertificate: missing; naming another certificate; v1 (SHA-1);
-    // v2 with SHA-512 written out; v2 naming the right hash but another serial.
-    for which in 5 {
+    // v2 with SHA-512 written out; v2 naming the right hash but another
+    // serial; v2 by SHA-1, only with allow_sha1.
+    for which in 6 {
         var so = x509::CmsSignOptions { .. };
         let cd = tc.der[..];
         if which == 1 {
@@ -426,7 +427,8 @@ fn certs_not_a_tsas(root: const u8[:], root_key: const x509::PrivateKey&, roots:
         } else if which >= 2 {
             var id: u8[>..] = [];
             if which == 3 { tsp::put_hash_alg(id, 512); }
-            asn1::put_octets(id, bignum::hash_bits(if which == 2 { 160 } else if which == 3 { 512 } else { 256 }, cd));
+            if which == 5 { tsp::put_hash_alg(id, tsp::SHA1); }
+            asn1::put_octets(id, bignum::hash_bits(if which == 2 || which == 5 { 160 } else if which == 3 { 512 } else { 256 }, cd));
             var gn: u8[>..] = [];
             asn1::put(gn, asn1::ctx(4, true), cd[tc.issuer.start..tc.issuer.end]);
             var is: u8[>..] = [];
@@ -445,6 +447,12 @@ fn certs_not_a_tsas(root: const u8[:], root_key: const x509::PrivateKey&, roots:
         let i, ve, w = tsp::verify_token(tok, tsp::SHA256, req.imprint, roots, "", plain);
         let want = if which == 2 || which == 3 { tsp::OK } else { tsp::ERR_SIGNER };
         check(str("signingCertificate case ", which, ": ", tsp::error_text(ve)), okt && ve == want);
+        if which == 5 {
+            var sha1 = tsp::VerifyOptions { .. };
+            sha1.allow_sha1 = true;
+            let i5, ve5, w5 = tsp::verify_token(tok, tsp::SHA256, req.imprint, roots, "", sha1);
+            check("ESSCertIDv2 by SHA-1 with allow_sha1", ve5 == tsp::OK);
+        }
     }
 }
 

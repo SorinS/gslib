@@ -35,6 +35,7 @@ root struct Idp {
     session_lifetime:           i64       = 28800, // SessionNotOnOrAfter, seconds after now; 0: none
     allow_sha1:                 bool      = false,
     clock_skew:                 i64       = 120,
+    logout_max_age:             i64       = 300,   // how old a LogoutRequest's IssueInstant may be (seconds, besides the skew)
     max_message:                i64       = DEFAULT_MAX_MESSAGE,
     name_id_formats:            u8[][>..] = [],    // published in metadata
     now:                        i64       = 0,     // seconds; 0: the clock
@@ -48,29 +49,33 @@ fn idp_set_key(idp: Idp&, key: const x509::PrivateKey&, cert_der: const u8[:]) {
 }
 
 fn idp_checks(idp: const Idp&, require_signed: bool) -> Checks {
-    Checks { now: now_or(idp.now), skew: idp.clock_skew, allow_sha1: idp.allow_sha1, require_signed: require_signed, max: idp.max_message }
+    Checks { now: now_or(idp.now), skew: idp.clock_skew, allow_sha1: idp.allow_sha1, require_signed: require_signed, max: idp.max_message,
+             max_age: idp.logout_max_age }
 }
 
-// The identity provider's metadata as an Entity.
-fn idp_entity(idp: const Idp&, e: Entity&) {
+// The identity provider's metadata as an Entity. False (and an endpoint
+// left out) when sso_url or slo_url is not an absolute http(s) URL.
+fn idp_entity(idp: const Idp&, e: Entity&) -> bool {
     reset_entity(e);
     e.entity_id.append(idp.entity_id);
     e.is_idp = true;
     e.want_authn_requests_signed = idp.want_authn_requests_signed;
-    add_endpoint(e, ROLE_IDP, EP_SSO, BINDING_REDIRECT, idp.sso_url);
-    add_endpoint(e, ROLE_IDP, EP_SSO, BINDING_POST, idp.sso_url);
+    var ok = add_endpoint(e, ROLE_IDP, EP_SSO, BINDING_REDIRECT, idp.sso_url);
+    ok = add_endpoint(e, ROLE_IDP, EP_SSO, BINDING_POST, idp.sso_url) && ok;
     if idp.slo_url.len > 0 {
-        add_endpoint(e, ROLE_IDP, EP_SLO, BINDING_REDIRECT, idp.slo_url);
-        add_endpoint(e, ROLE_IDP, EP_SLO, BINDING_POST, idp.slo_url);
+        ok = add_endpoint(e, ROLE_IDP, EP_SLO, BINDING_REDIRECT, idp.slo_url) && ok;
+        ok = add_endpoint(e, ROLE_IDP, EP_SLO, BINDING_POST, idp.slo_url) && ok;
     }
     if idp.signer.cert_der.len > 0 { add_cert(e.idp_signing, idp.signer.cert_der); }
     for f in idp.name_id_formats { add_cert(e.idp_name_id_formats, f); }
+    return ok;
 }
 
-// The identity provider's metadata, signed when `signed` is set.
+// The identity provider's metadata, signed when `signed` is set;
+// ERR_ENDPOINT for an endpoint URL idp_entity refuses.
 fn idp_metadata(idp: const Idp&, signed: bool, out: u8[>..]&) -> i64 {
     var e = Entity { .. };
-    idp_entity(idp, e);
+    if !idp_entity(idp, e) { return ERR_ENDPOINT; }
     if signed { return write_metadata_signed(e, idp.signer, out); }
     return write_metadata(e, out);
 }
@@ -314,6 +319,14 @@ fn idp_logout_request(idp: const Idp&, sp: const Entity&, binding: i64, who: con
 fn idp_read_logout_request(idp: const Idp&, sp: const Entity&, m: const Received&, r: Message&) -> i64 {
     let c = idp_checks(idp, true);
     return read_logout_request(m, sp, ROLE_SP, idp.slo_url, c, r);
+}
+
+// idp_read_logout_request, and then the replay check: F(id, until) says
+// whether the LogoutRequest's ID is new (and remembers it until `until`,
+// seconds); ERR_REPLAY when it is not.
+fn idp_read_logout_request_replay<F>(idp: const Idp&, sp: const Entity&, m: const Received&, r: Message&) -> i64 {
+    let c = idp_checks(idp, true);
+    return read_logout_request_replay(m, sp, ROLE_SP, idp.slo_url, c, r) { id, until => F(id, until) };
 }
 
 fn idp_logout_response(idp: const Idp&, sp: const Entity&, binding: i64, in_response_to: const u8[:], status: const u8[:],

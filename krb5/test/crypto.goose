@@ -383,6 +383,12 @@ fn round_trips() {
     let a = krb5::random_key(18);
     var s: u8[>..] = [];
     tv::check_int("hmac-md5 with aes key", krb5::checksum(a, krb5::CKSUM_HMAC_MD5, 17, "x", s), krb5::OK);
+    // Unkeyed types are made, but never verified: anyone can make them.
+    for t in [krb5::CKSUM_RSA_MD5, krb5::CKSUM_SHA1] {
+        var u: u8[>..] = [];
+        tv::check_int(str("unkeyed ", t), krb5::checksum(a, t, 17, "x", u), krb5::OK);
+        tv::check_int(str("unkeyed ", t, " not verified"), krb5::verify_checksum(a, t, 17, "x", u), krb5::KRB_AP_ERR_INAPP_CKSUM);
+    }
     var s2: u8[>..] = [];
     tv::check_int("aes cksum with rc4 key", krb5::checksum(krb5::random_key(23), krb5::CKSUM_HMAC_SHA1_96_AES256, 17, "x", s2),
                   krb5::ERR_CKSUMTYPE);

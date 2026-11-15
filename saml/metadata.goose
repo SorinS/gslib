@@ -77,9 +77,10 @@ fn reset_entity(e: Entity&) {
 
 // --- Building one ------------------------------------------------------------------
 
-// An endpoint added to e. False for a location or binding that does not fit.
+// An endpoint added to e. False for a binding that does not fit, or a
+// location that is not an absolute http(s) URL (location_ok).
 fn add_endpoint(e: Entity&, role: u8, kind: u8, binding: i64, location: const u8[:]) -> bool {
-    if location.len > MAX_LOCATION || binding_uri(binding).len == 0 { return false; }
+    if location.len > MAX_LOCATION || !location_ok(location) || binding_uri(binding).len == 0 { return false; }
     var ep = Endpoint { role: role, kind: kind, binding: binding, .. };
     ep.binding_uri.append(binding_uri(binding));
     ep.location.append(location);
@@ -264,6 +265,9 @@ fn read_endpoint(d: const xml::Doc&, el: i64, role: u8, kind: u8, e: Entity&) ->
     if !hasb || !hasl { return fail_entity(e, ERR_MALFORMED, "an endpoint without Binding or Location"); }
     let rl, hasrl = xml::attr(d, el, "ResponseLocation");
     if b.len > 256 || loc.len > MAX_LOCATION || rl.len > MAX_LOCATION { return fail_entity(e, ERR_LIMIT, "an endpoint's Binding or Location is too long"); }
+    if !location_ok(loc) || (hasrl && !location_ok(rl)) {
+        return fail_entity(e, ERR_MALFORMED, "an endpoint's Location or ResponseLocation is not an absolute http(s) URL");
+    }
     var ep = Endpoint { role: role, kind: kind, binding: binding_of_uri(b), .. };
     ep.binding_uri.append(b);
     ep.location.append(loc);

@@ -109,6 +109,38 @@ fn merges() {
         let e = yaml::check(root);
         check("merges check out", e.message.len == 0);
     };
+    // A merge of the mapping it is in ends (check refuses it).
+    with_root("&a {x: 1, <<: *a}\n") { m =>
+        let x, has_x = yaml::as_i64(yaml::member(m, "x"));
+        check("merge of itself: own key", has_x && x == 1);
+        check("merge of itself: missing key", yaml::member(m, "y") == null);
+        var n = 0;
+        yaml::each_pair(m) { k, v => n++; };
+        check("merge of itself: each pair once", n == 1);
+        var r = yaml::reader();
+        var keys = 0;
+        yaml::each_member(r, m) { k, v => keys++; };
+        check("merge of itself: each member once", keys == 1);
+    };
+    with_root("&a {x: 1, b: &b {y: 2, <<: *a}, <<: *b}\n") { m =>
+        let y, has_y = yaml::as_i64(yaml::member(m, "y"));
+        check("merges in a cycle", has_y && y == 2 && yaml::member(m, "z") == null);
+        var keys: u8[>..] = [];
+        yaml::each_pair(yaml::member(m, "b")) { k, v => format(keys, k.value, " "); };
+        check("merges in a cycle: each pair once", keys == "y x b ");
+    };
+    // Each mapping merging the one before twice: 2^60 ways down, 60 steps.
+    var stack: u8[>..] = [];
+    stack.append("m0: &m0 {k0: 0}\n");
+    for i in 1..61 { format(stack, "m", i, ": &m", i, " {k", i, ": ", i, ", <<: [*m", i - 1, ", *m", i - 1, "]}\n"); }
+    with_root(stack) { m =>
+        let top = yaml::member(m, "m60");
+        let k0, has = yaml::as_i64(yaml::member(top, "k0"));
+        check("stacked merges: deepest key", has && k0 == 0 && yaml::member(top, "none") == null);
+        var n = 0;
+        yaml::each_pair(top) { k, v => n++; };
+        check("stacked merges: each key once", n == 61);
+    };
 }
 
 fn schema() {
@@ -252,12 +284,42 @@ fn errors() {
     var deep: u8[>..] = [];
     for i in 10001 { deep.push('['); }
     error_is(deep, "yaml: exceeded max depth of 10000", 1, 10001);
+    // gslib's own limits: bytes of text and nodes of the stream.
+    var doc: yaml::Node[>..] = [];
+    var decoded: u8[>..] = [];
+    var l = yaml::limits();
+    l.max_size = 8;
+    let f1, e1 = yaml::parse("[1, 2, 3]", doc, decoded, l);
+    check("input too large", f1 == null && e1.message == "yaml: input too large (9 bytes; the limit is 8)");
+    l = yaml::limits();
+    l.max_nodes = 4;           // the document, the sequence and two
+    let f2, e2 = yaml::parse("[1, 2]\n---\n[1, 2, 3]\n", doc, decoded, l);
+    check("too many nodes: the first document is whole", f2 != null && e2.message.len > 0);
+    let f3, e3 = yaml::parse("[1, 2, 3]", doc, decoded, l);
+    check("too many nodes", f3 == null && e3.message == "yaml: too many nodes (the limit is 4)" && e3.line == 1 && e3.column == 8);
+    check("limits by default", yaml::limits().max_size == 16 << 20 && yaml::limits().max_nodes == 1 << 20);
 }
 
 fn decoder_checks() {
     with_root("a: 1\nb: 2\na: 3\n") { m =>
         let e = yaml::check(m);
         check("repeated key", e.message == "yaml: unmarshal errors:\n  line 3: mapping key \"a\" already defined at line 1" && e.line == 3);
+    };
+    // yaml.v3 reports every pair of repeated keys, n(n-1)/2 lines for a
+    // key written n times; check stops at 100 and says how many more.
+    var dups: u8[>..] = [];
+    for i in 30 { dups.append("a: 1\n"); }
+    with_root(dups) { m =>
+        let e = yaml::check(m);
+        var lines = 0;
+        for c in e.message { if c == '\n' { lines++; } }
+        check("repeated keys: capped", lines == 101 && e.line == 2
+              && ends_with(e.message, "\n  line 20: mapping key \"a\" already defined at line 4\n  and 335 more pairs of repeated keys"));
+    };
+    with_root("a: 1\nb: 2\na: 3\nb: 4\na: 5\n") { m =>
+        check("repeated keys in yaml.v3's order", yaml::check(m).message == str("yaml: unmarshal errors:\n",
+              "  line 3: mapping key \"a\" already defined at line 1\n  line 5: mapping key \"a\" already defined at line 1\n",
+              "  line 4: mapping key \"b\" already defined at line 2\n  line 5: mapping key \"a\" already defined at line 3"));
     };
     with_root("a:\n  <<: 1\n") { m =>
         check("bad merge", yaml::check(m).message == "yaml: map merge requires map or sequence of maps as the value");
@@ -277,6 +339,54 @@ fn decoder_checks() {
     }
     with_root(bomb) { m => check("alias bomb", yaml::check(m).message == "yaml: document contains excessive aliasing"); };
     with_root("a: &a [1, 2]\nb: [*a, *a, *a]\n") { m => check("a few aliases are fine", yaml::check(m).message.len == 0); };
+}
+
+// Text the writer puts in a sequence, a mapping, a mapping in a
+// sequence, and at a document's root, in style `style`, read back the same: where yaml.v3 writes a
+// block scalar that does not read back (a leading line break or tab, an
+// indentation indicator of 4 where a sequence's items have 2, folded lines
+// around a more indented one), and << as a string.
+fn round_trip(value: const u8[:], style: u8) {
+    for shape in 4 {
+        var pool: yaml::Node[>..] = [];
+        let d .= pool.push(yaml::node(yaml::DOCUMENT));
+        let top .= pool.push(yaml::node(if shape == 1 { yaml::MAPPING } else { yaml::SEQUENCE }));
+        if shape < 3 { yaml::add(d, top); }
+        var at .= top;
+        if shape == 2 {
+            let m .= pool.push(yaml::node(yaml::MAPPING));
+            yaml::add(top, m);
+            at .= m;
+        }
+        if at.kind == yaml::MAPPING { yaml::add(at, pool.push(yaml::node(yaml::SCALAR, "k"))); }
+        let x .= pool.push(yaml::node(yaml::SCALAR, value, "!!str"));
+        x.style = style;
+        if shape < 3 { yaml::add(at, x); } else { yaml::add(d, x); }     // 3: the document's root
+        var out: u8[>..] = [];
+        let we = yaml::write(out, d);
+        var doc: yaml::Node[>..] = [];
+        var decoded: u8[>..] = [];
+        let first, err = yaml::parse(out, doc, decoded);
+        var ok = false;
+        if first {
+            let r = first.first;
+            let c = if shape == 1 { yaml::member(r, "k") } else if shape == 2 { yaml::member(yaml::element(r, 0), "k") }
+                    else if shape == 3 { r } else { yaml::element(r, 0) };
+            if c { ok = c.value == value && c.tag == "!!str"; }
+        }
+        check(str("round trip, shape ", shape, ", style ", style), ok && we.message.len == 0 && err.message.len == 0);
+        if !ok { print("  wrote [", out, "] ", err.message); }
+    }
+}
+
+fn round_trips() {
+    let values: const u8[:][] = ["\n", "\nx", "\n\nx\n", "\tx\ny", "\t\n", " x\ny", "  x\n y\n", " \n",
+                                 "a\n b", "a\n\tb\n", " x\ny\nz", "a\n\n", "a\nb\n\n", "<<"];
+    for v in values {
+        round_trip(v, 0);
+        round_trip(v, yaml::LITERAL);
+        round_trip(v, yaml::FOLDED);
+    }
 }
 
 struct Config { name: u8[..16], port: i64, debug: bool, ratio: f64, tags: i64 }
@@ -323,6 +433,7 @@ fn main() {
     errors();
     decoder_checks();
     reader();
+    round_trips();
     print("unit: ", checks, " checks, ", failures, " failed");
     if failures > 0 { exit(1); }
 }

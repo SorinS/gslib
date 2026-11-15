@@ -100,6 +100,17 @@ fn main() {
     d6.resize(8, 1);
     check("short tag", !bignum::chacha20_poly1305_decrypt(k32, k32[..12], "", d6, k32[..15]) && d6[0] == 0);
     check("long tag", !bignum::chacha20_poly1305_decrypt(k32, k32[..12], "", d6, k32[..17]));
+    // A key or nonce of the wrong length fails rather than aborting.
+    var sealed32: u8[32] = [0; 32];
+    let o7, ok7 = bignum::chacha20_poly1305_open(k32, "short", "", sealed32);
+    let o8, ok8 = bignum::chacha20_poly1305_open(k32[..16], k32[..12], "", sealed32);
+    let o9, ok9 = bignum::xchacha20_poly1305_open(k32, k32[..12], "", sealed32);
+    let o10, ok10 = bignum::xchacha20_poly1305_open(k32[..31], k32[..24], "", sealed32);
+    check("bad key or nonce length", !ok7 && !ok8 && !ok9 && !ok10 && o7.len == 0 && o9.len == 0);
+    d6.resize(8, 1);
+    check("bad nonce in place", !bignum::chacha20_poly1305_decrypt(k32, k32[..8], "", d6, k32[..16]) && d6[7] == 0);
+    d6.resize(8, 1);
+    check("xchacha bad nonce in place", !bignum::xchacha20_poly1305_decrypt(k32, k32[..12], "", d6, k32[..16]) && d6[7] == 0);
     // The 32-bit block counter never wraps: from 0xffffffff one block
     // remains, and it is that block's keystream.
     check("fits: last block", bignum::chacha20_fits(0xffffffff, 64));

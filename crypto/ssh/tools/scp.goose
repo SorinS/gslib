@@ -51,7 +51,7 @@ struct Link {
 }
 
 fn report(o: const login::Options&, s: const u8[:]) {
-    sysnet::eprint(str(o.prog, ": ", s, "\n"));
+    sysnet::eprint(str(o.prog, ": ", sysnet::safe_text(s), "\n"));      // names and messages from the server
     errors++;
 }
 
@@ -106,7 +106,7 @@ fn pump(o: const login::Options&, cfg: ssh::ClientConfig&, c: ssh::Conn&, l: Lin
         } else if e.kind == ssh::EV_CHANNEL_OPENED && e.channel == l.ch {
             let ok2 = ssh::subsystem(c, l.ch, "sftp", out);
         } else if e.kind == ssh::EV_CHANNEL_OPEN_FAILED {
-            sysnet::eprint(str(o.prog, ": channel refused: ", d, "\n"));
+            sysnet::eprint(str(o.prog, ": channel refused: ", sysnet::safe_text(d), "\n"));
             l.gone = true;
         } else if e.kind == ssh::EV_REQUEST_REPLY && e.channel == l.ch {
             if e.value != 1 { sysnet::eprint(str(o.prog, ": the server has no sftp subsystem\n")); l.gone = true; }
@@ -119,7 +119,7 @@ fn pump(o: const login::Options&, cfg: ssh::ClientConfig&, c: ssh::Conn&, l: Lin
         } else if e.kind == ssh::EV_EXTENDED_DATA && e.channel == l.ch {
             sysnet::eprint(d);
         } else if e.kind == ssh::EV_CLOSE || e.kind == ssh::EV_EOF || e.kind == ssh::EV_DISCONNECT {
-            if e.kind == ssh::EV_DISCONNECT { sysnet::eprint(str(o.prog, ": disconnected: ", d, "\n")); }
+            if e.kind == ssh::EV_DISCONNECT { sysnet::eprint(str(o.prog, ": disconnected: ", sysnet::safe_text(d), "\n")); }
             l.gone = true;
         }
     }
@@ -275,6 +275,9 @@ fn remote_path(cx: Ctx&, cfg: ssh::ClientConfig&, c: ssh::Conn&, out: u8[>..]&, 
 
 // --- Transfers ------------------------------------------------------------------------
 
+// A mode as -p keeps it, and as a new file gets it: 0777 of it, never
+// setuid, setgid or sticky (which the other side may have set), as
+// OpenSSH's scp.
 fn local_mode(perm: u32) -> u32 { perm & 0x1ff }      // 0777
 
 // A local file to a remote one: WRITE requests in flight up to
@@ -314,7 +317,7 @@ fn upload(cx: Ctx&, cfg: ssh::ClientConfig&, c: ssh::Conn&, out: u8[>..]&, src: 
     if !failed && cx.l.preserve {
         var a = ssh::no_attrs();
         a.flags = ssh::ATTR_PERMISSIONS | ssh::ATTR_ACMODTIME;
-        a.perm = st.mode & 0xfff;
+        a.perm = local_mode(st.mode);
         a.atime = st.atime as! u32;
         a.mtime = st.mtime as! u32;
         let sid = new_id();
@@ -398,15 +401,22 @@ fn download(cx: Ctx&, cfg: ssh::ClientConfig&, c: ssh::Conn&, out: u8[>..]&, src
     }
     if !failed && cx.l.preserve {
         let t = fs::fs_utimes("", fd, a.atime, a.mtime, 1);
-        let m2 = fs::fs_chmod("", fd, a.perm & 0xfff, 1);
+        let m2 = fs::fs_chmod("", fd, local_mode(a.perm), 1);
         if t < 0 || m2 < 0 { report(cx.o, str(dst, ": set times or mode: ", ssh::sftp_status_text(fs::status(::min(t, m2))))); }
     }
     let x = fs::fs_close(fd);
     let cc, ct = rclose(cx, cfg, c, out, h);
 }
 
-// A remote directory's entries, "." and ".." left out: "name" lines, and
-// their attributes in the same order.
+// Whether a name from the server can be a local file's in the directory
+// copied to: not "", "." or "..", no slash (nor newline, the lists'
+// separator), as OpenSSH's scp checks the names a server sends.
+fn name_ok(name: const u8[:]) -> bool {
+    return name.len > 0 && name != "." && name != ".." && position(name, '/') < 0 && position(name, '\n') < 0;
+}
+
+// A remote directory's entries, "." and ".." and names name_ok refuses
+// left out: "name" lines, and their attributes in the same order.
 fn list_remote(cx: Ctx&, cfg: ssh::ClientConfig&, c: ssh::Conn&, out: u8[>..]&, dir: const u8[:], names: u8[>..]&, attrs: ssh::Attrs[>..]&) -> bool {
     let id = new_id();
     var req: u8[>..] = [];
@@ -432,7 +442,7 @@ fn list_remote(cx: Ctx&, cfg: ssh::ClientConfig&, c: ssh::Conn&, out: u8[>..]&, 
             let a = ssh::get_attrs(r, p);
             if r.bad { break; }
             let name = ssh::bytes(p, f);
-            if name == "." || name == ".." || position(name, '/') >= 0 || position(name, '\n') >= 0 { continue; }
+            if !name_ok(name) { continue; }
             names.append(name);
             names.push('\n');
             attrs.push(a);
@@ -509,7 +519,7 @@ fn put_path(cx: Ctx&, cfg: ssh::ClientConfig&, c: ssh::Conn&, out: u8[>..]&, src
             if cx.l.preserve {
                 var a = ssh::no_attrs();
                 a.flags = ssh::ATTR_PERMISSIONS | ssh::ATTR_ACMODTIME;
-                a.perm = st.mode & 0xfff;
+                a.perm = local_mode(st.mode);
                 a.atime = st.atime as! u32;
                 a.mtime = st.mtime as! u32;
                 let sid = new_id();
@@ -560,7 +570,7 @@ fn get_path(cx: Ctx&, cfg: ssh::ClientConfig&, c: ssh::Conn&, out: u8[>..]&, src
         if kind == JOB_DIR_DONE {
             if cx.l.preserve {
                 let t = fs::fs_utimes(dst, -1, a.atime, a.mtime, 1);
-                let m = fs::fs_chmod(dst, -1, a.perm & 0xfff, 1);
+                let m = fs::fs_chmod(dst, -1, local_mode(a.perm), 1);
                 if t < 0 || m < 0 { report(cx.o, str(dst, ": set times or mode: ", ssh::sftp_status_text(fs::status(::min(t, m))))); }
             }
             continue;
@@ -758,18 +768,28 @@ fn run() -> i32 {
     } else {
         let lt, le = fs::stat(target, true);
         let into_dir = le == 0 && fs::is_dir(lt);
-        // Each source, its pattern (in its last part) matched in its directory.
+        // Each source, its pattern (in its last part) matched in its
+        // directory: the remote paths, the names they get here (into_dir),
+        // and their attributes.
         var total = 0;
         var names: u8[>..] = [];
+        var locals: u8[>..] = [];
         var attrs: ssh::Attrs[>..] = [];
         for k in paths.len - 1 {
             let cpos = colon(paths[k]);
-            let rp, okp = remote_path(cx, cfg, c, out, paths[k][cpos + 1..]);
+            let arg = paths[k][cpos + 1..];
+            let rp, okp = remote_path(cx, cfg, c, out, arg);
             if !okp { continue; }
-            let base = fs::base_name(rp);
+            if position(rp, '\n') >= 0 { report(cx.o, str(arg, ": a newline in the path")); continue; }
+            // The name here is the last part as the user wrote it, never the
+            // server's (its expand-path answer could name any file, as in
+            // CVE-2019-6111); a ~ or ~user alone has none.
+            let tilde_only = arg.len > 0 && arg[0] == '~' && position(arg, '/') < 0;
+            let base = if tilde_only { "" } else { fs::base_name(arg) };
             if has_pattern(base) {
+                let rbase = fs::base_name(rp);
                 var dir: u8[>..] = [];
-                dir.append(if base.len == rp.len { "." } else { rp[..rp.len - base.len] });
+                dir.append(if rbase.len == rp.len { "." } else { rp[..rp.len - rbase.len] });
                 var all: u8[>..] = [];
                 var aa: ssh::Attrs[>..] = [];
                 if !list_remote(cx, cfg, c, out, dir, all, aa) { continue; }
@@ -777,22 +797,31 @@ fn run() -> i32 {
                 var found = 0;
                 for name in split(all, '\n') {
                     if name.len == 0 { continue; }
+                    let at = j;
+                    j++;
                     let hidden_ok = name[0] != '.' || base[0] == '.';
                     if hidden_ok && glob_match(base, name) {
                         names.append(fs::join(dir, name));
                         names.push('\n');
-                        attrs.push(aa[j]);
+                        locals.append(name);
+                        locals.push('\n');
+                        attrs.push(aa[at]);
                         found++;
                     }
-                    j++;
                 }
-                if found == 0 { report(cx.o, str(paths[k][cpos + 1..], ": No such file or directory")); }
+                if found == 0 { report(cx.o, str(arg, ": No such file or directory")); }
                 total += found;
             } else {
+                if into_dir && !name_ok(base) {
+                    report(cx.o, str(arg, ": no name to copy it to here: name the target"));
+                    continue;
+                }
                 let a2, code, text = rstat(cx, cfg, c, out, rp, true);
                 if code != ssh::FX_OK { report(cx.o, str(rp, ": ", text)); continue; }
                 names.append(rp);
                 names.push('\n');
+                locals.append(base);
+                locals.push('\n');
                 attrs.push(a2);
                 total++;
             }
@@ -802,10 +831,11 @@ fn run() -> i32 {
             report(cx.o, str(target, ": not a directory"));
         } else {
             var j = 0;
+            let ls = split(locals, '\n');
             for src in split(names, '\n') {
                 if src.len == 0 { continue; }
                 var dst: u8[>..] = [];
-                if into_dir { dst.append(fs::join(target, fs::base_name(src))); } else { dst.append(target); }
+                if into_dir { dst.append(fs::join(target, ls[j])); } else { dst.append(target); }
                 get_path(cx, cfg, c, out, src, attrs[j], dst);
                 j++;
                 if cx.l.gone { break; }

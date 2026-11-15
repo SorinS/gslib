@@ -6,6 +6,8 @@
 // same RRsets signed here with the same keys, into the same RRSIGs where
 // the algorithm is deterministic (RSA, Ed25519) and verifying ones
 // otherwise; DS records and key tags; NSEC3 hashes; validity periods.
+// Then a revoked key, and NSEC3 records cut short or with too many
+// iterations.
 import std;
 import base64;
 import gslib from "../..";
@@ -56,6 +58,49 @@ fn check_sig(keys: const u8[:], at: KeyAt, set: const u8[:], sig: const u8[:]) {
         tv::check_eq(str("same RRSIG, alg ", alg), m.rdata(mine), rrsig);
         tv::check_eq(str("same RRSIG owner, alg ", alg), m.name(mine), srr.name(sig));
     }
+}
+
+// A key with the REVOKE flag (RFC 5011) verifies no RRSIG but one over the
+// DNSKEY RRset.
+fn revoked() {
+    var keyrr: u8[>..] = [];
+    dns::new_rr(keyrr, "example.com. 3600 IN DNSKEY 385 3 15 l02Woi0iS8Aa25FQkUd9RMzZHJpBoRQwAQEX1SxZJA4=");
+    let kr = dns::rr_at(keyrr, 0);
+    let k, e = dns::read_private_key("Private-key-format: v1.2\nAlgorithm: 15 (ED25519)\nPrivateKey: ODIyNjAzODQ2MjgwODAxMjI2NDUxOTAyMDQxNDIyNjI=\n", kr.rdata(keyrr));
+    tv::check_int("revoked: private key", e, dns::OK);
+    var set: u8[>..] = [];
+    dns::new_rr(set, "example.com. 3600 IN MX 10 mail.example.com.");
+    var sig: u8[>..] = [];
+    dns::sign_rrset(set, k, kr.name(keyrr), kr.rdata(keyrr), 1438207200, 1440021600, sig);
+    let s = dns::rr_at(sig, 0);
+    tv::check_int("revoked key: MX refused", dns::verify_rrsig(s.rdata(sig), set, kr.name(keyrr), kr.rdata(keyrr)), dns::ERR_KEY);
+    var ksig: u8[>..] = [];
+    dns::sign_rrset(keyrr, k, kr.name(keyrr), kr.rdata(keyrr), 1438207200, 1440021600, ksig);
+    let ks = dns::rr_at(ksig, 0);
+    tv::check_int("revoked key: its own DNSKEY RRset", dns::verify_rrsig(ks.rdata(ksig), keyrr, kr.name(keyrr), kr.rdata(keyrr)), dns::OK);
+}
+
+// NSEC3: malformed rdata matches and covers nothing; nor do more than 150
+// iterations (RFC 9276).
+fn nsec3_limits() {
+    let ex, e1 = dns::name_parse("example.", []);
+    let missing, e2 = dns::name_parse("c.x.w.example.", []);
+    let owner, e3 = dns::name_parse("0p9mhaveqvm6t7vbl5lop2u3t2rp3tom.example.", []);
+    var n3: u8[>..] = [];
+    dns::new_rr(n3, "0p9mhaveqvm6t7vbl5lop2u3t2rp3tom.example. 3600 IN NSEC3 1 1 12 aabbccdd 2t7b4g4vsa5smi47k61mv5bv1a22bojr NS SOA MX RRSIG DNSKEY NSEC3PARAM");
+    let nr = dns::rr_at(n3, 0);
+    tv::check("NSEC3 matches", dns::nsec3_match(owner, nr.rdata(n3), ex));
+    tv::check("NSEC3 covers", dns::nsec3_cover(owner, nr.rdata(n3), missing));
+    let short: u8[4] = [1, 0, 0, 0];
+    tv::check("NSEC3 cut short: no match", !dns::nsec3_match(owner, short, ex));
+    tv::check("NSEC3 cut short: covers nothing", !dns::nsec3_cover(owner, short, missing));
+    let short2: u8[9] = [1, 0, 0, 0, 4, 0xaa, 0xbb, 0xcc, 0xdd];     // no next hashed owner
+    tv::check("NSEC3 without next name", !dns::nsec3_cover(owner, short2, missing));
+    var many: u8[>..] = [];
+    many.append(nr.rdata(n3));
+    dns::set16(many, 2, 151);
+    tv::check("151 iterations: no match", !dns::nsec3_match(owner, many, ex));
+    tv::check("151 iterations: covers nothing", !dns::nsec3_cover(owner, many, missing));
 }
 
 fn rfc8080() {
@@ -154,5 +199,7 @@ fn main() {
     };
     rfc8080();
     rfc6605();
+    revoked();
+    nsec3_limits();
     tv::done("dnssec");
 }

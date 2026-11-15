@@ -106,7 +106,8 @@ In gslib's `examples/krb5/`, run from gslib's top as `goose examples/krb5/<name>
   libk5crypto's answers for every type (`test/vectors/mit_crypto.txt`:
   string-to-key with UTF-8 passwords and explicit iteration counts, PRF,
   checksums, KRB-FX-CF2 for every pair of types, and MIT's ciphertexts
-  decrypted); every type's round trips, tampering and wrong usages.
+  decrypted); every type's round trips, tampering and wrong usages;
+  unkeyed checksums made but never verified.
 - `test/fast.goose`: FAST with the test as the KDC, for every type as the
   armor's: the armor key the KDC makes from our AP-REQ, the armored
   request (padata, checksum, inner request), replies and errors read,
@@ -150,14 +151,19 @@ In gslib's `examples/krb5/`, run from gslib's top as `goose examples/krb5/<name>
 - `test/files.goose`: go-krb5's keytabs and cache (MIT-written): testuser1's
   keys are our string-to-key of its password, the cache re-encodes byte
   for byte; version 1 keytabs, holes, 32-bit key versions.
-- `test/config.goose`: go-krb5's krb5.conf and MIT's syntax corners.
+- `test/config.goose`: go-krb5's krb5.conf and MIT's syntax corners;
+  des3 and rc4 only with `allow_des3`/`allow_rc4`; the floor on a KDC's
+  s2kparams.
 - `test/gssapi.goose`, `test/spnego.goose`: tickets made with known keys,
-  contexts both ways, tokens, tampering, replays, channel bindings,
-  delegation, Windows' and NTLM-first SPNEGO exchanges.
+  contexts both ways, tokens, tampering, replays (an authenticator at
+  the skew's edge replayed at twice the skew; a replayed Wrap token
+  giving nothing), channel bindings, delegation, transited realms,
+  Windows' and NTLM-first SPNEGO exchanges, DES3 when not first refused.
 - `test/pac.goose`: go-krb5's PAC vectors (two from Windows AD) and its
   five uncompressed claims vectors read the same as go-krb5 reads them,
   line for line (`test/vectors/pac_oracle.txt`, from `tools/krb5oracle`);
-  the server signature checked with the service's key; extended
+  the server signature checked with the service's key, an unkeyed one
+  (RSA-MD5, SHA-1) refused, two PACs refused; extended
   UPN_DNS_INFO; the compressed claims vector decompressed to its declared
   size, its claims those of the uncompressed vectors for the same user.
 
@@ -323,18 +329,37 @@ CLIENT_NOT_TRUSTED, for a certificate whose issuer it does not know.
 The KDC's MODP value is checked to be in the subgroup of order q (y^q =
 1), beyond [2, p-2].
 
-DES3 and RC4 are legacy and kept for old KDCs and keytabs only; RFC
-1964's per-message tokens for DES3 session keys are not planned (such
-contexts establish, but `gss_get_mic` and `gss_wrap` refuse them).
+DES3 and RC4 are legacy and kept for old KDCs and keytabs only: the
+client asks for them (in `conf_etypes`, listed or by default) only when
+`[libdefaults]` has `allow_des3 = true` or `allow_rc4 = true`, MIT
+1.21's relations, both false by default; and it takes an AS-REP under
+a password or keytab key only in a type it asked for. RFC 1964's per-message tokens for DES3 session keys
+are not planned (such contexts establish, but `gss_get_mic` and
+`gss_wrap` refuse them, and SPNEGO refuses such a context when Kerberos
+was not the initiator's first choice, the mechListMIC being then
+required).
+
+A checksum is verified (`verify_checksum`, and through it the PAC's
+signatures, FAST's and the AS-REQ's) only when keyed: RSA-MD5 and SHA-1,
+which anyone can compute, give `KRB_AP_ERR_INAPP_CKSUM` (`checksum` still
+makes them). `pac_verify` refuses a ticket with more than one PAC
+(`ERR_PAC`), as MIT does. The acceptor keeps no capaths: a ticket whose
+transited field is not empty is taken only when the KDC checked it
+(TRANSITED-POLICY-CHECKED, which MIT's KDC sets), else
+`KRB_AP_PATH_NOT_ACCEPTED`; direct cross-realm trust leaves it empty.
+`gss_unwrap` gives no message for a token out of sequence.
 
 Camellia (bignum's, constant time) is checked against all of RFC
 6803's vectors and against MIT (libk5crypto, PRF included, and its KDC).
 The RFC doesn't give its sample encryptions' key usages: they are 0 to 4
 in order.
 
-MIT refuses PBKDF2 iteration counts below a type's default (4096 for
-RFC 3962, 32768 for RFC 8009 and 6803) as weak; `string_to_key` takes
-any count from 1 to 2^24, as the RFCs' own vectors need.
+`string_to_key` takes any PBKDF2 iteration count from 1 to 2^24, as the
+RFCs' own vectors need; but the client refuses a KDC's s2kparams below
+the type's default (4096 for RFC 3962, 32768 for RFC 8009 and 6803),
+`ERR_S2K_PARAMS`, unless `[libdefaults]` has `allow_weak_s2kparams =
+true`: the hint comes unauthenticated, and a low count would make the
+password cheap to guess from the PA-ENC-TIMESTAMP that follows.
 
 RFC 4757 §7.2's pseudocode puts the direction bytes of RC4 tokens the
 wrong way round; we follow RFC 1964 and MIT (00 from the initiator), and

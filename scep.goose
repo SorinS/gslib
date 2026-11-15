@@ -125,6 +125,7 @@ let OID_CHALLENGE_PASSWORD: const u8[:] = "1.2.840.113549.1.9.7";
 // What this reads of a reply, and how much of it.
 let MAX_TRANSACTION_ID: i64 = 128;
 let MAX_NONCE:          i64 = 64;
+let MAX_FAIL_TEXT:      i64 = 2048;
 let MAX_SIGNER:         i64 = 16384;
 
 // --- Types --------------------------------------------------------------------
@@ -152,7 +153,7 @@ struct Attrs {
     transaction_id:  u8[..MAX_TRANSACTION_ID] = [],
     sender_nonce:    u8[..MAX_NONCE]          = [],
     recipient_nonce: u8[..MAX_NONCE]          = [],
-    fail_text:       u8[..256]                = [],    // failInfoText (RFC 8894 §3.2.1.4), if any
+    fail_text:       u8[..MAX_FAIL_TEXT]      = [],    // failInfoText (RFC 8894 §3.2.1.4), if any
 }
 
 // A pkiMessage as read: its attributes, the signer's certificate, and the
@@ -313,7 +314,9 @@ fn read_attrs(sd: const x509::SignedData&) -> Attrs, bool {
     let tid, ntid = x509::cms_signed_attr(sd, OID_TRANSACTION_ID);
     if ntid != 1 || tid.tag != asn1::PRINTABLE_STRING || asn1::content_len(tid) == 0 ||
        asn1::content_len(tid) > MAX_TRANSACTION_ID { return a, false; }
-    a.transaction_id.append(d[tid.off..tid.end]);
+    let tids, oktid = asn1::read_string(d, tid);
+    if !oktid { return a, false; }
+    a.transaction_id.append(tids);
     let mt, nmt = x509::cms_signed_attr(sd, OID_MESSAGE_TYPE);
     if nmt != 1 { return a, false; }
     a.message_type = read_number(d, mt);
@@ -338,12 +341,13 @@ fn read_attrs(sd: const x509::SignedData&) -> Attrs, bool {
             if which == 0 { a.sender_nonce.append(d[n.off..n.end]); } else { a.recipient_nonce.append(d[n.off..n.end]); }
         }
     }
-    // failInfoText is for a person to read: its first 256 bytes are kept.
+    // failInfoText is for a person to read, up to MAX_FAIL_TEXT bytes.
     let ft, nft = x509::cms_signed_attr(sd, OID_FAIL_INFO_TEXT);
     if nft < 0 { return a, false; }
     if nft == 1 {
         let s, oks = asn1::read_string(d, ft);
-        if oks { a.fail_text.append(s[..min(s.len, 256)]); }
+        if !oks || s.len > MAX_FAIL_TEXT { return a, false; }
+        a.fail_text.append(s);
     }
     return a, true;
 }

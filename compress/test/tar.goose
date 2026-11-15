@@ -517,6 +517,14 @@ fn bounded_memory() {
         if st == compress::STREAM_END || st < 0 { break; }
     }
     if name_len != 100000 || most3 > 2 * 100001 + 4096 { fail(str("long names: name ", name_len, ", ", most3, " bytes kept")); }
+    // A header that declares 8 GiB of data, with one block of it: tar_each
+    // grows its buffer as data comes, rather than to 8 GiB at once.
+    var huge: u8[>..] = [];
+    raw_header(huge, "huge", (1 << 33) - 1, '0');
+    for i in 512 { huge.push('d'); }
+    var seen = 0;
+    let st4 = compress::tar_each(huge, 1 << 40) { h, data => seen++; };
+    if st4 != compress::ERR_TRUNCATED || seen != 0 { fail(str("declared 8 GiB: ", st4)); }
     print("tar: bounded memory");
 }
 

@@ -47,9 +47,9 @@ fn main() {
     print("opened in order: \"", p1, "\", \"", p2, "\"");
 
     // Both sides can export the same secret, for keys beyond the messages.
-    let xs = bignum::hpke_export(sender, "resumption key", 32);
-    let xr = bignum::hpke_export(recipient, "resumption key", 32);
-    guard bignum::ct_eq_bytes(xs, xr) == 1 else { fail("export"); }
+    let xs, oks = bignum::hpke_export(sender, "resumption key", 32);
+    let xr, okr = bignum::hpke_export(recipient, "resumption key", 32);
+    guard oks && okr && bignum::ct_eq_bytes(xs, xr) == 1 else { fail("export"); }
     print("exported secret ", hex(xs));
 
     // Another info string (another application) cannot open the messages.

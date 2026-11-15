@@ -136,7 +136,8 @@ fn gpg_signatures() {
         let r9 = openpgp::verify_detached(kr, msg, vec(str("det_", f, ".sig")), m);
         tv::check_int(str(f, ": detached"), r9, openpgp::OK);
         var mc = openpgp::Message { .. };
-        tv::check_int(str(f, ": detached, changed data"), openpgp::verify_detached(kr, changed, vec(str("det_", f, ".sig")), mc),
+        let label_139 = str(f, ": detached, changed data");
+        tv::check_int(label_139, openpgp::verify_detached(kr, changed, vec(str("det_", f, ".sig")), mc),
                       openpgp::ERR_BAD_SIGNATURE);
         var mi = openpgp::Message { .. };
         let ei = openpgp::verify(kr, vec(str("sig_", f, ".gpg")), mi, openpgp::ReadOptions { .. });
@@ -181,14 +182,16 @@ fn gpg_messages() {
         var ko = openpgp::Keyring { .. };
         load(ko, str(other, ".sec"));
         var mo = openpgp::Message { .. };
-        tv::check_int(str("gpg's to ", f, ": not with ", other), openpgp::read_message(ko, vec(enc), mo, openpgp::ReadOptions { .. }),
+        let label_nw = str("gpg's to ", f, ": not with ", other);
+        tv::check_int(label_nw, openpgp::read_message(ko, vec(enc), mo, openpgp::ReadOptions { .. }),
                       openpgp::ERR_NO_KEY);
     }
     for f in ["ed448_prot", "pqcbp_prot"] {
         var ks = openpgp::Keyring { .. };
         load(ks, str(f, ".sec"));
         var m = openpgp::Message { .. };
-        tv::check_int(str(f, ": locked"), openpgp::read_message(ks, vec(str("enc_", f, ".asc")), m, openpgp::ReadOptions { .. }),
+        let label_193 = str(f, ": locked");
+        tv::check_int(label_193, openpgp::read_message(ks, vec(str("enc_", f, ".asc")), m, openpgp::ReadOptions { .. }),
                       openpgp::ERR_PASSPHRASE);
         let r11 = openpgp::unlock(ks, 0, passphrase());
         tv::check_int(str(f, ": unlock"), r11, openpgp::OK);
@@ -213,7 +216,8 @@ fn gpg_messages() {
         bad.append(bin);
         bad[at] ^= 0x10;
         var mb = openpgp::Message { .. };
-        tv::check(str("ky768_bp256: changed PKESK at ", at), openpgp::read_message(ks, bad, mb, openpgp::ReadOptions { .. }) != openpgp::OK);
+        let label_219 = str("ky768_bp256: changed PKESK at ", at);
+        tv::check(label_219, openpgp::read_message(ks, bad, mb, openpgp::ReadOptions { .. }) != openpgp::OK);
     }
     var k4 = openpgp::Keyring { .. };
     load(k4, "ed448.sec");
@@ -224,7 +228,8 @@ fn gpg_messages() {
         bad.append(b4);
         bad[at] ^= 0x10;
         var mb = openpgp::Message { .. };
-        tv::check(str("cv448: changed PKESK at ", at), openpgp::read_message(k4, bad, mb, openpgp::ReadOptions { .. }) != openpgp::OK);
+        let label_231 = str("cv448: changed PKESK at ", at);
+        tv::check(label_231, openpgp::read_message(k4, bad, mb, openpgp::ReadOptions { .. }) != openpgp::OK);
     }
 }
 
@@ -298,7 +303,8 @@ fn generated() {
         let need = if i == 0 { 32 } else if i == 1 || i == 5 { 48 } else { 64 };
         tv::check(str(what, ": hash long enough"), m1.sigs.len == 1 && openpgp::hash_size(m1.sigs[0].hash) >= need);
         var m1b = openpgp::Message { .. };
-        tv::check_int(str(what, ": changed data refused"), openpgp::verify_detached(kp, "New curves", det, m1b),
+        let label_301 = str(what, ": changed data refused");
+        tv::check_int(label_301, openpgp::verify_detached(kp, "New curves", det, m1b),
                       openpgp::ERR_BAD_SIGNATURE);
         for text in [false, true] {
             var wi = w;
@@ -358,11 +364,13 @@ fn generated() {
         else if i == 4 { eo = openpgp::generate_ed448_v6_key(other, uid); }
         else { eo = openpgp::generate_pqc_bp_key(other, uid); }
         var mo = openpgp::Message { .. };
-        tv::check(str(what, ": another key"), eo == openpgp::OK
+        let label_ak = str(what, ": another key");
+        tv::check(label_ak, eo == openpgp::OK
                   && openpgp::read_message(other, enc, mo, openpgp::ReadOptions { .. }) != openpgp::OK);
         // gpg's keys verify ours and the other way round only with the right key.
         var m4 = openpgp::Message { .. };
-        tv::check(str(what, ": not by another key"), openpgp::verify_detached(other, msg, det, m4) != openpgp::OK);
+        let label_nb = str(what, ": not by another key");
+        tv::check(label_nb, openpgp::verify_detached(other, msg, det, m4) != openpgp::OK);
     }
 }
 

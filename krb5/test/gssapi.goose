@@ -21,9 +21,15 @@ let NOW = 1800000000;
 // A ticket for HTTP/web.example@EXAMPLE.COM to alice, valid an hour around
 // NOW, and its credential.
 fn make_cred(svc_key: krb5::Key, sess_etype: i32, flags: u32, start: i64, end: i64) -> krb5::Credential {
+    return make_cred_from(svc_key, sess_etype, flags, start, end, "EXAMPLE.COM", "");
+}
+
+// The same for a client of `crealm`, through the realms in `transited`.
+fn make_cred_from(svc_key: krb5::Key, sess_etype: i32, flags: u32, start: i64, end: i64, crealm: const u8[:],
+                  transited: const u8[:]) -> krb5::Credential {
     let sess = krb5::random_key(sess_etype);
     let tp = krb5::EncTicketPart {
-        flags: flags, key: sess, crealm: "EXAMPLE.COM", cname: krb5::principal_name(1, "alice"), tr_type: 1, transited: "",
+        flags: flags, key: sess, crealm: crealm, cname: krb5::principal_name(1, "alice"), tr_type: 1, transited: transited,
         authtime: start, has_starttime: true, starttime: start, endtime: end, has_renew_till: false, renew_till: 0,
         has_caddr: false, caddr: [], has_authz: true, authz: [krb5::AuthData { ad_type: 1, data: "\x30\x00" }],
     };
@@ -36,7 +42,7 @@ fn make_cred(svc_key: krb5::Key, sess_etype: i32, flags: u32, start: i64, end: i
     var der: u8[>..] = [];
     krb5::encode_ticket(der, t);
     return krb5::Credential {
-        client_type: 1, client: "alice", client_realm: "EXAMPLE.COM", server_type: 1, server: "HTTP/web.example",
+        client_type: 1, client: "alice", client_realm: crealm, server_type: 1, server: "HTTP/web.example",
         server_realm: "EXAMPLE.COM", key: sess, authtime: start, starttime: start, endtime: end, renew_till: 0,
         is_skey: false, flags: flags, addresses: [], authdata: [], ticket: der, second_ticket: "",
     };
@@ -74,6 +80,10 @@ fn exchange(what: const u8[:], e: i32, mutual: bool) {
             var u: u8[>..] = [];
             let sealed, uerr = krb5::gss_unwrap(actx, w, u);
             tv::check(str(what, " unwrap ", conf), uerr == krb5::OK && sealed == conf && u == msg);
+            // Replayed: refused, and nothing comes out.
+            var ur: u8[>..] = [];
+            let sr, uerr_r = krb5::gss_unwrap(actx, w, ur);
+            tv::check(str(what, " replayed wrap ", conf), uerr_r == krb5::ERR_SEQUENCE && ur.len == 0);
             var w2: u8[>..] = [];
             tv::check_int(str(what, " wrap back"), krb5::gss_wrap(actx, "reply", conf, w2), krb5::OK);
             var u2: u8[>..] = [];
@@ -174,6 +184,34 @@ fn acceptor_checks() {
     var a2, acc2, e2 = krb5::gss_accept(t3, kt, false, rc2, NOW + 1, 0, 300, "", false, o2);
     tv::check("first accepted", e1 == krb5::OK);
     tv::check_int("replay", e2, krb5::KRB_AP_ERR_REPEAT);
+    // An authenticator from the edge of the skew is good until twice the
+    // skew past its first acceptance, and remembered that long.
+    var rc6: krb5::ReplayEntry[>..] = [];
+    var t6: u8[>..] = [];
+    var ictx6, err6 = krb5::gss_init(good, 0, "", false, "", NOW + 300, 0, t6);
+    var o6: u8[>..] = [];
+    var a6, acc6, e6 = krb5::gss_accept(t6, kt, false, rc6, NOW, 0, 300, "", false, o6);
+    tv::check_int("authenticator at the skew's edge", e6, krb5::OK);
+    var o7: u8[>..] = [];
+    var a7, acc7, e7 = krb5::gss_accept(t6, kt, false, rc6, NOW + 600, 0, 300, "", false, o7);
+    tv::check_int("replay at twice the skew", e7, krb5::KRB_AP_ERR_REPEAT);
+    var o8: u8[>..] = [];
+    var a8, acc8, e8 = krb5::gss_accept(t6, kt, false, rc6, NOW + 601, 0, 300, "", false, o8);
+    tv::check_int("past twice the skew: the authenticator is too old", e8, krb5::KRB_AP_ERR_SKEW);
+    // A cross-realm ticket through another realm: refused unless the KDC
+    // checked the path; through none (direct trust) taken.
+    fn tr(what: const u8[:], transited: const u8[:], flags: u32, want: i64) {
+        let c = make_cred_from(svc, 18, flags, NOW - 600, NOW + 3000, "OTHER.EXAMPLE", transited);
+        var rct: krb5::ReplayEntry[>..] = [];
+        var t: u8[>..] = [];
+        var ic, ie = krb5::gss_init(c, 0, "", false, "", NOW, 0, t);
+        var o: u8[>..] = [];
+        var ac, aa, ae = krb5::gss_accept(t, kt, false, rct, NOW, 0, 300, "", false, o);
+        tv::check_int(what, ae, want);
+    }
+    tr("cross-realm, direct", "", 0, krb5::OK);
+    tr("transited, not checked", "MIDDLE.EXAMPLE", 0, krb5::KRB_AP_PATH_NOT_ACCEPTED);
+    tr("transited, checked by the KDC", "MIDDLE.EXAMPLE", krb5::flag(krb5::TKT_TRANSITED_POLICY_CHECKED), krb5::OK);
     // Channel bindings: matching, missing (accepted), different (refused).
     fn cb(what: const u8[:], ib: const u8[:], ihas: bool, ab: const u8[:], want: i64) {
         var rc3: krb5::ReplayEntry[>..] = [];

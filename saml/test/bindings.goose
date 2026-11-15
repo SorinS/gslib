@@ -304,8 +304,52 @@ fn metadata(sp: saml::Sp&, idp: saml::Idp&) {
     let tail = "</md:SPSSODescriptor></md:EntityDescriptor>";
     let acs = str("<md:AssertionConsumerService Binding=\"", saml::URI_BINDING_POST, "\" Location=\"https://x.example.test/acs\" index=\"0\"/>");
     tv::check_code("minimal", saml::parse_metadata(e, str(head, acs, tail), ""), saml::OK, e.message);
-    tv::check_code("ACS without index", saml::parse_metadata(e, str(head, "<md:AssertionConsumerService Binding=\"b\" Location=\"l\"/>", tail), ""),
+    tv::check_code("ACS without index", saml::parse_metadata(e, str(head, "<md:AssertionConsumerService Binding=\"b\" Location=\"https://x.example.test/l\"/>", tail), ""),
                    saml::ERR_MALFORMED, e.message);
+    tv::check("  for that reason", find(e.message, "index") >= 0);
+    // Locations: absolute http(s) only, no white space or control characters
+    // (a javascript: form action on the IdP; CR LF into a Location header).
+    for loc in ["javascript:alert(document.domain)//", "JAVASCRIPT:x", "data:text/html,x", "/acs", "acs", "https:///acs", "https://",
+                "//x.example.test/acs", "https://x.example.test/a&#13;&#10;Set-Cookie: s=1", "https://x.example.test/a&#10;",
+                "https://x.example.test/a b", "https://x.example.test/a&#9;", "https://x.example.test/&#127;"] {
+        var le = saml::Entity { .. };
+        let rc = saml::parse_metadata(le, str(head, "<md:AssertionConsumerService Binding=\"b\" index=\"0\" Location=\"", loc, "\"/>", tail), "");
+        tv::check_code(str("  ACS Location ", loc), rc, saml::ERR_MALFORMED, le.message);
+    }
+    tv::check_code("  HTTP://, upper case, is taken",
+                   saml::parse_metadata(e, str(head, "<md:AssertionConsumerService Binding=\"b\" index=\"0\" Location=\"HTTP://x.example.test/acs?a=b\"/>", tail), ""),
+                   saml::OK, e.message);
+    tv::check_code("  a bad SLO ResponseLocation",
+                   saml::parse_metadata(e, str(head, "<md:SingleLogoutService Binding=\"b\" Location=\"https://x.example.test/slo\" ResponseLocation=\"javascript:x\"/>",
+                                               acs, tail), ""),
+                   saml::ERR_MALFORMED, e.message);
+    var built = saml::Entity { .. };
+    tv::check("add_endpoint refuses javascript:", !saml::add_endpoint(built, saml::ROLE_SP, saml::EP_ACS, saml::BINDING_POST, "javascript:x"));
+    tv::check("  and CR LF", !saml::add_endpoint(built, saml::ROLE_SP, saml::EP_ACS, saml::BINDING_POST, "https://x.example.test/\r\nX: y"));
+    tv::check("  and nothing added", built.endpoints.len == 0);
+    var badsp = saml::Sp { .. };
+    badsp.entity_id.append(tv::SP_ID);
+    badsp.acs_url.append("javascript:alert(1)");
+    var md2: u8[>..] = [];
+    tv::check("sp_entity refuses a javascript: ACS", !saml::sp_entity(badsp, built));
+    tv::check_code("  sp_metadata too", saml::sp_metadata(badsp, false, md2), saml::ERR_ENDPOINT, "");
+    var badidp = saml::Idp { .. };
+    badidp.entity_id.append(tv::IDP_ID);
+    badidp.sso_url.append(tv::IDP_SSO);
+    badidp.slo_url.append("https://idp.example.test/slo\r\nSet-Cookie: x=1");
+    tv::check("idp_entity refuses CR LF in the SLO URL", !saml::idp_entity(badidp, built));
+    tv::check_code("  idp_metadata too", saml::idp_metadata(badidp, false, md2), saml::ERR_ENDPOINT, "");
+    tv::check("  a good one passes", saml::idp_entity(idp, built));
+    // An endpoint written into an Entity by hand still never reaches a form or a URL.
+    var user = saml::Login { .. };
+    tv::alice(user);
+    var spbad = saml::Entity { .. };
+    saml::sp_entity(sp, spbad);
+    spbad.endpoints[0].location.clear();
+    spbad.endpoints[0].location.append("javascript:alert(document.domain)//");
+    var uo = saml::Outgoing { .. };
+    tv::check_code("an unsolicited response to a javascript: ACS", saml::idp_unsolicited_response(idp, spbad, user, "", uo), saml::ERR_ENDPOINT, "");
+    tv::check("  no form", find(uo.form, "javascript") < 0);
     tv::check_code("no ACS", saml::parse_metadata(e, str(head, tail), ""), saml::ERR_MALFORMED, e.message);
     tv::check_code("a KeyDescriptor use other", saml::parse_metadata(e, str(head, "<md:KeyDescriptor use=\"both\"><ds:KeyInfo/></md:KeyDescriptor>", acs, tail), ""),
                    saml::ERR_MALFORMED, e.message);

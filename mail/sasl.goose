@@ -30,6 +30,7 @@ import crypto.bignum.entropy;
 import ntlm;
 import ntlm.messages;
 import ntlm.client;
+import ntlm.http;
 
 let AUTH_AUTO:         i64 = 0;  // the best the server offers: auth_choose
 let AUTH_PLAIN:        i64 = 1;
@@ -94,14 +95,47 @@ struct Sasl {
     client_first: u8[..1024],
     server_sig:   u8[..64],
     nt:           ntlm::Initiator,   // AUTH_NTLM's context
+    spn:          u8[..300],     // NTLM's target: "SMTPSVC/host", "IMAP/host", "POP/host"
+    cb:           u8[..96],      // NTLM's channel binding: tls-server-end-point (RFC 5929)
+    bad:          bool,          // a user or secret too long for it: the exchange fails
 }
+
+// Whether a user name and secret fit a Sasl (512 and 8192 bytes); longer
+// ones are refused, never cut.
+fn sasl_fits(user: const u8[:], secret: const u8[:]) -> bool { user.len <= 512 && secret.len <= 8192 }
 
 fn sasl_new(mech: i64, user: const u8[:], secret: const u8[:]) -> Sasl {
     var s = Sasl { mech: mech, step: 0, done: false, user: [], secret: [], nonce: [], client_first: [], server_sig: [],
-                   nt: ntlm::initiator(ntlm::anonymous_credentials(), "", 0) };
-    s.user.append(user[.. ::min(user.len, 512)]);
-    s.secret.append(secret[.. ::min(secret.len, 8192)]);
+                   nt: ntlm::initiator(ntlm::anonymous_credentials(), "", 0), spn: [], cb: [],
+                   bad: !sasl_fits(user, secret) };
+    if s.bad { return s; }
+    s.user.append(user);
+    s.secret.append(secret);
     return s;
+}
+
+// What NTLM binds its AUTHENTICATE to: the service's SPN, service/host
+// (SMTPSVC, IMAP or POP), and over TLS the server certificate's
+// tls-server-end-point (chain: tls::peer_certificates, the leaf first;
+// empty without TLS). A server that checks them (Extended Protection)
+// then refuses an exchange relayed to another service or over another
+// TLS connection.
+fn sasl_target(s: Sasl&, service: const u8[:], host: const u8[:], chain: const u8[:]) {
+    s.spn.clear();
+    s.cb.clear();
+    if service.len + 1 + host.len <= s.spn.cap {
+        s.spn.append(service);
+        s.spn.push('/');
+        s.spn.append(host);
+    } else {
+        s.bad = true;
+    }
+    if chain.len == 0 { return; }
+    let leaf, okl = ntlm::leaf_certificate(chain);
+    if !okl { s.bad = true; return; }
+    let cb, okc = ntlm::tls_server_end_point(leaf);
+    if !okc || cb.len > s.cb.cap { s.bad = true; return; }
+    s.cb.append(cb);
 }
 
 // A fresh client nonce: 24 random bytes, base64 (no ',' in it).
@@ -141,6 +175,7 @@ fn scram_attr(m: const u8[:], key: u8) -> const u8[:], bool {
 // in out for the mechanisms that have one (all but LOGIN and CRAM-MD5).
 fn sasl_initial(s: Sasl&, out: u8[>..]&) -> bool {
     out.clear();
+    if s.bad { return false; }
     if s.mech == AUTH_PLAIN {
         out.push(0);
         out.append(s.user);
@@ -165,7 +200,8 @@ fn sasl_initial(s: Sasl&, out: u8[>..]&) -> bool {
         // response, and the first challenge then fails the exchange.
         let cred, ce = ntlm::credentials(s.user, "", s.secret);
         if ce != ntlm::OK { return false; }
-        s.nt = ntlm::initiator(cred, "", 0);
+        s.nt = ntlm::initiator(cred, s.spn, 0);
+        if s.cb.len > 0 { ntlm::set_channel_bindings(s.nt, s.cb); }
         s.step = 1;
         return ntlm::negotiate(s.nt, out) == ntlm::OK;
     }
@@ -196,6 +232,7 @@ fn sasl_initial(s: Sasl&, out: u8[>..]&) -> bool {
 // nonce, the wrong server signature, or the server's e= error).
 fn sasl_step(s: Sasl&, challenge: const u8[:], out: u8[>..]&) -> i64 {
     out.clear();
+    if s.bad { return ERR_AUTH; }
     let step = s.step;
     s.step++;
     if s.mech == AUTH_PLAIN {

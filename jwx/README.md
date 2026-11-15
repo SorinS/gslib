@@ -189,9 +189,10 @@ ML-DSA they are.
   one `jwe::Recipient` (alg, key, header) or several; `shared` holds `enc`
   and `zip`. `dir` and ECDH-ES (direct) take one recipient only.
 - `decrypt(message, alg, key, max_p2c = 1000000, max_inflate = 10 MB,
-  min_p2c = 1000)`: the plaintext for the first recipient whose `alg` is
-  alg and which the key opens. `decrypt_set(message, keys, infer = false, ...)`.
-- `parse(m&, message)` into a `jwe::Message`, `header_string(m, name)`,
+  min_p2c = 1000, max_recipients = 16)`: the plaintext for the first
+  recipient whose `alg` is alg and which the key opens.
+  `decrypt_set(message, keys, infer = false, ...)`.
+- `parse(m&, message, max_recipients = 16)` into a `jwe::Message`, `header_string(m, name)`,
   and the parts: `key_encrypt`, `key_decrypt`, `content_encrypt`,
   `content_decrypt`, `concat_kdf`, `aad_of`.
 
@@ -205,7 +206,9 @@ ML-DSA they are.
   `sign_encrypt(c, sig_alg, sign_key, alg, enc, enc_key)` (nested, `cty:
   JWT`); `marshal(c, flatten = false)`, `parse_claims(text, c&)`.
 - `parse(token, alg, key, c&, v)`, `parse_set`, `parse_encrypted`,
-  `parse_nested`: verify or decrypt, read the claims, then
+  `parse_nested` (and `parse_insecure`): compact tokens only, as RFC 7519
+  has them (a JSON JWS or JWE is `ERR_MALFORMED`); verify or decrypt, read
+  the claims, then
   `validate(c, v)` with a `jwt::Validator`: `now` (0: the clock), `skew`,
   `issuer`, `subject`, `audience`, `jwt_id`, `max_age`, `required`
   (`CLAIM_*` bits), `validate` (false: skip). As jwx: a token is expired
@@ -250,7 +253,13 @@ NUL or empty, and matched whole.
 **Limits.** As jwx v4: PBES2 counts outside 1000 to 1000000 are refused
 when decrypting (`ERR_LIMIT`; `min_p2c` and `max_p2c` move the bounds, and
 `min_p2c = 0` drops the floor), and a `zip` payload may inflate to 10 MB
-(`max_inflate`). Encrypting uses OWASP 2023's counts for PBKDF2, as v4
+(`max_inflate`). The PBES2 counts of all the recipients tried share
+`max_p2c`, a message may have at most 16 recipients (`max_recipients`),
+and `decrypt_set` tries at most `keys.len + max_recipients` keys in all,
+so a message costs at most about one PBES2 run at `max_p2c` and a
+bounded number of RSA or ECDH operations (`ERR_LIMIT` past those);
+a set of several passwords tried against one PBES2 recipient thus needs
+`max_p2c` raised to their sum. Encrypting uses OWASP 2023's counts for PBKDF2, as v4
 does, unless told otherwise: 600000 for PBES2-HS256+A128KW, 210000 for
 PBES2-HS384+A192KW and PBES2-HS512+A256KW (`jwe::default_p2c(alg)`). At
 those counts a password costs a fraction of a second to a few seconds per

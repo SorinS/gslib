@@ -4,7 +4,8 @@
 // IsSubDomain, ReverseAddr, ClientConfig and NameList; an update made
 // with every helper packed into miekg's bytes and written as its text;
 // an OPT record with subnet, keepalive, EDE, padding, expire and local
-// options the same bytes and text; messages truncated to the same bytes.
+// options the same bytes and text; messages truncated to the same bytes;
+// EDE text with control bytes escaped.
 import std;
 import gslib from "../..";
 import gslib.dns;
@@ -167,5 +168,13 @@ fn main() {
         else if kind == "opt" { check_opt(r); }
         else if kind == "truncate" { check_truncate(r); }
     };
+    // EDE text from the wire is written with its control bytes escaped.
+    var m = dns::Msg { .. };
+    dns::set_edns0(m, 1232, false);
+    var d: u8[>..] = [];
+    dns::ede_data(d, 6, [0x1b, '[', '2', 'J']);
+    dns::add_option(m, dns::EDNS0_EDE, d);
+    let et = dns::rr_string(m.extra, dns::rr_at(m.extra, 0));
+    tv::check(str("EDE text escaped: ", et), find(et, "(\\027[2J)") >= 0);
     tv::done("misc");
 }

@@ -19,7 +19,7 @@ connection (`net/http/conn1`).
 | replies | `parse_response` (PKIStatusInfo: status, statusString, failInfo; a granted reply must have a token and a refusal must not), `error_response`, `fail_info_text`, `status_name` |
 | tokens | `parse_token` (the SignedData and its TSTInfo), `parse_tst_info` (policy, imprint, serial, genTime with its fraction, accuracy, ordering, nonce, TSA name), `info_text` |
 | checking | `verify_reply` (status, nonce, policy, certReq, then as `verify_token`), `verify_token` (imprint, signature, signingCertificate or signingCertificateV2, the TSA's certificate, its path to the roots at genTime, TSA name, policy, the clock) |
-| over HTTP | `post` (application/timestamp-query, application/timestamp-reply back) |
+| over HTTP | `post` (application/timestamp-query, application/timestamp-reply back; replies past `max_body`, 1 MiB by default, refused rather than cut short) |
 | a TSA | `Tsa`, `tsa_init`, `tsa_add_policy`, `respond` (a request's DER to a reply's DER) |
 | CMS signatures | `signature_request`, `add_signature_token`, `signature_token`, `verify_signature_token` (RFC 3161 Appendix A) |
 
@@ -27,7 +27,8 @@ A token is checked as RFC 3161 §2.4.2 has it: its content type is
 id-ct-TSTInfo, the CMS signature and signed attributes verify, the signer's
 certificate (sent in the token, or given by the caller) is the one named
 by the first ESSCertID of signingCertificateV2 (any of SHA-256, -384,
--512, SHA-256 when the hash is left out as DER leaves it) or of
+-512, SHA-256 when the hash is left out as DER leaves it; SHA-1 only with
+`allow_sha1`) or of
 signingCertificate (SHA-1, which RFC 2634 fixed; it identifies, it does
 not sign), with its issuer and serial number when they are there; that
 certificate has the extended key usage extension, critical, with

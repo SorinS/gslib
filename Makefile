@@ -301,7 +301,7 @@ NTLM_PYTHON ?= $(PYTHON)
 
 .PHONY: interop-ntlm
 interop-ntlm: ## goose-ntlm against pyspnego (NTLM and SPNEGO, both ways, channel bindings, sealing), curl --ntlm and Azure/go-ntlmssp against goose-ntlm serve, goose-ntlm get against a pyspnego HTTP server (NTLM_PYTHON with pyspnego; curl; Go)
-	$(call echo,"NTLM against pyspnego, curl and go-ntlmssp")
+	$(call echo,"NTLM against pyspnego and curl and go-ntlmssp")
 	cd $(ROOT)/ntlm && $(NTLM_PYTHON) scripts/interop.py
 
 # SAML_PYTHON: a Python with requests, python3-saml and lxml (a venv;
@@ -356,6 +356,32 @@ differential-mime: ## mime against Go's mime, mime/quotedprintable, mime/multipa
 
 .PHONY: test-all
 test-all: check test interop differential ## Run check, test, interop and differential
+
+# ------------------------------------------------------------------------------
+# Fuzzing (fuzz/README.md)
+# ------------------------------------------------------------------------------
+
+TARGET  ?=
+SECONDS ?= 600
+JOBS    ?= 1
+
+.PHONY: fuzz-build
+fuzz-build: ## Build every fuzz target's replay driver (and libFuzzer's, where a clang has it)
+	$(call echo,"Building the fuzz targets")
+	cd $(ROOT) && $(PYTHON) fuzz/run.py build
+	@cd $(ROOT) && if $(PYTHON) -c "import sys; sys.path.insert(0, 'fuzz'); import run; run.fuzzer_cc()" 2>/dev/null; then \
+		$(PYTHON) fuzz/run.py build --libfuzzer; else echo "  (no clang with libFuzzer: replay drivers only)"; fi
+
+.PHONY: fuzz-replay
+fuzz-replay: ## Replay every fuzz target's corpus and regression inputs (no libFuzzer needed)
+	$(call echo,"Replaying the fuzz corpora and regressions")
+	cd $(ROOT) && $(PYTHON) fuzz/run.py replay
+
+.PHONY: fuzz
+fuzz: ## Run one fuzz target under libFuzzer: make fuzz TARGET=dns_msg SECONDS=600 [JOBS=4]
+	@test -n "$(TARGET)" || { echo "make fuzz TARGET=name (python3 fuzz/run.py list)"; exit 2; }
+	$(call echo,"Fuzzing $(TARGET) for $(SECONDS) s")
+	cd $(ROOT) && $(PYTHON) fuzz/run.py fuzz $(TARGET) --seconds $(SECONDS) --jobs $(JOBS)
 
 # ------------------------------------------------------------------------------
 # Clean

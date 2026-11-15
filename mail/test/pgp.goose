@@ -90,7 +90,8 @@ fn signing(kr: const openpgp::Keyring&, alice: i64, bob: i64) {
         check(str(who, " entity as sent"), find(out[first..], "Content-Transfer-Encoding: quoted-printable\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n") == 0
               && contains(out, plain[body_at + 4..]));
         var r = pgp::Opened { .. };
-        check_rc(str(who, " verify"), pgp::verify(out, kr, r), mail::OK);
+        let label_93 = str(who, " verify");
+        check_rc(label_93, pgp::verify(out, kr, r), mail::OK);
         check(str(who, " signer"), r.signed && !r.encrypted && kr.keys[r.signer].primary == signer && r.signed_at == TIME);
         check(str(who, " entity"), starts_with(r.entity, "Content-Transfer-Encoding: quoted-printable\r\nContent-Type: text/plain")
               && ends_with(r.entity, plain[body_at + 4..]));
@@ -99,13 +100,15 @@ fn signing(kr: const openpgp::Keyring&, alice: i64, bob: i64) {
         var lf: u8[>..] = [];
         for c in out { if c != '\r' { lf.push(c); } }
         var r2 = pgp::Opened { .. };
-        check_rc(str(who, " verify LF"), pgp::verify(lf, kr, r2), mail::OK);
+        let label_103 = str(who, " verify LF");
+        check_rc(label_103, pgp::verify(lf, kr, r2), mail::OK);
         // A changed byte of the signed entity.
         var bad = copy(out);
         let at = find(bad, "Hello Bob");
         bad[at] = 'J';
         var r3 = pgp::Opened { .. };
-        check_rc(str(who, " changed"), pgp::verify(bad, kr, r3), mail::ERR_SIGNATURE);
+        let label_110 = str(who, " changed");
+        check_rc(label_110, pgp::verify(bad, kr, r3), mail::ERR_SIGNATURE);
     }
     // micalg follows the hash.
     var m = mail::Msg { .. };
@@ -152,14 +155,17 @@ fn encryption(kr: const openpgp::Keyring&, alice: i64, bob: i64) {
             check(str(what, " header outside"), ct > 0 && subj >= 0 && subj < ct && contains(out, "protocol=\"application/pgp-encrypted\"")
                   && contains(out, "\r\nVersion: 1\r\n") && contains(out, "-----BEGIN PGP MESSAGE-----\r\n") && !contains(out, "Hello Bob"));
             var r = pgp::Opened { .. };
-            check_rc(str(what, " open"), pgp::open(out, kr, "", r), mail::OK);
+            let label_155 = str(what, " open");
+            check_rc(label_155, pgp::open(out, kr, "", r), mail::OK);
             check(str(what, " layers"), r.encrypted && r.signed == (signer >= 0) && (signer < 0 || kr.keys[r.signer].primary == signer));
             check(str(what, " entity"), starts_with(r.entity, "Content-Transfer-Encoding: quoted-printable\r\nContent-Type: text/plain")
                   && contains(r.entity, "Hello Bob,"));
             var rd = pgp::Opened { .. };
-            check_rc(str(what, " decrypt"), pgp::decrypt(out, kr, "", rd), mail::OK);
+            let label_162 = str(what, " decrypt");
+            check_rc(label_162, pgp::decrypt(out, kr, "", rd), mail::OK);
             var rv = pgp::Opened { .. };
-            check_rc(str(what, " verify"), pgp::verify(out, kr, rv), if signer < 0 { mail::ERR_SIGNATURE } else { mail::OK });
+            let label_166 = str(what, " verify");
+            check_rc(label_166, pgp::verify(out, kr, rv), if signer < 0 { mail::ERR_SIGNATURE } else { mail::OK });
         }
     }
     // To a key not here; a changed ciphertext.
@@ -192,7 +198,8 @@ fn from_gpg(kr: const openpgp::Keyring&, alice: i64) {
         var data: u8[>..] = [];
         if !read_file(str("pgp/", name), data) { check(str("read ", name), false); continue; }
         var r = pgp::Opened { .. };
-        check_rc(str(name, " opens"), pgp::open(data, kr, "", r), mail::OK);
+        let label_195 = str(name, " opens");
+        check_rc(label_195, pgp::open(data, kr, "", r), mail::OK);
         check(str(name, " entity"), r.entity[..] == ENTITY);
         let enc = name != "gpg-signed.eml";
         let sig = name != "gpg-encrypted.eml";
@@ -219,16 +226,19 @@ fn pqc(kr: const openpgp::Keyring&, alice: i64, bob: i64) {
         var out: u8[>..] = [];
         check_rc(str(what, " encrypt"), pgp::encrypt(m, pk, [carol], opts(), out), mail::OK);
         var r = pgp::Opened { .. };
-        check_rc(str(what, " open"), pgp::open(out, pk, "", r), mail::OK);
+        let label_222 = str(what, " open");
+        check_rc(label_222, pgp::open(out, pk, "", r), mail::OK);
         check(str(what, " entity"), r.encrypted && !r.signed && contains(r.entity, "Hello Bob,"));
         var out2: u8[>..] = [];
         check_rc(str(what, " sign and encrypt, with bob"), pgp::sign_encrypt(m, pk, signer, [carol, pb], opts(), out2), mail::OK);
         var r2 = pgp::Opened { .. };
-        check_rc(str(what, " open signed"), pgp::open(out2, pk, "", r2), mail::OK);
+        let label_231 = str(what, " open signed");
+        check_rc(label_231, pgp::open(out2, pk, "", r2), mail::OK);
         check(str(what, " signed"), r2.encrypted && r2.signed && pk.keys[r2.signer].primary == signer);
         // Bob alone (the keyring without Carol's secret) opens it too.
         var r3 = pgp::Opened { .. };
-        check_rc(str(what, " bob opens it"), pgp::open(out2, kr, "", r3), if kind == 0 { mail::OK } else { mail::ERR_KEY });
+        let label_238 = str(what, " bob opens it");
+        check_rc(label_238, pgp::open(out2, kr, "", r3), if kind == 0 { mail::OK } else { mail::ERR_KEY });
         // The multipart/signed form, by the RFC 9980 key.
         if kind == 1 {
             var out3: u8[>..] = [];
@@ -238,6 +248,31 @@ fn pqc(kr: const openpgp::Keyring&, alice: i64, bob: i64) {
             check("rfc9980 micalg", contains(out3, "micalg=pgp-sha256"));
         }
     }
+}
+
+// What the review found: an Opened used again holds nothing of the
+// message before; a line the boundary only starts is not a delimiter.
+fn review(kr: const openpgp::Keyring&, alice: i64, bob: i64) {
+    var m1 = mail::Msg { .. };
+    message(m1);
+    var s1: u8[>..] = [];
+    check_rc("review sign", pgp::sign(m1, kr, alice, opts(), s1), mail::OK);
+    var m2 = mail::Msg { .. };
+    message(m2);
+    var s2: u8[>..] = [];
+    check_rc("review encrypt", pgp::encrypt(m2, kr, [bob], opts(), s2), mail::OK);
+    var r = pgp::Opened { .. };
+    check_rc("reuse: signed", pgp::verify(s1, kr, r), mail::OK);
+    check_rc("reuse: not signed", pgp::verify(s2, kr, r), mail::ERR_SIGNATURE);
+    check("reuse: fresh", !r.signed && r.encrypted && r.signer == -1 && r.signer_fpr.len == 0
+          && find(r.entity, "Hello Bob") >= 0 && find(r.entity, "Hello Bob") == rfind(r.entity, "Hello Bob"));
+
+    var spans: i64[>..] = [];
+    let body = "--b\r\none\r\n--bx\r\nstill one\r\n--b \r\ntwo\r\n--b--\r\n";
+    check("delimiter whole", pgp::parts_of(body, "b", spans) && spans.len == 4
+          && body[spans[0]..spans[1]] == "one\r\n--bx\r\nstill one" && body[spans[2]..spans[3]] == "two");
+    var sp2: i64[>..] = [];
+    check("close delimiter whole", !pgp::parts_of("--b\r\none\r\n--b--x\r\n", "b", sp2));
 }
 
 fn main() {
@@ -250,6 +285,7 @@ fn main() {
     encryption(kr, alice, bob);
     from_gpg(kr, alice);
     pqc(kr, alice, bob);
+    review(kr, alice, bob);
     print("pgp: ", checks - failures, "/", checks, " checks passed");
     if failures > 0 { exit(1); }
 }
