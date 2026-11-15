@@ -1,0 +1,40 @@
+<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_resp1" Version="2.0" IssueInstant="2026-01-01T00:00:00Z" Destination="https://sp.example.com/acs">
+  <saml:Issuer>https://idp.example.com</saml:Issuer>
+  <samlp:Status><samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></samlp:Status>
+  <saml:Assertion ID="_assert1" Version="2.0" IssueInstant="2026-01-01T00:00:00Z" xml:lang="en">
+    <saml:Issuer>https://idp.example.com</saml:Issuer>
+    <ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+<ds:SignedInfo>
+<ds:CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/>
+<ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256"/>
+<ds:Reference URI="#_assert1">
+<ds:Transforms>
+<ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/>
+<ds:Transform Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/>
+</ds:Transforms>
+<ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#sha384"/>
+<ds:DigestValue>l2AJNUZgKt+LnhCwUFxoGn4Q4O2HQQAeSeryI8dTFj/2ySstAIVAzTn5DH46bk/c</ds:DigestValue>
+</ds:Reference>
+</ds:SignedInfo>
+<ds:SignatureValue>vGOR9oATde0kkPDmTXGIk+k60OSfTngGPFI4+ipNtaxEfnmNLLBzQg6vH4MbQNwm
+AwJnyJOQKCZg8xcM12JoqA==</ds:SignatureValue>
+<ds:KeyInfo>
+<ds:X509Data>
+<ds:X509Certificate>
+MIIBMjCB2KADAgECAhQ39i/NbC4hztOKuZNB6ORwTzJMsDAKBggqhkjOPQQDAjAY
+MRYwFAYDVQQDDA14bWwgdGVzdCBwMjU2MCAXDTI2MDEwMTAwMDAwMFoYDzIxMjUx
+MjA4MDAwMDAwWjAYMRYwFAYDVQQDDA14bWwgdGVzdCBwMjU2MFkwEwYHKoZIzj0C
+AQYIKoZIzj0DAQcDQgAEYF89r2jS+e5r09xC0ymVwiovDU683Pbcpl4HGm+9EJiw
+fr/LvfW/3n6RQ7TJDHkezxdiNkJS5GGINqQHhqOc4TAKBggqhkjOPQQDAgNJADBG
+AiEA9tE7lKU9FSiHF1G6bpclY2smdldruQTxknTtpFaa0EYCIQD1RMSVp/PMOrxa
+vU7ECcR6P06SCC3TveqNfStS16oOdQ==
+</ds:X509Certificate>
+</ds:X509Data>
+</ds:KeyInfo>
+</ds:Signature><saml:Subject><saml:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress">alice@example.com</saml:NameID></saml:Subject>
+    <!-- a comment the digest leaves out -->
+    <saml:AttributeStatement xmlns:x="urn:example:x">
+      <saml:Attribute Name="role" x:note="a &amp; b&#9;c"><saml:AttributeValue xml:lang="en">admin &lt;all&gt;</saml:AttributeValue></saml:Attribute>
+    </saml:AttributeStatement>
+  </saml:Assertion>
+</samlp:Response>

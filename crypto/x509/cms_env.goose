@@ -44,7 +44,9 @@
 // KEMRecipientInfo by ML-KEM with HKDF-SHA256, -384 or -512, with or
 // without a ukm (other OtherRecipientInfo types are skipped).
 // The content: AES-128, -192 or -256 in CBC (PKCS #7 padding, checked in
-// constant time) or GCM (16-byte tags). Errors: ERR_MALFORMED,
+// constant time) or GCM (16-byte tags); cms_decrypt_legacy also takes
+// DES-EDE3-CBC and single DES-CBC, as SCEP servers still send them (RFC
+// 8894 §3.5.2), and cms_encrypt makes DES-EDE3-CBC when asked. Errors: ERR_MALFORMED,
 // ERR_UNSUPPORTED_ALGORITHM, ERR_CMS_NOT_RECIPIENT (no RecipientInfo for
 // the certificate) and ERR_CMS_DECRYPT (the key does not decrypt it, or
 // the content does not: one error for every way, as much as can be).
@@ -62,6 +64,7 @@ import crypto.bignum.ec;
 import crypto.bignum.x448;
 import crypto.bignum.mlkem;
 import crypto.bignum.aes;
+import crypto.bignum.des;
 import crypto.bignum.modes;
 import crypto.bignum.gcm;
 import crypto.bignum.keywrap;
@@ -94,6 +97,8 @@ let CMS_AES256_CBC: i64 = 3;
 let CMS_AES128_GCM: i64 = 4;
 let CMS_AES192_GCM: i64 = 5;    // read only
 let CMS_AES256_GCM: i64 = 6;
+let CMS_DES3_CBC:   i64 = 7;    // DES-EDE3-CBC: for SCEP servers without AES only; read by cms_decrypt_legacy
+let CMS_DES_CBC:    i64 = 8;    // single DES-CBC: read only, by cms_decrypt_legacy
 
 // Its errors are x509's, ERR_CMS_NOT_RECIPIENT and ERR_CMS_DECRYPT among them.
 fn cms_error_text(e: i64) -> const u8[:] {
@@ -102,11 +107,12 @@ fn cms_error_text(e: i64) -> const u8[:] {
 
 // How cms_encrypt encrypts.
 struct CmsEncryptOptions {
-    cipher:    i64      = CMS_AES256_CBC, // CMS_AES128_CBC, CMS_AES256_CBC, CMS_AES128_GCM or CMS_AES256_GCM
+    cipher:    i64      = CMS_AES256_CBC, // CMS_AES128_CBC, CMS_AES256_CBC, CMS_AES128_GCM, CMS_AES256_GCM or CMS_DES3_CBC
     rsa_pkcs1: bool     = false,          // RSAES-PKCS1-v1_5 for RSA recipients in place of OAEP
     by_key_id: bool     = false,          // recipients named by subject key identifier, when they have one
     kem_ukm:   u8[..64] = [],             // user keying material for ML-KEM recipients (RFC 9629's ukm); none if empty
     x448_hkdf: bool     = false,          // HKDF-SHA512 for X448 recipients in place of the X9.63 KDF (RFC 8418)
+    any_usage: bool     = false,          // encrypt to an RSA key whose key usage leaves out keyEncipherment (a SCEP CA's, RFC 8894 §2.2)
 }
 
 fn cms_cipher_oid(c: i64) -> const u8[:] {
@@ -115,6 +121,8 @@ fn cms_cipher_oid(c: i64) -> const u8[:] {
     if c == CMS_AES256_CBC { return "2.16.840.1.101.3.4.1.42"; }
     if c == CMS_AES128_GCM { return "2.16.840.1.101.3.4.1.6"; }
     if c == CMS_AES192_GCM { return "2.16.840.1.101.3.4.1.26"; }
+    if c == CMS_DES3_CBC { return "1.2.840.113549.3.7"; }
+    if c == CMS_DES_CBC { return "1.3.14.3.2.7"; }
     return "2.16.840.1.101.3.4.1.46";
 }
 
@@ -130,8 +138,13 @@ fn cms_cipher_key_len(c: i64) -> i64 {
     if c == CMS_AES128_CBC || c == CMS_AES128_GCM { return 16; }
     if c == CMS_AES192_CBC || c == CMS_AES192_GCM { return 24; }
     if c == CMS_AES256_CBC || c == CMS_AES256_GCM { return 32; }
+    if c == CMS_DES3_CBC { return 24; }
+    if c == CMS_DES_CBC { return 8; }
     return 0;
 }
+
+// The block size of a CBC cipher: 8 for DES and DES-EDE3, else 16.
+fn cms_cipher_block(c: i64) -> i64 { if c == CMS_DES3_CBC || c == CMS_DES_CBC { 8 } else { 16 } }
 
 fn cms_cipher_gcm(c: i64) -> bool { c == CMS_AES128_GCM || c == CMS_AES192_GCM || c == CMS_AES256_GCM }
 
@@ -345,7 +358,7 @@ fn cms_recipient_info(out: u8[>..]&, rc: const Cert&, cek: const u8[:], o: const
         return 3, OK;
     }
     if rc.key_type == KEY_RSA {
-        if rc.has_key_usage && rc.key_usage & KU_KEY_ENCIPHERMENT == 0 { return 0, ERR_KEY_USAGE; }
+        if rc.has_key_usage && rc.key_usage & KU_KEY_ENCIPHERMENT == 0 && !o.any_usage { return 0, ERR_KEY_USAGE; }
         let pub, okp = rsa_public_key(rc);
         if !okp || bignum::rsa_oaep_max(pub, 256) < cek.len { return 0, ERR_UNSUPPORTED_ALGORITHM; }
         var ri:  u8[>..] = [];
@@ -448,7 +461,7 @@ fn cms_encrypt(content_type: const u8[:], content: const u8[:], recipients: cons
                o: const CmsEncryptOptions&) -> u8[>..], i64 {
     var out: u8[>..] = [];
     let c = o.cipher;
-    if c != CMS_AES128_CBC && c != CMS_AES256_CBC && c != CMS_AES128_GCM && c != CMS_AES256_GCM {
+    if c != CMS_AES128_CBC && c != CMS_AES256_CBC && c != CMS_AES128_GCM && c != CMS_AES256_GCM && c != CMS_DES3_CBC {
         return out, ERR_UNSUPPORTED_ALGORITHM;
     }
     var cek: u8[>..] = [];
@@ -491,6 +504,13 @@ fn cms_encrypt(content_type: const u8[:], content: const u8[:], recipients: cons
         let sealed = bignum::aes_gcm_seal(cek, nonce, "", content);
         ct.append(sealed[..sealed.len - 16]);
         tag.append(sealed[sealed.len - 16..]);
+    } else if c == CMS_DES3_CBC {
+        var iv: u8[8] = [0; 8];
+        bignum::random_bytes(iv);
+        asn1::put_octets(alg, iv);
+        ct = bignum::pkcs7_pad(content, 8);
+        let k = bignum::des3_init(cek);
+        bignum::cbc_encrypt(k, iv, ct);
     } else {
         var iv: u8[16] = [0; 16];
         bignum::random_bytes(iv);
@@ -709,6 +729,19 @@ fn cms_kem_cek(d: const u8[:], t: asn1::Tlv, key: const PrivateKey&, cert: const
 // content, its type (a dotted OID) and OK; or ERR_MALFORMED,
 // ERR_UNSUPPORTED_ALGORITHM, ERR_CMS_NOT_RECIPIENT or ERR_CMS_DECRYPT.
 fn cms_decrypt(ber: const u8[:], key: const PrivateKey&, cert: const Cert&) -> u8[>..], u8[>..], i64 {
+    let pt, ctype, e = cms_decrypt_with(ber, key, cert, false);
+    return pt, ctype, e;
+}
+
+// cms_decrypt that also takes content under DES-EDE3-CBC or single
+// DES-CBC (what SCEP servers built on Go's pkcs7 send by default). Only for
+// protocols that still need them: neither is fit to keep a secret.
+fn cms_decrypt_legacy(ber: const u8[:], key: const PrivateKey&, cert: const Cert&) -> u8[>..], u8[>..], i64 {
+    let pt, ctype, e = cms_decrypt_with(ber, key, cert, true);
+    return pt, ctype, e;
+}
+
+fn cms_decrypt_with(ber: const u8[:], key: const PrivateKey&, cert: const Cert&, legacy: bool) -> u8[>..], u8[>..], i64 {
     var none:  u8[>..] = [];
     var none2: u8[>..] = [];
     let d, okd = cms_der(ber);
@@ -754,7 +787,9 @@ fn cms_decrypt(ber: const u8[:], key: const PrivateKey&, cert: const Cert&) -> u
     if !okt { return none, none2, ERR_MALFORMED; }
     let alg, oka = asn1::children_of(d, e[1], asn1::SEQUENCE);
     if !oka || alg.len != 2 { return none, none2, ERR_MALFORMED; }
-    let cipher = cms_cipher_of(d, alg[0]);
+    var cipher = cms_cipher_of(d, alg[0]);
+    if cipher == 0 && legacy && asn1::oid_is(d, alg[0], cms_cipher_oid(CMS_DES3_CBC)) { cipher = CMS_DES3_CBC; }
+    if cipher == 0 && legacy && asn1::oid_is(d, alg[0], cms_cipher_oid(CMS_DES_CBC)) { cipher = CMS_DES_CBC; }
     if cipher == 0 || cms_cipher_gcm(cipher) != auth { return none, none2, ERR_UNSUPPORTED_ALGORITHM; }
     let ct, okct = cms_octets(d, e[2]);
     if !okct { return none, none2, ERR_MALFORMED; }
@@ -789,13 +824,23 @@ fn cms_decrypt(ber: const u8[:], key: const PrivateKey&, cert: const Cert&) -> u
         if !okp { return none, none2, ERR_CMS_DECRYPT; }
         return pt, ctype, OK;
     }
-    if alg[1].tag != asn1::OCTET_STRING || asn1::content_len(alg[1]) != 16 { return none, none2, ERR_MALFORMED; }
-    if ct.len == 0 || ct.len % 16 != 0 { return none, none2, ERR_CMS_DECRYPT; }
+    let bs = cms_cipher_block(cipher);
+    if alg[1].tag != asn1::OCTET_STRING || asn1::content_len(alg[1]) != bs { return none, none2, ERR_MALFORMED; }
+    if ct.len == 0 || ct.len % bs != 0 { return none, none2, ERR_CMS_DECRYPT; }
     var buf: u8[>..] = [];
     buf.append(ct);
-    let k = bignum::aes_init(cek);
-    bignum::cbc_decrypt(k, d[alg[1].off..alg[1].end], buf);
-    let pt, okp = bignum::pkcs7_unpad(buf, 16);
+    let iv = d[alg[1].off..alg[1].end];
+    if cipher == CMS_DES3_CBC {
+        let k = bignum::des3_init(cek);
+        bignum::cbc_decrypt(k, iv, buf);
+    } else if cipher == CMS_DES_CBC {
+        let k = bignum::des_init(cek);
+        bignum::cbc_decrypt(k, iv, buf);
+    } else {
+        let k = bignum::aes_init(cek);
+        bignum::cbc_decrypt(k, iv, buf);
+    }
+    let pt, okp = bignum::pkcs7_unpad(buf, bs);
     if !okp { return none, none2, ERR_CMS_DECRYPT; }
     return pt, ctype, OK;
 }

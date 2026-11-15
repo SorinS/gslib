@@ -1,18 +1,21 @@
 // gslib: libraries for Goose, the batteries a standard library leaves out:
 // arbitrary-precision and constant-time arithmetic and the cryptography
 // built on it (bignum), ASN.1 and PEM (asn1), X.509 (x509), TLS 1.2 and
-// 1.3 (tls), SSH and SFTP (ssh), LDAP (ldap), YAML (yaml), HTTP/1.1 and
+// 1.3 (tls), SSH and SFTP (ssh), LDAP (ldap), YAML (yaml), XML with
+// canonicalization, signatures and encryption (xml), HTTP/1.1 and
 // HTTP/2 (http), TCP sockets (net), compression and archives (compress),
 // MIME (mime), and Kerberos with GSS-API, SPNEGO and the PAC (krb5),
 // JOSE: JWK, JWS, JWE and JWT (jwx), PKCS#11 modules, HSMs and tokens (pkcs11), the
 // DNS: messages, zone files, DNSSEC, TSIG, a client and a server (dns),
 // email: messages, SMTP, POP3 and IMAP clients, DKIM, S/MIME and PGP/MIME
 // (mail), OpenPGP: keys, signatures and encryption as gpg reads and
-// writes them (openpgp), certificates from ACME servers (acme), and
+// writes them (openpgp), certificates from ACME servers (acme),
 // OAuth 2.0 and OpenID Connect clients: tokens, PKCE, DPoP, ID token
-// validation (oauth). A program declares the package once and imports the
+// validation (oauth), RFC 3161 time-stamps: asking a TSA, checking
+// its tokens, being one (tsp), and certificates by EST (est) and by SCEP
+// (scep), with test CAs for each. A program declares the package once and imports the
 // modules it uses, grouped as Go groups them (compress, crypto/,
-// encoding/, mime, net/; krb5, jwx, pkcs11, dns, mail, acme, oauth and
+// encoding/, mime, net/; krb5, jwx, pkcs11, dns, mail, acme, oauth, tsp, est, scep and
 // net's sockets at the top too);
 // each keeps its own namespace:
 //

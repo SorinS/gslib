@@ -15,6 +15,7 @@ later.
 | `crypto/ssh` | SSH (RFC 4251-4254) without I/O, client and server, SFTP; goose-ssh, goose-sshd, goose-scp, goose-sftp-server, goose-ssh-keygen | [README](crypto/ssh/README.md) |
 | `net/ldap` | LDAP (RFC 4511): messages, filters, DNs, LDIF, URLs, connections; ldapsearch-style tools | [README](net/ldap/README.md) |
 | `encoding/yaml` | YAML 1.2 | [README](encoding/yaml/README.md) |
+| `encoding/xml` | XML 1.0 and Namespaces, parsed for documents from strangers (no DTDs or entities, limits, strict well-formedness, unique IDs), built and written; Canonical XML 1.0 and 1.1 and Exclusive XML Canonicalization; XML Signature (enveloped, RSA, RSA-PSS, ECDSA, Ed25519), verified against signature wrapping; XML Encryption (AES-GCM, RSA-OAEP, ECDH-ES; AES-CBC and RSA 1.5 to decrypt, opted into): what SAML is built on | [README](encoding/xml/README.md) |
 | `compress` | Compression and archives, as Go's compress/* and archive/*, plus xz: DEFLATE, gzip, zlib, LZW, bzip2, xz and LZMA, zip, tar; reading and writing | [README](compress/README.md) |
 | `mime` | MIME, as Go's mime, mime/quotedprintable and mime/multipart, and net/textproto's header sections: media types, RFC 2047 encoded-words, file extensions' types, quoted-printable, multipart bodies and forms | [README](mime/README.md) |
 | `krb5` | Kerberos V5 (RFC 4120) as go-krb5 has it: TGTs and service tickets (password, keytab, cross-realm, referrals, FAST armoring), the acceptor, GSS-API (RFC 4121), SPNEGO and HTTP Negotiate, Microsoft's PAC, keytabs and credential caches; goose-krb5 (kinit, kvno, klist) and goose-gss | [README](krb5/README.md) |
@@ -25,12 +26,15 @@ later.
 | `mail` | Email, as Go's go-mail for sending: messages built and written as MIME (addresses, text and HTML, attachments, inline parts), an SMTP client (STARTTLS or TLS, AUTH with PLAIN, LOGIN, CRAM-MD5, SCRAM-SHA-1/256, XOAUTH2, SMTPUTF8, DSN), a POP3 client (STLS, APOP, SASL, UIDL, TOP) and an IMAP client (IMAP4rev2 and rev1: mailboxes, FETCH with ENVELOPE and BODYSTRUCTURE, SEARCH, STORE, MOVE, APPEND, IDLE); DKIM signing and verifying (RSA, Ed25519); S/MIME (ML-DSA and ML-KEM too) and PGP/MIME signing and encryption; goose-mail | [README](mail/README.md) |
 | `acme` | ACME (RFC 8555) certificates from Let's Encrypt, an enterprise's own CA (Vault and OpenBao's PKI, step-ca, EJBCA) or a commercial CA with external account binding: accounts, orders, http-01 and dns-01, finalizing, the chain, revoking, key rollover; goose-acme, with http-01 served or from a web root, and dns-01 by RFC 2136 updates | [README](acme/README.md) |
 | `oauth` | OAuth 2.0 and OpenID Connect clients: discovery (RFC 8414), the authorization code flow with PKCE and PAR, client credentials, refresh, the device grant, token exchange, introspection, revocation; client authentication by secret, private_key_jwt and mutual TLS; DPoP and certificate-bound tokens; ID tokens, JWT access tokens (RFC 9068) and DPoP proofs validated against the issuer's JWKS; UserInfo; goose-oauth, with a loopback redirect for logins | [README](oauth/README.md) |
+| `tsp` | Time-stamps (RFC 3161, RFC 5816): requests, replies and TSTInfo, tokens checked (signature, signingCertificate and V2, the TSA's critical timeStamping usage, its path at genTime, imprint, nonce, policy), a TSA that signs them, CMS signatures time-stamped (Appendix A); goose-ts, as openssl ts with a TSA over HTTP | [README](tsp/README.md) |
+| `est` | EST (RFC 7030, RFC 8951) certificates over HTTPS: /cacerts, /simpleenroll and /simplereenroll (waiting out 202 and Retry-After), /csrattrs, /serverkeygen, labels; HTTP Basic or a TLS client certificate; a test CA; goose-est, with the test CA over TLS | [README](est/README.md) |
+| `scep` | SCEP (RFC 8894) certificates: GetCACaps, GetCACert, PKCSReq and RenewalReq with CertPoll, GetCert, GetCRL, by POST or GET; replies checked against the CA's certificate, transactionID and nonces; AES and SHA-256, DES and SHA-1 only when allowed; a test CA; goose-scep | [README](scep/README.md) |
 | `net/http` | HTTP/1.1 and HTTP/2, server and client: a client with Go's policy (redirects, cookies, credentials, proxies, gzip, TLS session resumption, streaming uploads, several responses at once), URLs, cookies, HPACK; goose-http and goose-httpd | [README](net/http/README.md) |
 | `net` | TCP client sockets, as the client half of Go's net: `net::dial` with a deadline, `net::read` and `net::write` with timeouts, `net::readable`, `net::close`; what http, dns, krb5 and the examples connect with (POSIX and Winsock) | [net.goose](net.goose) |
 
-## dns, pkcs11, jwx, mail, openpgp, acme and oauth
+## dns, pkcs11, jwx, mail, openpgp, acme, oauth, tsp, xml, est and scep
 
-These seven have the most to say beyond their table rows: what each
+These eleven have the most to say beyond their table rows: what each
 module does, how it was built and how it was tested. Each README has the
 full API.
 
@@ -341,6 +345,118 @@ server asking for nonces, certificate-bound and JWT access tokens,
 introspection, revocation, UserInfo signed and not, with the logins and
 the device's pages driven by the test.
 
+### tsp: time-stamps
+
+`tsp` is RFC 3161's Time-Stamp Protocol, both sides of it. A client
+hashes its data (SHA-256, -384 or -512; SHA-1 only when asked), sends the
+request with a nonce over gslib's HTTP client, and checks the reply: the
+status and its failInfo, then the token, a CMS SignedData read by x509,
+whose signature and signed attributes must verify, whose
+signingCertificateV2 (or the older signingCertificate) must name the
+signer's certificate, which must carry the critical extended key usage
+of timeStamping alone and chain to the roots given at the time stamped,
+and whose TSTInfo must hold the request's imprint, nonce and policy. A
+TSA (`Tsa`, `respond`) answers requests with tokens signed by its key,
+signingCertificateV2 in them, its accuracy, ordering and name if set,
+random or counted serial numbers, and refuses what it does not take with
+the failInfo that says why. A token can also go into a CMS signature's
+unsigned attributes (Appendix A), so that the signature can be trusted
+after its certificate has expired; x509's CMS signing gained the two
+options this needed (extra signed attributes, no certificates) and a
+verify that takes the signer's certificate from the caller.
+
+goose-ts is the tool, `openssl ts` in its commands: query, reply, verify
+(against a query, the data or a digest), show, and request and serve over
+HTTP, plus stamp and verify-stamp for CMS signatures.
+
+Tested without a network against a TSA made in the test and every check
+above failing in turn, and against replies openssl made (test/vectors);
+live (`make interop-tsp`) against `openssl ts` both ways (openssl's
+queries answered by goose-ts and verified by openssl, goose-ts's answered
+by openssl and verified by goose-ts, ESSCertID and ESSCertIDv2, EC and RSA
+TSAs), over HTTP with curl, with openssl's CMS signatures time-stamped and
+still verified by openssl, and against a Go TSA built on
+digitorus/timestamp, both ways.
+
+### xml: XML, signatures and encryption
+
+`encoding/xml` is the XML that SAML needs, written for documents that
+come from strangers and carry signatures. The parser builds a document
+of numbered nodes (an arena, links by index) and refuses rather than
+interprets: no DTD is ever processed, so no entity is expanded or
+fetched (XXE and billion laughs cannot happen; a DOCTYPE is an error
+unless allowed, and then only one without an internal subset); input
+size, nesting, attributes, names and nodes have limits that are errors,
+never cuts; well-formedness is checked in full, down to UTF-8 and the
+characters XML allows, with Namespaces 1.0's rules and an attribute
+refused twice also under two prefixes of one namespace; and an ID value
+(ID, Id, id, xml:id) seen twice in a document is an error, so the
+signature code never has two elements to choose from. A builder makes
+documents, a writer writes them so they parse back the same.
+
+On it, in the same namespace: **c14n**, Canonical XML 1.0 and 1.1 and
+Exclusive XML Canonicalization 1.0, with and without comments, with
+InclusiveNamespaces, of a document or of an element's subtree with
+another subtree left out, the namespaces, xml: attributes and 1.1's
+xml:base fix-up as the specs give a subset; **dsig**, XML Signature 1.1's
+enveloped signatures (RSA PKCS #1 and PSS, ECDSA P-256 to P-521, Ed25519;
+SHA-256 to -512, SHA-1 only to verify and only when allowed), whose
+verification is built against signature wrapping: it checks the
+Signature it is given with a certificate the caller trusts, reads it
+strictly, verifies SignedInfo before any Reference, allows only "" and
+"#id" references, each resolved once to the one element with that ID,
+and enveloped-signature plus one canonicalization as transforms, and
+returns the nodes that were signed, not a yes; `verify_enveloped` adds
+SAML's rule that the element's own single Signature references the
+element itself. And **enc**, XML Encryption 1.1 for SAML's
+EncryptedAssertion: AES-GCM, RSA-OAEP (both forms, any hashes) and
+ECDH-ES with ConcatKDF and AES key wrap, AES-CBC and RSA 1.5 only to
+decrypt and only when opted into (padding oracles, Bleichenbacher), one
+error for every decryption failure, and the plaintext parsed into the
+document where the EncryptedData was, under the same rules.
+
+Tested at every optimization level with the W3C's canonicalization
+examples, RFC 3986's resolution examples, a matrix of every algorithm,
+signatures and ciphertexts signxml, xmlsec and cryptography made, and a
+catalogue of wrapping, tampering and hostile input; live (`make
+interop-xml`, a venv with lxml, signxml and xmlsec) against signxml and
+xmlsec both ways, for signatures and encryption, and (`make
+differential-xml`) canonicalization of a corpus and random documents
+against libxml2, through lxml for whole documents and exclusive subsets
+and through xmlsec's digests for 1.0 and 1.1 subsets.
+
+### est and scep: certificates for devices
+
+`est` and `scep` are the two other ways certificates are handed out
+besides ACME, the ones network gear, MDM servers and enterprise CAs
+speak. EST (RFC 7030, with RFC 8951's fixes) is HTTPS: the CA's
+certificates as certs-only CMS, a PKCS #10 request in base64 posted to
+/simpleenroll (or /simplereenroll, authenticated by the certificate
+being renewed), what the CA wants in a CSR from /csrattrs, and a key the
+CA makes from /serverkeygen, in a multipart reply; the client
+authenticates by HTTP Basic or a TLS client certificate, and a request
+the CA holds (202 and Retry-After) is asked again until it is done or a
+deadline passes. SCEP (RFC 8894) is older and carries its own security:
+each message is a CMS SignedData over an EnvelopedData, the request
+encrypted to the CA and signed by the device's key under a self-signed
+certificate, the reply signed by the CA and encrypted to that
+certificate, with a transactionID and nonces tying them together. The
+client checks a reply before using anything in it: signed by the very
+certificate GetCACert gave, its transaction and nonce its own, the
+issued certificate for its key. Both libraries have a test CA in the
+same module, which goose-est and goose-scep serve, and x509's CMS gained
+what SCEP needed (signed-attribute reading, certs-only, DES-EDE3 and
+SHA-1 for servers that know nothing newer, only when asked).
+
+Tested without a network through their test CAs and against hostile
+replies of every kind (a reply signed by another key under the CA's
+name, another transaction's, unsigned, oversized, a certificate for
+another key); live (`make interop-est`, `make interop-scep`) against
+GlobalSign's EST server and client and micromdm's SCEP server and client,
+both ways, each certificate checked by openssl. micromdm signs its
+replies with SHA-1 and encrypts them with single DES whatever its caps
+say, so goose-scep talks to it with `--legacy`.
+
 ## Post-quantum cryptography
 
 The NIST post-quantum standards are in crypto/bignum, and the protocols
@@ -484,6 +600,9 @@ mime.goose, mime/                     mime, the same
 mail.goose, mail/                     mail, the same
 acme.goose, acme/                     acme, the same
 oauth.goose, oauth/                   oauth, the same
+tsp.goose, tsp/                       tsp, the same
+est.goose, est/                       est, the same
+scep.goose, scep/                     scep, the same
 examples/<lib>/                       each library's examples (excluded too)
 scripts/run_all.py            every library's unit tests
 Makefile                      the programs, checks and tests
@@ -533,7 +652,7 @@ make build      # the programs into ../bin (BIN=dir for another): goose-http, go
                 # goose-ssh, goose-sshd, goose-scp, goose-sftp-server, goose-ssh-keygen,
                 # goose-ldapsearch, goose-ldapadd, goose-ldapmodify and the other ldap tools,
                 # goose-krb5, goose-gss, goose-dig, goose-dnsd, goose-mail, goose-pgp, goose-acme,
-                # goose-oauth
+                # goose-oauth, goose-ts, goose-est, goose-scep
 make check      # type-check every tool and example
 ```
 
@@ -546,8 +665,10 @@ The compiler is `GOOSE`, else `goose` on the PATH, else
 make test                 # every library's unit tests (make test-http: one library's)
 make test-native          # also built with the C compiler
 make interop              # live: OpenSSL, Go, OpenSSH, OpenLDAP, curl, nghttp2, h2spec, pkcs11-tool, dig, miekg/dns,
-                          # mailpit, dovecot, dkimpy, gpg, Pebble, OpenBao, node-oidc-provider
-make differential         # against Go (net/http, net/url, hpack, compress, mime, jwx, miekg/dns), zlib, openssl
+                          # mailpit, dovecot, dkimpy, gpg, Pebble, OpenBao, node-oidc-provider,
+                          # digitorus/timestamp, signxml, xmlsec, GlobalSign's EST, micromdm's SCEP
+make differential         # against Go (net/http, net/url, hpack, compress, mime, jwx, miekg/dns), zlib, openssl,
+                          # libxml2 (lxml, xmlsec)
 make test-all             # check, test, interop and differential
 python3 scripts/run_all.py [--native] [--only http,tls]   # what make test runs
 ```
@@ -556,9 +677,17 @@ Each library's README lists its differentials (against Go, Python's zlib
 and hashlib, OpenSSL, Go's lestrrat-go/jwx and miekg/dns), its interop
 runs (curl, Go's net/http and crypto/tls, OpenSSL, OpenSSH, OpenLDAP,
 nghttp2, h2spec, OpenSC's pkcs11-tool, dig, miekg/dns, mailpit, dovecot,
-dkimpy, gpg, Pebble, OpenBao, node-oidc-provider), and what is not
+dkimpy, gpg, Pebble, OpenBao, node-oidc-provider, digitorus/timestamp, signxml,
+xmlsec, GlobalSign's estserver and estclient, micromdm's scepserver and
+scepclient), and what is not
 done yet. Every server they start
 listens on 127.0.0.1.
+
+xml's interop and differential need a Python with lxml, signxml, xmlsec
+and cryptography: `python3 -m venv VENV && VENV/bin/pip install lxml
+signxml xmlsec cryptography`, then `XML_PYTHON=VENV/bin/python make
+interop-xml differential-xml` (xmlsec's wheel carries libxmlsec1; nothing
+is installed system-wide). Without the modules they are skipped.
 
 pkcs11's tests run against SoftHSM2 (`brew install softhsm`, `apt install
 softhsm2`), each on a fresh token of its own; without it they are skipped,
@@ -580,3 +709,7 @@ oauth's interop runs node-oidc-provider (node and npm; `npm ci` installs
 it into `oauth/scripts/op` from the committed lock file on the first run)
 and needs openssl for its test CA; it is skipped without node. Keycloak,
 in Docker or Podman, is skipped unless a daemon is already running.
+
+tsp's interop needs openssl 3 or later (`openssl ts`, `openssl cms`), and
+uses curl and Go (digitorus/timestamp, fetched by `tsp/scripts/gotsa`'s
+go.mod) when they are installed.

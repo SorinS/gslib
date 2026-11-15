@@ -21,7 +21,8 @@ LIBS = {"asn1": "encoding/asn1", "bignum": "crypto/bignum", "x509": "crypto/x509
         "ssh": "crypto/ssh", "ldap": "net/ldap", "yaml": "encoding/yaml", "http": "net/http",
         "compress": "compress", "mime": "mime", "krb5": "krb5", "jwx": "jwx",
         "pkcs11": "pkcs11", "dns": "dns", "mail": "mail", "openpgp": "crypto/openpgp",
-        "acme": "acme", "oauth": "oauth"}
+        "acme": "acme", "oauth": "oauth", "tsp": "tsp", "est": "est", "scep": "scep",
+        "xml": "encoding/xml"}
 
 
 def main():

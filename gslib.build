@@ -24,6 +24,7 @@ exclude = [
     "crypto/ssh/test", "crypto/ssh/tools",
     "net/ldap/test", "net/ldap/tools",
     "encoding/yaml/test",
+    "encoding/xml/test", "encoding/xml/tools",
     "net/http/test", "net/http/tools",
     "compress/test", "compress/tools",
     "mime/test", "mime/tools",
@@ -34,4 +35,7 @@ exclude = [
     "mail/test", "mail/tools",
     "acme/test", "acme/tools",
     "oauth/test", "oauth/tools",
+    "tsp/test", "tsp/tools",
+    "est/test", "est/tools",
+    "scep/test", "scep/tools",
 ];

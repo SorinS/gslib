@@ -1,0 +1,27 @@
+<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_resp1" Version="2.0" IssueInstant="2026-01-01T00:00:00Z" Destination="https://sp.example.com/acs">
+  <saml:Issuer>https://idp.example.com</saml:Issuer>
+  <samlp:Status><samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></samlp:Status>
+  <saml:Assertion ID="_assert1" Version="2.0" IssueInstant="2026-01-01T00:00:00Z">
+    <saml:Issuer>https://idp.example.com</saml:Issuer><ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:SignedInfo><ds:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/><ds:SignatureMethod Algorithm="http://www.w3.org/2007/05/xmldsig-more#sha256-rsa-MGF1"/><ds:Reference URI="#_assert1"><ds:Transforms><ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/><ds:Transform Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/></ds:Transforms><ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/><ds:DigestValue>6HKk9gohGvS6MsW8uQgbeNtFiTfalFUaJzXAe8mCq1s=</ds:DigestValue></ds:Reference></ds:SignedInfo><ds:SignatureValue>V19CD8NFiU7Qqkt4ReWNhJKewAtpS76WXZ8SO7cVWKnY4VYcP27DJ92FgBVjVZxcxKn58cgWqjqc/g5LZLm0nZCPVdFaFXLFsnVkGJjQH2PZ+xD3SlWM803Qj8boNBzo64mGtBAkaJW7ccHry7DoGXsjNRSyCzOtu5azpctaA6Uv1WyxXuPAg7byN71XSdtbIDylmi21RXNZnG1+t+hzD27ggMzK7OMrUGkSmNqL6+3b/PvIWl8RRmtqfB/L//AH/3njI4eaLcUIzzfnUnXcqplIiJDeD4Umd3kP/+skvAJQ+tPQYL9dx255e/65DYbhagO1DCXo1U71Pxf90TznDg==</ds:SignatureValue><ds:KeyInfo><ds:X509Data><ds:X509Certificate>MIICxDCCAaygAwIBAgIUUohqrZAenRdn4LWaSzrzSsMwDDkwDQYJKoZIhvcNAQEL
+BQAwGzEZMBcGA1UEAwwQeG1sIHRlc3QgcnNhMjA0ODAgFw0yNjAxMDEwMDAwMDBa
+GA8yMTI1MTIwODAwMDAwMFowGzEZMBcGA1UEAwwQeG1sIHRlc3QgcnNhMjA0ODCC
+ASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAMyaqMMD9luWcxjD4Ex8QMRx
+qX9hGk6rE3KY0r4gTmGj1SVehpesUK0JmArBucCCgAnLOCA89YwN4ZScpoXc8GUJ
+VbG2rafMqBZwGUCsh2SKHaksVZctNTAw8Fy39l4pwZZwJo5xxuGmPCDL5KBv26ro
+Mj0deahpCPh+XrvaF4kHt9Hvm5Bhna/aNBfc6sYthcGiXqClQGIecOkROIvV1ihN
+fA8Go0xL+PYYEwN4690dUpdzNJCsCCXB3uc/NHq/AVfYtdz7omN45aPPpkFuRaKN
+wTu/aU7DhQvZeprk6USvO8mh/H4kujzef/xHV0JKo91Bb3WkUEKknstkMuwcjqUC
+AwEAATANBgkqhkiG9w0BAQsFAAOCAQEAQQ4Xl1mZisrXFcORjoP2Um4pWdZ2vblw
+EfwecrcQhu+dL/JnS+Ihje3CS5xYef9gR5qBylIKA5ZOrUOsWskfAXZxjf0m4Wm5
+y+upIJR62WQ1um4hxlrRKWe+nHGvskunR1jG7vNV5ZGcgt34ONIdRddpEJkEesr/
+cFvPfcQS/dLiQOC2ZwZMyIpvzemsL9kYloSKrDBSylCZWhruvmXzf9NPvyE4Z/RP
+bMpppVyPNnj4crq6pkG3U+QBiSCu5J4q4fYMooENMvPr/+KlQXTtO9GK9tTlLJI1
+sQvHSfeoSmjWoVA65MS0OjCXunYoAEtwYlT9g2GBcrf5Lp86X6Zafw==
+</ds:X509Certificate></ds:X509Data></ds:KeyInfo></ds:Signature>
+    <saml:Subject><saml:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress">alice@example.com</saml:NameID></saml:Subject>
+    <!-- a comment the digest leaves out -->
+    <saml:AttributeStatement xmlns:x="urn:example:x">
+      <saml:Attribute Name="role" x:note="a &amp; b&#9;c"><saml:AttributeValue xml:lang="en">admin &lt;all&gt;</saml:AttributeValue></saml:Attribute>
+    </saml:AttributeStatement>
+  </saml:Assertion>
+</samlp:Response>

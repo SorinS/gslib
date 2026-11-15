@@ -423,6 +423,15 @@ struct Csr {
 // A request for subject (Name DER) and the SAN entries in `san` (a
 // GeneralNames builder's contents; empty for none), signed by key.
 fn create_csr(subject: const u8[:], san: const u8[:], key: const PrivateKey&) -> u8[>..], i64 {
+    let csr, e = create_csr_attrs(subject, san, key, "");
+    return csr, e;
+}
+
+// create_csr with more attributes: `attrs` holds whole Attribute elements
+// (SEQUENCE { type, SET OF value }) laid end to end, after the
+// extensionRequest: challengePassword for SCEP (RFC 8894 §3.3.1), what an
+// EST server's /csrattrs asks for (RFC 7030 §4.5).
+fn create_csr_attrs(subject: const u8[:], san: const u8[:], key: const PrivateKey&, more: const u8[:]) -> u8[>..], i64 {
     let alg, h = default_sig(key.kind);
     if !sig_fits_key(key.kind, alg, h) { return [], ERR_UNSUPPORTED_ALGORITHM; }    // ML-KEM, X448: no signatures
     var info: u8[>..] = [];
@@ -443,6 +452,7 @@ fn create_csr(subject: const u8[:], san: const u8[:], key: const PrivateKey&) ->
         asn1::put(attr, asn1::SET, extseq);
         asn1::put(attrs, asn1::SEQUENCE, attr);
     }
+    attrs.append(more);
     asn1::put(info, asn1::ctx(0, true), attrs);
     var info_seq: u8[>..] = [];
     asn1::put(info_seq, asn1::SEQUENCE, info);
@@ -497,6 +507,28 @@ fn parse_csr(der: const u8[:]) -> Csr, i64 {
         }
     }
     return r, OK;
+}
+
+// The one value of a request's attribute `oid` (a dotted OID), and 1; 0
+// when absent; -1 when there more than once or with other than one value.
+fn csr_attribute(r: const Csr&, oid: const u8[:]) -> asn1::Tlv, i64 {
+    let d = r.der[..];
+    let f, okf = asn1::children_of(d, r.info, asn1::SEQUENCE);
+    if !okf || f.len != 4 { return no_tlv(), -1; }
+    let attrs, oka = asn1::children(d, f[3]);
+    if !oka { return no_tlv(), -1; }
+    var found = no_tlv();
+    var n: i64 = 0;
+    for a in attrs {
+        let p, okp = asn1::children_of(d, a, asn1::SEQUENCE);
+        if !okp || p.len != 2 { return no_tlv(), -1; }
+        if !asn1::oid_is(d, p[0], oid) { continue; }
+        let vals, okv = asn1::children(d, p[1]);
+        if !okv || vals.len != 1 || n > 0 { return no_tlv(), -1; }
+        for v in vals { found = v; }
+        n = 1;
+    }
+    return found, n;
 }
 
 // Whether the request is signed by the key it carries (CheckSignature).

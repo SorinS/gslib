@@ -14,15 +14,15 @@ PYTHON  ?= python3
 GOOSE   ?= $(or $(shell command -v goose 2>/dev/null),$(abspath $(ROOT)/../goose.git/build/goose))
 export GOOSE
 
-LIBS    := asn1 bignum x509 tls ssh ldap yaml http compress mime krb5 jwx pkcs11 dns mail openpgp acme oauth
+LIBS    := asn1 bignum x509 tls ssh ldap yaml http compress mime krb5 jwx pkcs11 dns mail openpgp acme oauth tsp xml est scep
 
 # ------------------------------------------------------------------------------
 # Derived values
 # ------------------------------------------------------------------------------
 
 # A program is rebuilt when any of the package's sources changes.
-SOURCES := $(ROOT)/gslib.goose $(ROOT)/gslib.build $(ROOT)/net.goose $(ROOT)/compress.goose $(ROOT)/mime.goose $(ROOT)/krb5.goose $(ROOT)/jwx.goose $(ROOT)/pkcs11.goose $(ROOT)/dns.goose $(ROOT)/mail.goose $(ROOT)/acme.goose $(ROOT)/oauth.goose \
-	$(shell find $(ROOT)/crypto $(ROOT)/encoding $(ROOT)/net $(ROOT)/compress $(ROOT)/mime $(ROOT)/krb5 $(ROOT)/jwx $(ROOT)/pkcs11 $(ROOT)/dns $(ROOT)/mail $(ROOT)/acme $(ROOT)/oauth \
+SOURCES := $(ROOT)/gslib.goose $(ROOT)/gslib.build $(ROOT)/net.goose $(ROOT)/compress.goose $(ROOT)/mime.goose $(ROOT)/krb5.goose $(ROOT)/jwx.goose $(ROOT)/pkcs11.goose $(ROOT)/dns.goose $(ROOT)/mail.goose $(ROOT)/acme.goose $(ROOT)/oauth.goose $(ROOT)/tsp.goose $(ROOT)/est.goose $(ROOT)/scep.goose \
+	$(shell find $(ROOT)/crypto $(ROOT)/encoding $(ROOT)/net $(ROOT)/compress $(ROOT)/mime $(ROOT)/krb5 $(ROOT)/jwx $(ROOT)/pkcs11 $(ROOT)/dns $(ROOT)/mail $(ROOT)/acme $(ROOT)/oauth $(ROOT)/tsp $(ROOT)/est $(ROOT)/scep \
 		\( -name '*.goose' -o -name '*.c' -o -name '*.build' \) \
 		-not -path '*/test/*' -not -path '*/examples/*')
 
@@ -49,7 +49,10 @@ PROGRAMS := \
 	goose-pgp:crypto/openpgp/tools/pgp.goose \
 	goose-mail:mail/tools/mail.goose \
 	goose-acme:acme/tools/acme.goose \
-	goose-oauth:oauth/tools/oauth.goose
+	goose-oauth:oauth/tools/oauth.goose \
+	goose-ts:tsp/tools/ts.goose \
+	goose-est:est/tools/est.goose \
+	goose-scep:scep/tools/scep.goose
 
 prog_name   = $(word 1,$(subst :, ,$(1)))
 prog_source = $(word 2,$(subst :, ,$(1)))
@@ -57,7 +60,7 @@ BINARIES    := $(foreach p,$(PROGRAMS),$(BIN)/$(call prog_name,$(p))) $(BIN)/goo
 
 # Every tool and example with a main, for check.
 CHECKED := $(shell cd $(ROOT) && grep -l '^fn main' */*/tools/*.goose examples/*/*.goose \
-	compress/tools/*.goose mime/tools/*.goose krb5/tools/*.goose jwx/tools/*.goose pkcs11/tools/*.goose dns/tools/*.goose mail/tools/*.goose acme/tools/*.goose oauth/tools/*.goose)
+	compress/tools/*.goose mime/tools/*.goose krb5/tools/*.goose jwx/tools/*.goose pkcs11/tools/*.goose dns/tools/*.goose mail/tools/*.goose acme/tools/*.goose oauth/tools/*.goose tsp/tools/*.goose est/tools/*.goose scep/tools/*.goose)
 
 # ------------------------------------------------------------------------------
 # Helpers
@@ -146,7 +149,7 @@ test-native: ## Run the unit tests, also built with the C compiler
 
 # test-asn1, test-bignum, ... (scripts/run_all.py refuses a name not in
 # LIBS). Not .PHONY: make looks for no pattern rule for a phony target.
-test-%: ## Run one library's unit tests: test-asn1 test-bignum test-x509 test-tls test-ssh test-ldap test-yaml test-http test-compress test-mime test-krb5 test-jwx test-pkcs11 test-dns test-mail test-openpgp test-acme test-oauth
+test-%: ## Run one library's unit tests: test-asn1 test-bignum test-x509 test-tls test-ssh test-ldap test-yaml test-http test-compress test-mime test-krb5 test-jwx test-pkcs11 test-dns test-mail test-openpgp test-acme test-oauth test-tsp test-xml test-est test-scep
 	$(call echo,"Running $* unit tests")
 	cd $(ROOT) && $(PYTHON) scripts/run_all.py --only $*
 
@@ -154,7 +157,7 @@ test-%: ## Run one library's unit tests: test-asn1 test-bignum test-x509 test-tl
 # needs installed is in its library's README; a missing tool is skipped.
 
 .PHONY: interop
-interop: interop-http interop-h2spec interop-tls interop-ssh interop-ldap interop-krb5 interop-pkcs11 interop-dns interop-mail interop-openpgp interop-acme interop-oauth ## Run every live interop test
+interop: interop-http interop-h2spec interop-tls interop-ssh interop-ldap interop-krb5 interop-pkcs11 interop-dns interop-mail interop-openpgp interop-acme interop-oauth interop-tsp interop-xml interop-est interop-scep ## Run every live interop test
 
 .PHONY: interop-http
 interop-http: ## HTTP against curl, Go's net/http, Python, nghttp2
@@ -219,13 +222,28 @@ interop-oauth: ## goose-oauth against node-oidc-provider (npm ci in oauth/script
 	$(call echo,"OAuth and OpenID Connect against oidc-provider")
 	cd $(ROOT)/oauth && $(PYTHON) scripts/interop.py
 
+.PHONY: interop-tsp
+interop-tsp: ## goose-ts against openssl ts both ways, over HTTP (curl), CMS signatures time-stamped, and a Go TSA (digitorus/timestamp; needs Go)
+	$(call echo,"Time-stamps against openssl ts and digitorus/timestamp")
+	cd $(ROOT)/tsp && $(PYTHON) scripts/interop.py
+
+.PHONY: interop-est
+interop-est: ## goose-est against its own test CA, hostile servers and GlobalSign's estserver, and GlobalSign's estclient against goose-est serve (each if installed)
+	$(call echo,"EST against goose-est serve and GlobalSign's estserver and estclient")
+	cd $(ROOT)/est && $(PYTHON) scripts/interop.py
+
+.PHONY: interop-scep
+interop-scep: ## goose-scep against its own test CA, hostile servers and micromdm's scepserver, and micromdm's scepclient against goose-scep serve (each if installed)
+	$(call echo,"SCEP against goose-scep serve and micromdm's scepserver and scepclient")
+	cd $(ROOT)/scep && $(PYTHON) scripts/interop.py
+
 .PHONY: interop-krb5
 interop-krb5: ## Kerberos against MIT's KDC, kinit/kvno/klist, gss-client/gss-server and curl --negotiate
 	$(call echo,"Kerberos interop")
 	cd $(ROOT)/krb5 && $(PYTHON) scripts/interop.py
 
 .PHONY: differential
-differential: differential-http differential-x509 differential-compress differential-mime differential-jwx differential-dns ## Run every differential
+differential: differential-http differential-x509 differential-compress differential-mime differential-jwx differential-dns differential-xml ## Run every differential
 
 .PHONY: differential-http
 differential-http: ## HTTP/1.1 parsing, URLs and HPACK against Go; gzip and deflate decoding against zlib
@@ -263,6 +281,20 @@ differential-jwx: ## jwx against Go's lestrrat-go/jwx v4.6.0, both ways (needs G
 differential-dns: ## dns against miekg/dns v1.1.73 on fresh vectors: records, messages, DNSSEC, TSIG (needs Go)
 	$(call echo,"dns against miekg/dns")
 	cd $(ROOT)/dns && $(PYTHON) scripts/differential.py -n 2
+
+# XML_PYTHON: a Python with lxml, signxml, xmlsec and cryptography (a venv;
+# encoding/xml/README.md says how to make one).
+XML_PYTHON ?= $(PYTHON)
+
+.PHONY: interop-xml
+interop-xml: ## xml signatures and encryption against signxml and xmlsec, both ways, and wrapping attacks (XML_PYTHON with lxml, signxml, xmlsec)
+	$(call echo,"XML Signature and Encryption against signxml and xmlsec")
+	cd $(ROOT)/encoding/xml && $(XML_PYTHON) scripts/interop.py
+
+.PHONY: differential-xml
+differential-xml: ## xml canonicalization against lxml (libxml2) on a corpus and random documents (XML_PYTHON with lxml)
+	$(call echo,"XML canonicalization against lxml")
+	cd $(ROOT)/encoding/xml && $(XML_PYTHON) scripts/differential.py -n 300
 
 .PHONY: differential-mime
 differential-mime: ## mime against Go's mime, mime/quotedprintable, mime/multipart and net/textproto

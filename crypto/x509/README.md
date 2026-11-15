@@ -385,6 +385,25 @@ detached signature; over id-data signed attributes may be absent, the
 signature then over the content. `cms_der` turns BER (indefinite lengths,
 constructed OCTET STRINGs) into DER, as mail clients send CMS.
 
+For RFC 3161 time-stamp tokens (gslib's `tsp`), `CmsSignOptions` also has
+`extra_attrs` (more signed attributes, whole Attribute elements laid end
+to end: signingCertificateV2) and `no_certs` (no `certificates`, for a
+request without certReq), and `cms_verify_with_certs(sd, more_certs)`
+looks for the signer's certificate among the caller's as well as those
+sent.
+
+For SCEP (gslib's `scep`) and EST (`est`): `cms_signed_attr(sd, oid)`
+gives one signed attribute's value (refusing one there twice or with
+other than one value), `cms_certs_only(certs, crls)` makes a certs-only
+SignedData and `cms_crls(sd)` reads its CRLs; `cms_sign_with` signs by
+SHA-1 with an RSA key when h is 160 (signature algorithm rsaEncryption),
+for SCEP servers that know nothing newer; `cms_encrypt` makes
+DES-EDE3-CBC (`CMS_DES3_CBC`) and with `any_usage` encrypts to an RSA
+certificate whose key usage leaves out keyEncipherment (a SCEP CA's);
+`cms_decrypt_legacy` also reads DES-EDE3-CBC and single DES-CBC, which
+`cms_decrypt` refuses. create.goose's `create_csr_attrs` adds attributes
+to a CSR (challengePassword) and `csr_attribute` reads one back.
+
 `cms_encrypt(content_type, content, recipients, o)` encrypts to
 certificates (DER laid end to end): RSA by RSAES-OAEP with SHA-256 and
 MGF1-SHA-256 (or PKCS #1 v1.5 with `rsa_pkcs1`), EC P-256/384/521 and
