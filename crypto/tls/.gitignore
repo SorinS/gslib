@@ -5,7 +5,9 @@ test/*
 !test/*.goose
 !test/expected/
 !test/vectors/
+!test/timing/
+test/timing/*
+!test/timing/*.goose
 *.c
 !tools/bench_openssl.c
-__pycache__/
 __pycache__/

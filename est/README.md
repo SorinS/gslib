@@ -36,7 +36,7 @@ its first 512 bytes, unprintable ones replaced, in `c.detail`.
 ## Using it
 
 ```goose
-import gslib from "SorinS/gslib@v0.1";
+import gslib from "SorinS/gslib@v0.7.0";
 import gslib.est;
 import gslib.net.http.client;
 import gslib.net.http.fetch;

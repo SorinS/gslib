@@ -737,7 +737,7 @@ A program declares the package once, in its root file, and imports the
 modules it uses:
 
 ```goose
-import gslib from "SorinS/gslib@v0.1";     // or a path: import gslib from "../gslib.git";
+import gslib from "SorinS/gslib@v0.7.0";     // or a path: import gslib from "../gslib.git";
 import gslib.net.http.fetch;
 import gslib.crypto.tls.handshake;
 
@@ -747,6 +747,9 @@ fn main() {
     print(r.status, " ", http::response_body(r).len);
 }
 ```
+
+The tag pins a release; use v0.7.0 or a later one (`git tag` in gslib.git
+lists them), or a commit by its full hash.
 
 The libraries are grouped as Go groups its packages: `crypto/` (bignum,
 tls, x509, ssh, openpgp), `encoding/` (asn1, yaml), `net/` (http, ldap), and
@@ -802,12 +805,38 @@ tpm2.goose, tpm2/, tpm2/src/          tpm2, the same, and its TPM device's C
 webauthn.goose, webauthn/             webauthn, the same
 examples/<lib>/                       each library's examples (excluded too)
 scripts/run_all.py            every library's unit tests
+scripts/split.py              the standalone repositories, synced from here
 Makefile                      the programs, checks and tests
 ```
 
 Each library came from a repository of its own (bigmongoose, asn1goose,
 x509goose, tlsgoose, sshgoose, ldapgoose, yamlgoose, httpgoose,
 compressgoose, mimegoose), and `git log --follow -- <group>/<lib>` shows that history.
+
+Those repositories still publish each library as a package of its own,
+and `scripts/split.py` keeps them in step with gslib: run from gslib's
+top, it copies a library's modules, C, tests, tools, scripts, README and
+examples into its repository beside gslib.git and rewrites the imports
+for a package of its own (`import gslib.crypto.tls.handshake;` becomes
+`import tls.handshake;`, and a library that needs another declares it, as
+`import bignum from "SorinS/bigmongoose@v0.7.0";`). net and ntlm, which
+http needs, have repositories of their own too (netgoose, ntlmgoose). The
+table at the top of the script maps each library to its repository and
+lists what is left out and why; the dependencies come from the imports,
+and a library needing one with no repository, or a cycle, stops it.
+
+```bash
+python3 scripts/split.py --graph               # who needs whom, and the order to tag and push in
+python3 scripts/split.py --mode local          # sibling paths (../bigmongoose.git), to test the set
+python3 scripts/split.py --dry-run             # what would change in each repository
+python3 scripts/split.py                       # GitHub pins at gslib's tag, as published
+```
+
+It commits nothing: each repository is then tested, reviewed, committed
+and tagged on its own, in the order `--graph` prints. Files an older
+copy of a library left there are deleted (`--keep-stale` keeps them);
+anything else only a repository has, its LICENSE and .gitignore among
+them, is kept.
 
 ## Examples
 

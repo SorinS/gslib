@@ -20,7 +20,7 @@ The namespaces follow Go's packages, so `mime::parse_media_type`,
 `quotedprintable::decode`, `multipart::next`, `textproto::get`.
 
 ```goose
-import gslib from "SorinS/gslib@v0.1";   // or a path to gslib.git
+import gslib from "SorinS/gslib@v0.7.0";   // or a path to gslib.git
 import gslib.mime;
 import gslib.mime.multipart;
 

@@ -25,7 +25,7 @@ and KMAC256 for the post-quantum keys) and on
 [mail.pgp](../../mail) uses it for PGP/MIME (RFC 3156).
 
 ```goose
-import gslib from "SorinS/gslib@v0.1";   // or a path to gslib.git
+import gslib from "SorinS/gslib@v0.7.0";   // or a path to gslib.git
 import gslib.crypto.openpgp;
 import gslib.crypto.openpgp.keyring;
 import gslib.crypto.openpgp.message;

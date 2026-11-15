@@ -85,7 +85,7 @@ language, written in Goose: a foundation for cryptography.
 
 ```goose
 import std;
-import gslib from "SorinS/gslib@v0.1";   // or a path to gslib.git
+import gslib from "SorinS/gslib@v0.7.0";   // or a path to gslib.git
 import gslib.crypto.bignum;
 
 fn main() {
@@ -98,7 +98,7 @@ fn main() {
 ```
 
 ```goose
-import gslib from "SorinS/gslib@v0.1";   // or a path to gslib.git
+import gslib from "SorinS/gslib@v0.7.0";   // or a path to gslib.git
 import gslib.crypto.bignum;
 import gslib.crypto.bignum.x25519;
 
@@ -107,7 +107,7 @@ let secret, ok = bignum::x25519_shared(sk, peer_pk);   // ok is false for a low-
 ```
 
 ```goose
-import gslib from "SorinS/gslib@v0.1";   // or a path to gslib.git
+import gslib from "SorinS/gslib@v0.7.0";   // or a path to gslib.git
 import gslib.crypto.bignum;
 import gslib.crypto.bignum.rsa;
 import gslib.crypto.bignum.gcm;
@@ -124,7 +124,7 @@ let opened, ok2 = bignum::aes_gcm_open(key32, nonce12, aad, sealed);  // ok2 fal
 ```
 
 ```goose
-import gslib from "SorinS/gslib@v0.1";   // or a path to gslib.git
+import gslib from "SorinS/gslib@v0.7.0";   // or a path to gslib.git
 import gslib.crypto.bignum;
 import gslib.crypto.bignum.ec;
 import gslib.crypto.bignum.ed25519;

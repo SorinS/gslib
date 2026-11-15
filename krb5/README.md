@@ -31,7 +31,7 @@ reading theirs. Only `krb5.net`, the file functions and the tools do I/O.
 | `krb5.sys` | The C krb5 calls (`src/krb5sys.c`: UDP, files only their owner reads, the uid, host names; TCP is gslib's `net` module, `net::dial`) |
 
 ```goose
-import gslib from "SorinS/gslib@v0.1";   // or a path to gslib.git
+import gslib from "SorinS/gslib@v0.7.0";   // or a path to gslib.git
 import gslib.krb5;
 import gslib.krb5.config;
 import gslib.krb5.client;

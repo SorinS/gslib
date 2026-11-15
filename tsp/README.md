@@ -46,7 +46,7 @@ clock, plus the token's accuracy. Every failure has its error (`ERR_NONCE`,
 ## Using it
 
 ```goose
-import gslib from "SorinS/gslib@v0.1";
+import gslib from "SorinS/gslib@v0.7.0";
 import gslib.tsp;
 import gslib.net.http.client;
 import gslib.crypto.x509;

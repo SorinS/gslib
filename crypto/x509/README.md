@@ -24,7 +24,7 @@ CertificateVerify signatures.
 cryptography.
 
 ```goose
-import gslib from "SorinS/gslib@v0.1";   // or a path to gslib.git
+import gslib from "SorinS/gslib@v0.7.0";   // or a path to gslib.git
 import gslib.crypto.x509;
 import gslib.crypto.x509.verify;
 

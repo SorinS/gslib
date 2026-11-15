@@ -129,7 +129,7 @@ is never delivered to a location that fails the check.
 ## Using it
 
 ```goose
-import gslib from "SorinS/gslib@v0.1";
+import gslib from "SorinS/gslib@v0.7.0";
 import gslib.saml;
 import gslib.saml.metadata;
 import gslib.saml.logout;

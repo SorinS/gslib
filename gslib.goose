@@ -25,7 +25,7 @@
 // net's sockets at the top too);
 // each keeps its own namespace:
 //
-//   import gslib from "SorinS/gslib@v0.1";
+//   import gslib from "SorinS/gslib@v0.7.0";
 //   import gslib.net.http.fetch;      // http::fetch, http::get, ...
 //   import gslib.crypto.tls.handshake;   // tls::client, tls::server, ...
 //

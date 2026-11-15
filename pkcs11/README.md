@@ -12,7 +12,7 @@ function of its function list.
 | `pkcs11.p11` | `p11::` | the layer over it that miekg's `p11` is: Module, Slot, Session, Object, PrivateKey, PublicKey, SecretKey, KeyPair |
 
 ```goose
-import gslib from "SorinS/gslib@v0.1";
+import gslib from "SorinS/gslib@v0.7.0";
 import gslib.pkcs11;
 import gslib.pkcs11.p11;
 

@@ -56,7 +56,7 @@ for DES-EDE3 and single DES, `CmsEncryptOptions.any_usage`, and
 ## Using it
 
 ```goose
-import gslib from "SorinS/gslib@v0.1";
+import gslib from "SorinS/gslib@v0.7.0";
 import gslib.scep;
 import gslib.net.http.client;
 import gslib.net.http.fetch;

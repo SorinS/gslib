@@ -19,7 +19,7 @@ owns, fed as the data comes.
 | `compress.tar` | tar archives (USTAR, PAX, GNU, sparse) | yes | yes |
 
 ```goose
-import gslib from "SorinS/gslib@v0.1";   // or a path to gslib.git
+import gslib from "SorinS/gslib@v0.7.0";   // or a path to gslib.git
 import gslib.compress;
 import gslib.compress.gzip;
 
