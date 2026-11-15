@@ -2,7 +2,7 @@
 // flattened, several recipients, additional authenticated data), with
 // every key management algorithm of RFC 7518 §4 (RSA1_5, RSA-OAEP and
 // its SHA-2 forms, A*KW, dir, ECDH-ES and ECDH-ES+A*KW on P-256, P-384,
-// P-521 and X25519, A*GCMKW, PBES2) and every content algorithm of §5
+// P-521, X25519 and X448, A*GCMKW, PBES2) and every content algorithm of §5
 // (A*CBC-HS*, A*GCM), and "zip": "DEF".
 //
 //   let token, err = jwe::encrypt(plaintext, jwa::RSA_OAEP_256, jwa::A256GCM, public_key);
@@ -32,6 +32,7 @@ import crypto.bignum.keywrap;
 import crypto.bignum.rsa;
 import crypto.bignum.ec;
 import crypto.bignum.x25519;
+import crypto.bignum.x448;
 import crypto.bignum.sha256;
 import crypto.bignum.entropy;
 import compress;
@@ -237,13 +238,19 @@ fn agree(pub: const jwk::Key&, priv: const jwk::Key&) -> u8[>..], bool {
         z.append(s);
         return z, ok;
     }
+    // RFC 8037 §3.2: Z is X448's 56 bytes, all-zero refused (RFC 7748 §6.2).
+    if pub.kty == jwa::KTY_OKP && pub.crv == jwa::CRV_X448 {
+        let s, ok = bignum::x448_shared(priv.d, pub.x);
+        z.append(s);
+        return z, ok;
+    }
     return z, false;
 }
 
 // A new key on the curve of `like`.
 fn ephemeral(like: const jwk::Key&) -> jwk::Key {
     if like.kty == jwa::KTY_EC { return jwk::generate_ec(like.crv); }
-    return jwk::generate_okp(jwa::CRV_X25519);
+    return jwk::generate_okp(like.crv);
 }
 
 // --- Key management (RFC 7518 §4) ------------------------------------------------
@@ -565,9 +572,10 @@ fn read_header(n: json::Node&, h: Header&, protected: bool) -> i64 {
             let k, e = jwk::from_node(m);
             if e != jwx::OK { return e; }
             if k.private || k.kty == jwa::KTY_OCT { return jwx::ERR_KEY; }
-            // An ephemeral key is an ECDH one: EC or X25519, never, say, an
-            // ML-DSA (AKP) key, which RFC 9964 defines for signatures only.
-            if name == "epk" && k.kty != jwa::KTY_EC && !(k.kty == jwa::KTY_OKP && k.crv == jwa::CRV_X25519) {
+            // An ephemeral key is an ECDH one: EC, X25519 or X448, never,
+            // say, an Ed448 key or an ML-DSA (AKP) key, which RFC 9964
+            // defines for signatures only.
+            if name == "epk" && k.kty != jwa::KTY_EC && !(k.kty == jwa::KTY_OKP && jwa::is_montgomery(k.crv)) {
                 return jwx::ERR_KEY;
             }
             if name == "epk" { h.epk = k; h.has_epk = true; } else { h.jwk = k; h.has_jwk = true; }
@@ -585,7 +593,9 @@ fn read_header(n: json::Node&, h: Header&, protected: bool) -> i64 {
         json::each(crm) { c =>
             let s, ok = json::as_string(c);
             count++;
-            if !ok || s.len == 0 || jws::is_registered(s) || !json::member(n, s) || h.crit.len + s.len + 1 > 256 {
+            // A NUL in a name would split it in h.crit: malformed.
+            if !ok || s.len == 0 || contains(s, 0) || jws::is_registered(s) || !json::member(n, s)
+               || h.crit.len + s.len + 1 > 256 {
                 bad = true;
             } else {
                 h.crit.append(s);
@@ -800,7 +810,8 @@ fn decode_into(out: u8[>..]&, s: const u8[:], cap: i64) -> bool {
 // shared and per-recipient headers disjoint; Go's jwx repeats "alg" in the
 // protected header and the recipient's, so a parameter may appear twice
 // when both hold the same value. `seen` keeps each name and its value as
-// JSON, NUL-separated.
+// JSON, NUL-separated, so a name holding a NUL is malformed: it would
+// shift the names and values after it, and hide a clash.
 fn merge(h: Header&, seen: u8[>..]&, text: const u8[:], protected: bool) -> i64 {
     if text.len == 0 { return jwx::OK; }
     var doc: json::Node[>..] = [];
@@ -813,6 +824,7 @@ fn merge(h: Header&, seen: u8[>..]&, text: const u8[:], protected: bool) -> i64 
     }
     var clash = false;
     json::each(root) { m =>
+        if contains(m.key, 0) { clash = true; }
         var value: u8[>..] = [];
         jws::write_node(value, m);
         var is_name = true;

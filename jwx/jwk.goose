@@ -1,9 +1,9 @@
 // jwx.jwk: JSON Web Keys (RFC 7517) and key sets: RSA, EC (P-256, P-384,
-// P-521), OKP (Ed25519 and X25519, RFC 8037), AKP (ML-DSA-44, -65 and -87,
-// RFC 9964) and symmetric ("oct") keys, read from and written to JSON,
-// checked for consistency, their RFC 7638 thumbprints, the public half of
-// a private key, and new keys. jwx.pem turns PEM keys and certificates
-// into JWKs.
+// P-521), OKP (Ed25519, Ed448, X25519 and X448, RFC 8037), AKP
+// (ML-DSA-44, -65 and -87, RFC 9964) and symmetric ("oct") keys, read from
+// and written to JSON, checked for consistency, their RFC 7638
+// thumbprints, the public half of a private key, and new keys. jwx.pem
+// turns PEM keys and certificates into JWKs.
 //
 // A Key is a fixed-size value, so a set is a plain Key[>..]. The members
 // RFC 7517, RFC 7518 and RFC 9964 define are kept; others, and "x5c", are
@@ -20,6 +20,8 @@ import crypto.bignum.rsa;
 import crypto.bignum.ec;
 import crypto.bignum.ed25519;
 import crypto.bignum.x25519;
+import crypto.bignum.ed448;
+import crypto.bignum.x448;
 import crypto.bignum.mldsa;
 import crypto.bignum.hmac;
 import crypto.bignum.sha256;
@@ -48,7 +50,8 @@ let OP_DERIVE_BITS: u32 = 128;
 let OP_NAMES: const u8[:][] = ["sign", "verify", "encrypt", "decrypt", "wrapKey", "unwrapKey", "deriveKey", "deriveBits"];
 
 // A key. EC keys hold x, y and d (d empty in a public key) at the curve's
-// length; OKP keys x and d at 32 bytes; oct keys k; RSA keys n and e, and
+// length; OKP keys x and d at the curve's (32 bytes for Ed25519 and
+// X25519, 57 for Ed448, 56 for X448); oct keys k; RSA keys n and e, and
 // d, p, q and the CRT values when private, in `rsa`. AKP keys (RFC 9964)
 // hold "pub" in pub and "priv", the 32-byte ML-DSA seed, in d; their
 // "alg" is required and says which ML-DSA they are.
@@ -143,21 +146,36 @@ fn generate_ec(crv: i64) -> Key {
     return k;
 }
 
+// A new OKP key: Ed25519, Ed448, X25519 or X448.
 fn generate_okp(crv: i64) -> Key {
-    assert(crv == jwa::CRV_ED25519 || crv == jwa::CRV_X25519);
+    assert(jwa::is_okp(crv));
+    var d: u8[>..] = [];
+    d.resize(jwa::crv_len(crv), 0);
+    bignum::random_bytes(d);
+    return okp_from_private(crv, d);
+}
+
+// The OKP public key of a private one: an Ed25519 or Ed448 seed's, an
+// X25519 or X448 scalar's.
+fn okp_public(crv: i64, d: const u8[:]) -> u8[>..] {
+    var x: u8[>..] = [];
+    if crv == jwa::CRV_ED25519 { x.append(bignum::ed25519_public(d)); }
+    else if crv == jwa::CRV_X25519 { x.append(bignum::x25519_base(d)); }
+    else if crv == jwa::CRV_ED448 { x.append(bignum::ed448_public(d)); }
+    else { x.append(bignum::x448_base(d)); }
+    return x;
+}
+
+// An OKP key on crv from its private part (RFC 8037 §2's "d"), which must
+// be the curve's length.
+fn okp_from_private(crv: i64, d: const u8[:]) -> Key {
+    assert(jwa::is_okp(crv) && d.len == jwa::crv_len(crv));
     var k = empty();
     k.kty = jwa::KTY_OKP;
     k.crv = crv;
     k.private = true;
-    if crv == jwa::CRV_ED25519 {
-        let seed, pk = bignum::ed25519_keypair();
-        k.d.append(seed);
-        k.x.append(pk);
-    } else {
-        let sk, pk = bignum::x25519_keypair();
-        k.d.append(sk);
-        k.x.append(pk);
-    }
+    k.d.append(d);
+    k.x.append(okp_public(crv, d));
     return k;
 }
 
@@ -222,15 +240,12 @@ fn validate(k: const Key&) -> i64 {
         return jwx::OK;
     }
     if k.kty == jwa::KTY_OKP {
-        if k.crv != jwa::CRV_ED25519 && k.crv != jwa::CRV_X25519 { return jwx::ERR_UNSUPPORTED; }
-        if k.x.len != 32 { return jwx::ERR_KEY; }
+        if !jwa::is_okp(k.crv) { return jwx::ERR_UNSUPPORTED; }
+        let n = jwa::crv_len(k.crv);
+        if k.x.len != n { return jwx::ERR_KEY; }
         if k.private {
-            if k.d.len != 32 { return jwx::ERR_KEY; }
-            if k.crv == jwa::CRV_ED25519 {
-                if bignum::ed25519_public(k.d)[..] != k.x[..] { return jwx::ERR_KEY; }
-            } else {
-                if bignum::x25519_base(k.d)[..] != k.x[..] { return jwx::ERR_KEY; }
-            }
+            if k.d.len != n { return jwx::ERR_KEY; }
+            if okp_public(k.crv, k.d)[..] != k.x[..] { return jwx::ERR_KEY; }
         }
         return jwx::OK;
     }
@@ -266,11 +281,12 @@ fn fits(k: const Key&, alg: i64) -> bool {
     // A dir key may name the content algorithm it is for (RFC 7520 §5.6).
     if k.alg != jwa::UNKNOWN && k.alg != alg && !(alg == jwa::DIRECT && jwa::is_content(k.alg)) { return false; }
     if jwa::is_ecdsa(alg) { return k.kty == jwa::KTY_EC && k.crv == jwa::curve_of(alg); }
-    if jwa::is_eddsa(alg) { return k.kty == jwa::KTY_OKP && k.crv == jwa::CRV_ED25519; }
+    // "EdDSA" takes either Edwards curve, "Ed25519" and "Ed448" their own.
+    if jwa::is_eddsa(alg) { return k.kty == jwa::KTY_OKP && jwa::eddsa_fits(alg, k.crv); }
     // An AKP key's "alg" is always set, and was checked above.
     if jwa::is_mldsa(alg) { return k.kty == jwa::KTY_AKP && k.alg == alg; }
     if jwa::is_ecdh(alg) {
-        return (k.kty == jwa::KTY_EC && jwa::is_nist(k.crv)) || (k.kty == jwa::KTY_OKP && k.crv == jwa::CRV_X25519);
+        return (k.kty == jwa::KTY_EC && jwa::is_nist(k.crv)) || (k.kty == jwa::KTY_OKP && jwa::is_montgomery(k.crv));
     }
     if jwa::is_hmac(alg) {
         return k.kty == jwa::KTY_OCT && k.k.len > 0;

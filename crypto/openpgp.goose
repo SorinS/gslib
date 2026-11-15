@@ -16,8 +16,9 @@
 //                       self-signatures checked; unlocking; export
 //   openpgp.message     signing, verifying, encrypting and decrypting
 //                       messages: detached, inline and cleartext
-//   openpgp.keygen      Ed25519 + Curve25519 (and RSA) key generation, and
-//                       post-quantum keys: gpg 2.5's Kyber, RFC 9980's
+//   openpgp.keygen      Ed25519 + Curve25519 (and RSA, Brainpool, Ed448)
+//                       key generation, and post-quantum keys: gpg 2.5's
+//                       Kyber, RFC 9980's
 //   openpgp.pqc         the composite KEMs (RFC 9980's and LibrePGP's),
 //                       gpg-agent's S-expressions and their protection
 //   openpgp.dump        a packet listing, as gpg --list-packets
@@ -160,14 +161,20 @@ let CURVE_X25519:  i64 = 2;          // 1.3.6.1.4.1.3029.1.5.1, legacy Curve2551
 let CURVE_P256:    i64 = 3;
 let CURVE_P384:    i64 = 4;
 let CURVE_P521:    i64 = 5;
+let CURVE_BP256:   i64 = 6;          // brainpoolP256r1 (RFC 5639), 1.3.36.3.3.2.8.1.1.7
+let CURVE_BP384:   i64 = 7;          // brainpoolP384r1, 1.3.36.3.3.2.8.1.1.11
+let CURVE_BP512:   i64 = 8;          // brainpoolP512r1, 1.3.36.3.3.2.8.1.1.13
+let CURVE_ED448:   i64 = 9;          // 1.3.101.113: gpg's Ed448 under EdDSALegacy
+let CURVE_X448:    i64 = 10;         // 1.3.101.111: gpg's cv448 ECDH
 
 let OID_ED25519: const u8[:] = "\x2b\x06\x01\x04\x01\xda\x47\x0f\x01";
 let OID_X25519:  const u8[:] = "\x2b\x06\x01\x04\x01\x97\x55\x01\x05\x01";
 let OID_P256:    const u8[:] = "\x2a\x86\x48\xce\x3d\x03\x01\x07";
 let OID_P384:    const u8[:] = "\x2b\x81\x04\x00\x22";
 let OID_P521:    const u8[:] = "\x2b\x81\x04\x00\x23";
-// RFC 8410's X25519 and X448 (1.3.101.110, .111), which gpg puts in its
-// Kyber keys, and the Brainpool curves of its default PQC key (named only).
+let OID_ED448:   const u8[:] = "\x2b\x65\x71";
+// RFC 8410's X25519 and X448 (1.3.101.110, .111): gpg puts both in its
+// Kyber keys, and X448 in its cv448 ECDH keys.
 let OID_X25519_RFC8410: const u8[:] = "\x2b\x65\x6e";
 let OID_X448_RFC8410:   const u8[:] = "\x2b\x65\x6f";
 let OID_BP256:          const u8[:] = "\x2b\x24\x03\x03\x02\x08\x01\x01\x07";
@@ -180,6 +187,11 @@ fn curve_of_oid(oid: const u8[:]) -> i64 {
     if oid == OID_P256 { return CURVE_P256; }
     if oid == OID_P384 { return CURVE_P384; }
     if oid == OID_P521 { return CURVE_P521; }
+    if oid == OID_BP256 { return CURVE_BP256; }
+    if oid == OID_BP384 { return CURVE_BP384; }
+    if oid == OID_BP512 { return CURVE_BP512; }
+    if oid == OID_ED448 { return CURVE_ED448; }
+    if oid == OID_X448_RFC8410 { return CURVE_X448; }
     return CURVE_NONE;
 }
 
@@ -189,22 +201,38 @@ fn oid_of_curve(c: i64) -> const u8[:] {
     if c == CURVE_P256 { return OID_P256; }
     if c == CURVE_P384 { return OID_P384; }
     if c == CURVE_P521 { return OID_P521; }
+    if c == CURVE_BP256 { return OID_BP256; }
+    if c == CURVE_BP384 { return OID_BP384; }
+    if c == CURVE_BP512 { return OID_BP512; }
+    if c == CURVE_ED448 { return OID_ED448; }
+    if c == CURVE_X448 { return OID_X448_RFC8410; }
     return "";
 }
 
-// The bytes of a NIST curve's scalars and field elements.
+// The bytes of a curve's scalars and field elements (the 448 curves': their
+// native secrets, 57 octets for Ed448's seed and 56 for X448's).
 fn curve_size(c: i64) -> i64 {
-    if c == CURVE_P256 { return 32; }
-    if c == CURVE_P384 { return 48; }
+    if c == CURVE_P256 || c == CURVE_BP256 { return 32; }
+    if c == CURVE_P384 || c == CURVE_BP384 { return 48; }
     if c == CURVE_P521 { return 66; }
+    if c == CURVE_BP512 { return 64; }
+    if c == CURVE_ED448 { return 57; }
+    if c == CURVE_X448 { return 56; }
     return 32;
 }
 
-fn is_nist(c: i64) -> bool { c == CURVE_P256 || c == CURVE_P384 || c == CURVE_P521 }
+// The short Weierstrass curves (NIST and Brainpool): points 04 || x || y,
+// scalars big-endian, ECDSA and RFC 6637 ECDH over bignum.ec.
+fn is_weierstrass(c: i64) -> bool {
+    c == CURVE_P256 || c == CURVE_P384 || c == CURVE_P521 || c == CURVE_BP256 || c == CURVE_BP384 || c == CURVE_BP512
+}
 
-fn nist_curve(c: i64) -> bignum::Curve {
+fn weierstrass_curve(c: i64) -> bignum::Curve {
     if c == CURVE_P256 { return bignum::p256(); }
     if c == CURVE_P384 { return bignum::p384(); }
+    if c == CURVE_BP256 { return bignum::bp256(); }
+    if c == CURVE_BP384 { return bignum::bp384(); }
+    if c == CURVE_BP512 { return bignum::bp512(); }
     return bignum::p521();
 }
 

@@ -24,6 +24,7 @@ import os;
 import gslib from "../../..";
 import gslib.net.http;
 import gslib.net.http.conn1;
+import gslib.net.http.url;
 import gslib.net.http.hpack;
 import gslib.net.http.h2;
 import gslib.crypto.bignum;
@@ -102,7 +103,7 @@ fn decoded_path(target: const u8[:]) -> u8[>..] {
     return out;
 }
 
-struct Answer { status: i64, ctype: u8[..64], extra: u8[..256] }
+struct Answer { status: i64, ctype: u8[..64], extra: u8[>..] }
 
 // The file a GET or HEAD names, into `body`: 200, or 404 or 403.
 fn file_answer(root: const u8[:], path: const u8[:], body: u8[>..]&) -> Answer {
@@ -113,8 +114,10 @@ fn file_answer(root: const u8[:], path: const u8[:], body: u8[>..]&) -> Answer {
     if is_dir(full) {
         if !ends_with(path, "/") {
             a.status = 301;
+            // The decoded path, escaped again: as long as the request's,
+            // and nothing in it ends the field.
             a.extra.append("Location: ");
-            a.extra.append(path);
+            http::escape_to(a.extra, path, http::ENC_PATH);
             a.extra.append("/\r\n");
             return a;
         }

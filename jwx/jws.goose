@@ -1,7 +1,8 @@
 // jwx.jws: JSON Web Signatures (RFC 7515), compact and JSON (general and
 // flattened), with detached payloads and RFC 7797's unencoded ones
-// ("b64": false), by every algorithm of RFC 7518 §3, RFC 8037's EdDSA and
-// RFC 9964's ML-DSA-44, -65 and -87.
+// ("b64": false), by every algorithm of RFC 7518 §3, RFC 8037's EdDSA
+// (Ed25519 and Ed448, and RFC 9864's "Ed25519" and "Ed448") and RFC
+// 9964's ML-DSA-44, -65 and -87.
 //
 //   let token, err = jws::sign(payload, jwa::ES256, key);
 //   let payload, err = jws::verify(token, jwa::ES256, public_key);
@@ -22,6 +23,7 @@ import crypto.bignum.ct;
 import crypto.bignum.rsa;
 import crypto.bignum.ec;
 import crypto.bignum.ed25519;
+import crypto.bignum.ed448;
 import crypto.bignum.hmac;
 import crypto.bignum.mldsa;
 
@@ -69,10 +71,12 @@ root struct Message {
 }
 
 // A signer for sign_json: the key, the protected header (whose alg is the
-// algorithm) and the unprotected header's members, as JSON without braces.
+// algorithm), the protected header's own members (`extra`, as in
+// sign_with) and the unprotected header's members, as JSON without braces.
 struct Signer {
     key: jwk::Key,
     header: Header = Header { .. },
+    extra: u8[..2048] = [],
     unprotected: u8[..1024] = [],
 }
 
@@ -228,7 +232,8 @@ fn read_header(n: json::Node&, h: Header&, protected: bool) -> i64 {
         json::each(cm) { c =>
             let s, ok = json::as_string(c);
             count++;
-            if !ok || s.len == 0 || (is_registered(s) && s != "b64") { bad = true; }
+            // A NUL in a name would split it in h.crit: malformed.
+            if !ok || s.len == 0 || contains(s, 0) || (is_registered(s) && s != "b64") { bad = true; }
             // Each name must be a parameter the header has (RFC 7515 §4.1.11).
             else if !json::member(n, s) { bad = true; }
             else if h.crit.len + s.len + 1 > 256 { bad = true; }
@@ -280,6 +285,9 @@ fn sign_bytes(input: const u8[:], alg: i64, key: const jwk::Key&) -> u8[>..], i6
     } else if jwa::is_mldsa(alg) {
         // Hedged, with the empty context (RFC 9964 §5).
         out.append(bignum::mldsa_sign(jwa::mldsa_set(alg), key.d, input));
+    } else if key.crv == jwa::CRV_ED448 {
+        // Ed448 with the empty context (RFC 8037 §3.1).
+        out.append(bignum::ed448_sign(key.d, input));
     } else {
         out.append(bignum::ed25519_sign(key.d, input));
     }
@@ -308,6 +316,8 @@ fn verify_bytes(input: const u8[:], sig: const u8[:], alg: i64, key: const jwk::
     } else if jwa::is_mldsa(alg) {
         let set = jwa::mldsa_set(alg);
         good = sig.len == bignum::mldsa_sig_len(set) && bignum::mldsa_verify(set, key.pub, input, sig);
+    } else if key.crv == jwa::CRV_ED448 {
+        good = sig.len == 114 && bignum::ed448_verify(key.x, input, sig);
     } else {
         good = sig.len == 64 && bignum::ed25519_verify(key.x, input, sig);
     }
@@ -381,7 +391,7 @@ fn sign_json(payload: const u8[:], signers: const Signer[:], flattened: bool = f
     for &s in signers {
         var kidded = s.header;
         if kidded.kid.len == 0 && s.unprotected.len == 0 { kidded.kid.append(s.key.kid); }
-        let protected_b64 = jwx::b64_encode(header_json(kidded, ""));
+        let protected_b64 = jwx::b64_encode(header_json(kidded, s.extra));
         let input = signing_input(protected_b64, payload, b64);
         let sig, err = sign_bytes(input, s.header.alg, s.key);
         if err != jwx::OK { return out, err; }

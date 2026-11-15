@@ -1,5 +1,13 @@
+github.com/cloudflare/circl v1.6.5 h1:O64F26HEqNhznd/hrC5KZXVKYuKM2rx4deZDTc4ihQA=
+github.com/cloudflare/circl v1.6.5/go.mod h1:h5LNyxAc5nTue9DS5jT+48en2PSDYt3zdGnz5OstK6c=
+github.com/jwx-go/ed448/v4 v4.0.5 h1:d3iZXIgEuf13VTPGq7zzDLs3+8P8M/J+oaABoJjgHkw=
+github.com/jwx-go/ed448/v4 v4.0.5/go.mod h1:3EmyRyDWQMZZoB8dDnov6FUxI3QQE2rMtjTmclIj2kQ=
+github.com/jwx-go/x448/v4 v4.0.5 h1:0e3Jle1RaHaYhdwz5AMg0/ZogqRtsdn2mD/lyvlkZyE=
+github.com/jwx-go/x448/v4 v4.0.5/go.mod h1:5GoNxBgzfVeFYos55b/u7WP1vWzItcy9+U4imoZ6Ics=
 github.com/lestrrat-go/dsig v1.4.0 h1:g7LUjK8cT74A5DzBXJI5HzsJuLhoYN0Wzj4nuOMIrH8=
 github.com/lestrrat-go/dsig v1.4.0/go.mod h1:I8Nddg/vN2cUl/h8N7SRRApLnNNeyZPIqLYpvpOtGGo=
+github.com/lestrrat-go/dsig-circl-ed448 v1.0.0 h1:VijftNGJryFdDVhmrLMhxdKCRPK0VLGLJOy0C3i/Gso=
+github.com/lestrrat-go/dsig-circl-ed448 v1.0.0/go.mod h1:qhO/4wWfOPXbIB8rtbwUf4MA6SnTADBRZI1iZaWYj1Y=
 github.com/lestrrat-go/jwx/v4 v4.6.0 h1:Gq/JIOqNb/Fl3Oug5Ylfu/OUNLAnXQM+A8dMOPn4OIc=
 github.com/lestrrat-go/jwx/v4 v4.6.0/go.mod h1:QOCcs9ZL83fD8Abq9mDXLrLT0ObfyINsISiW03PZPMs=
 github.com/lestrrat-go/option/v3 v3.0.0-alpha1 h1:dvdzLwm/Ba5CJUF3jQP7w/iNYSLfy7yyh9XXNa1WjxI=
@@ -8,3 +16,7 @@ github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWD
 github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
 go.yaml.in/yaml/v3 v3.0.5 h1:N6y/pJk8buWs9NY5ERU2HSMfm+IuD/OtfdAnq6kESPw=
 go.yaml.in/yaml/v3 v3.0.5/go.mod h1:HVTZu1O7/Vkt2N+BFy8Zza+lnLsABggaTM2ZpNIGuKg=
+golang.org/x/crypto v0.55.0 h1:+KWHjbgOaAQ66dh/YlkZKHlz9ZUlq61AFirAR9ntP8M=
+golang.org/x/crypto v0.55.0/go.mod h1:uq0V9dE/fzQuJtbnL+2EhWOE63vo164FY8xqEnV9xis=
+golang.org/x/sys v0.47.0 h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=
+golang.org/x/sys v0.47.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=

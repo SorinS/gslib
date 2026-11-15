@@ -13,10 +13,14 @@ language, written in Goose: a foundation for cryptography.
 - **`bignum.mont`**: constant-time Montgomery arithmetic for an odd modulus
   (multiply, exponentiate, reduce).
 - **`bignum.x25519`**: X25519 Diffie-Hellman (RFC 7748), constant time.
-- **`bignum.ec`**: P-224, P-256, P-384 and P-521: ECDH and deterministic ECDSA
-  (RFC 6979), constant time.
+- **`bignum.x448`**: X448 Diffie-Hellman (RFC 7748), constant time.
+- **`bignum.ec`**: P-224, P-256, P-384, P-521 and brainpoolP256r1, P384r1
+  and P512r1 (RFC 5639): ECDH and deterministic ECDSA (RFC 6979), constant
+  time.
 - **`bignum.ed25519`**: Ed25519 signatures (RFC 8032), with Ed25519ctx and
   Ed25519ph; constant-time signing.
+- **`bignum.ed448`**: Ed448 signatures (RFC 8032), with contexts and
+  Ed448ph; constant-time signing.
 - **`bignum.mlkem`**: ML-KEM-512/768/1024 (FIPS 203), post-quantum key
   encapsulation, constant time.
 - **`bignum.mldsa`**: ML-DSA-44/65/87 (FIPS 204), post-quantum signatures,
@@ -343,24 +347,28 @@ says whether it would. Poly1305 uses five 26-bit limbs
 
 ### Elliptic curves
 
-`bignum.ec` handles P-224, P-256, P-384 and P-521 with one generic
-implementation. `p224()`, `p256()`, `p384()` and `p521()` return a `Curve`
+`bignum.ec` handles P-224, P-256, P-384, P-521 and the Brainpool r1 curves
+brainpoolP256r1, P384r1 and P512r1 (RFC 5639, as RFC 7027 and RFC 8734
+use them in TLS) with one generic implementation. `p224()`, `p256()`,
+`p384()`, `p521()`, `bp256()`, `bp384()` and `bp512()` return a `Curve`
 holding the field prime, the group
-order, their Montgomery constants and the generator; build one and pass it
+order, their Montgomery constants, the coefficients and the generator; build one and pass it
 to every call. Field elements are limbs of the curve's width in Montgomery
 form, multiplied by `bignum.mont`. Points are projective and added with
-the complete formulas of Renes, Costello and Batina for a = −3. Those have
+the complete formulas of Renes, Costello and Batina: their algorithm 4
+for a = −3 (the NIST curves), algorithm 1 for any a (Brainpool's, three
+more multiplications per addition). Those have
 no exceptional cases, so doubling is just an addition and the point at
 infinity needs no branch. Scalar multiplication uses 4-bit windows across
 the whole scalar width and reads its table by scanning every entry.
 
 | Group | Functions |
 |---|---|
-| Keys | `ec_keypair(c) -> sk, pk`, `ec_public_key(c, sk)`; private keys are `len` big-endian bytes (28, 32, 48 or 66), public keys the uncompressed 04 ‖ x ‖ y |
+| Keys | `ec_keypair(c) -> sk, pk`, `ec_public_key(c, sk)`; private keys are `len` big-endian bytes (28, 32, 48, 64 or 66), public keys the uncompressed 04 ‖ x ‖ y |
 | ECDH | `ecdh_shared(c, sk, peer) -> x, bool`: false unless the peer's point is on the curve and correctly encoded |
-| ECDSA | `ecdsa_sign(c, sk, msg)`, `ecdsa_verify(c, pk, msg, sig)` with SHA-224 on P-224, SHA-256 on P-256, SHA-384 on P-384 and SHA-512 on P-521; `ecdsa_sign_digest` and `ecdsa_verify_digest` for any hash |
+| ECDSA | `ecdsa_sign(c, sk, msg)`, `ecdsa_verify(c, pk, msg, sig)` with SHA-224 on P-224, SHA-256 on P-256 and brainpoolP256r1, SHA-384 on P-384 and brainpoolP384r1 and SHA-512 on P-521 and brainpoolP512r1; `ecdsa_sign_digest` and `ecdsa_verify_digest` for any hash |
 | DER | `ecdsa_sig_to_der(raw)`, `ecdsa_sig_from_der(c, der) -> raw, bool` (strict: minimal integers, no trailing bytes) |
-| Points | `ec_encode`/`ec_decode` (uncompressed, checked on the curve), `ec_encode_compressed`/`ec_decode_compressed` (SEC 1's 02/03 ‖ x; P-256, P-384 and P-521, whose p is 3 mod 4: not P-224), `ec_add`, `ec_neg`, `ec_mul` (krb5's SPAKE uses them) |
+| Points | `ec_encode`/`ec_decode` (uncompressed, checked on the curve), `ec_encode_compressed`/`ec_decode_compressed` (SEC 1's 02/03 ‖ x; every curve but P-224, as their p is 3 mod 4), `ec_add`, `ec_neg`, `ec_mul` (krb5's SPAKE uses them) |
 
 ECDSA nonces come from RFC 6979's HMAC-DRBG, so signing needs no
 randomness and the same input always gives the same signature.
@@ -375,6 +383,27 @@ and R. `ed25519_sign_ctx(seed, msg, ctx)` / `ed25519_verify_ctx` are
 Ed25519ctx, with a context of 1 to 255 bytes. `ed25519_sign_ph(seed,
 digest, ctx = "")` / `ed25519_verify_ph` are Ed25519ph. As in Go, they
 take the message's SHA-512 digest, not the message.
+
+`bignum.x448` and `bignum.ed448` are the same for Curve448. A field
+element of GF(2^448 − 2^224 − 1) is sixteen signed limbs of 28 bits, so
+every product and sum fits an i64 with no wider multiply, and reduction
+folds the top half back with 2^448 ≡ 2^224 + 1. The multiply and square
+are unrolled. `x448(scalar, u)` runs a ladder of 448 fixed steps;
+`x448_base(scalar)`, `x448_keypair() -> sk, pk` and `x448_shared(sk,
+peer) -> secret, bool` (false for an all-zero secret, from a low-order
+peer) take and give 56 bytes. Ed448 uses projective coordinates with the
+RFC's complete addition and doubling on the untwisted curve, and SHAKE256
+throughout. Its keys are 57 bytes and its signatures 114:
+`ed448_keypair() -> seed, pk`, `ed448_public(seed)`, `ed448_sign(seed,
+msg, ctx = "")`, `ed448_verify(pk, msg, sig, ctx = "")`. Every Ed448
+signature carries dom4, so a context of 0 to 255 bytes goes with plain
+Ed448 too. `ed448_sign_ph(seed, digest, ctx = "")` / `ed448_verify_ph`
+are Ed448ph, taking the 64-byte SHAKE256 digest from
+`ed448_prehash(msg)`, as `ed25519_sign_ph` takes a SHA-512 digest.
+Verification uses [4]SB = [4]R + [4]kA and rejects S ≥ L and
+non-canonical encodings. In a native build (Apple M1, -O2) one X448 takes
+about 460 µs, five times X25519, and an Ed448 signature or verification
+about 1 ms, three times Ed25519.
 
 ### ML-KEM
 
@@ -632,7 +661,7 @@ generation takes about 0.27 s on average (ten runs, in constant time).
 - The P-256/P-384 code is generic over the prime. On the same machine,
   OpenSSL's ECDH (specialized, with assembly) is 27 times faster on P-256
   and 15 times faster on P-384.
-- Compressed points are read on P-256, P-384 and P-521 only (P-224's
+- Compressed points are read on every curve but P-224 (P-224's
   square root would need Tonelli-Shanks). TLS 1.3 sends only uncompressed
   points; krb5's SPAKE sends compressed ones.
 - Secrets are not wiped from memory.
@@ -652,6 +681,8 @@ python3 scripts/wycheproof.py [file ...]   # Wycheproof's vectors (../wycheproof
 python3 scripts/dudect.py [--seconds S]    # dudect's own harness on the constant-time code (x86, ../dudect.git)
 python3 scripts/gen_vectors.py          # regenerate test/vectors from Python's integers
 scripts/gen_rsa8192.sh                  # regenerate test/vectors/rsa8192.txt with openssl
+python3 scripts/brainpool_vectors.py    # regenerate test/vectors/brainpool.txt (a venv with ecdsa and cryptography checks more)
+python3 scripts/ed448_vectors.py        # regenerate test/vectors/x448.txt and ed448.txt, checked with openssl
 tools/govectors.sh -check test/vectors/xcrypto.txt   # xcrypto.txt against Go's x/crypto (needs Go)
 tools/govectors.sh > test/vectors/xcrypto.txt   # regenerate it
 ```
@@ -679,8 +710,10 @@ tools/govectors.sh > test/vectors/xcrypto.txt   # regenerate it
   Wycheproof's vectors, converted from its JSON, for every family this
   package has an API for: AES-GCM, ChaCha20- and XChaCha20-Poly1305,
   AES- and Camellia-CBC with PKCS #7, AES- and Camellia-CMAC, AES-XTS, HMAC, HKDF and PBKDF2 over SHA-1, SHA-2
-  and SHA-3, ECDH and ECDSA (DER and P1363) on P-224 to P-521, Ed25519,
-  X25519, RSA PKCS #1 v1.5 (signing, verifying, decryption), PSS and OAEP,
+  and SHA-3, ECDH and ECDSA (DER and P1363) on P-224 to P-521 and
+  brainpoolP256r1, P384r1 and P512r1 (their ECDH public keys as
+  SubjectPublicKeyInfo, parsed strictly by the script), Ed25519,
+  X25519, Ed448, X448, RSA PKCS #1 v1.5 (signing, verifying, decryption), PSS and OAEP,
   DSA, ML-KEM, ML-DSA and primality. A valid test must give Wycheproof's
   output, an invalid one must be refused. What is not tried is listed with
   its reason: curves and hashes this package does not have, PSS and OAEP
@@ -701,6 +734,23 @@ tools/govectors.sh > test/vectors/xcrypto.txt   # regenerate it
   and the §6.1 key agreement.
 - `x25519_vectors`: random scalars and u-coordinates against a Python
   transcription of RFC 7748.
+- `x448_field`: GF(2^448 − 2^224 − 1) arithmetic against `BigInt`,
+  including non-canonical encodings and limbs at the carried bound of
+  either sign, where --debug's overflow checks see the largest products.
+- `x448_rfc`: RFC 7748's X448 vectors (§5.2, with the 1,000-iteration
+  chain) and the §6.2 key agreement. The 1,000,000-iteration chain, too
+  long for the runner, gave the RFC's result in a native build (in about
+  400 s).
+- `x448_vectors`: random scalars (some from openssl genpkey) and
+  u-coordinates, at and above p among them, from
+  `scripts/ed448_vectors.py`'s transcription of RFC 7748 and remade by
+  openssl; low-order points refused by `x448_shared`.
+- `ed448_vectors`: all of RFC 8032's Ed448 and Ed448ph vectors (§7.4 and
+  §7.5), then random seeds, messages and contexts, matching the
+  transcription and openssl byte for byte. Changed messages, contexts,
+  signatures and keys are rejected, as are an Ed448 signature taken as
+  Ed448ph and the reverse, S ≥ L, non-canonical, off-curve and "−0" points,
+  and wrong lengths.
 - `mont_ops`: Montgomery multiply, exponentiation, R², reduction,
   products and `ct_mod_inv` (invertible or not) against `BigInt`.
 - `sha256_vectors`: every length up to 129 bytes and longer ones, one-shot
@@ -793,6 +843,14 @@ tools/govectors.sh > test/vectors/xcrypto.txt   # regenerate it
   signatures and ciphertexts under the wrong key.
 - `ec_vectors` also reads `ec224.txt`: P-224 the same way, with RFC 6979's
   P-224 signature.
+- `brainpool_vectors`: brainpoolP256r1, P384r1 and P512r1 against
+  `brainpool.txt` (`scripts/brainpool_vectors.py`): the ECDH examples of
+  RFC 7027 and RFC 6932, multiples of the generator, compressed points,
+  ECDH and RFC 6979 signatures, all cross-checked against openssl, the
+  `ecdsa` package (signatures byte for byte) and `cryptography`, and
+  signatures made by openssl and `cryptography` to verify. Bad points,
+  points of P-256 and P-384, and out-of-range scalars are refused, and
+  the general-a addition run on P-256 and P-384 matches theirs.
 - `modes_vectors`: CBC, CFB, OFB and CTR over AES (each key size), DES and
   triple DES, at lengths around the block, each way. Also single DES and
   triple-DES blocks (with the textbook vector), MD5 and HMAC-MD5, RC4 with
@@ -852,9 +910,13 @@ In gslib's `examples/bignum/`, run from gslib's top as `goose examples/bignum/<n
 - `key_wrap.goose`: AES key wrap, plain and padded, and envelope encryption.
 - `legacy_ciphers.goose`: 3DES, DES, Blowfish, CAST5, Twofish, XTEA, RC2, RC4, Salsa20.
 - `x25519_demo.goose`: a key exchange.
+- `x448_ed448.goose`: an X448 key exchange, and Ed448 signatures with a
+  context and Ed448ph, timed.
 - `rsa_demo.goose`: key generation, signatures and OAEP, timed.
 - `ecc_demo.goose`: ECDHE and ECDSA on P-256 and P-384, Ed25519,
   and HKDF, timed.
+- `brainpool.goose`: RFC 7027's ECDH example, then ECDH, ECDSA and
+  compressed points on the three Brainpool curves, timed beside P-256.
 - `dsa_demo.goose`: DSA parameters, keys, random and RFC 6979 signatures.
 - `ffdh_demo.goose`: finite-field Diffie-Hellman over MODP group 14, bad peer values refused.
 - `mlkem_demo.goose`: ML-KEM-768 encapsulation and decapsulation.

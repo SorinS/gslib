@@ -1,8 +1,9 @@
 // x509.keys: private and public keys in their DER forms, and signing.
-// Parsing and marshalling PKCS #8 (RSA, EC, Ed25519, ML-DSA, SLH-DSA, DSA), SEC 1
-// (EC), PKCS #1 (RSA) and SubjectPublicKeyInfo, as Go's x509 Parse/Marshal
-// functions do; key generation; and signatures in the forms X.509 and
-// TLS carry them (ECDSA and DSA as DER), with their AlgorithmIdentifiers.
+// Parsing and marshalling PKCS #8 (RSA, EC, Ed25519, Ed448, X448, ML-DSA,
+// SLH-DSA, DSA), SEC 1 (EC, the NIST and brainpool curves), PKCS #1 (RSA)
+// and SubjectPublicKeyInfo, as Go's x509 Parse/Marshal functions do; key
+// generation; and signatures in the forms X.509 and TLS carry them (ECDSA
+// and DSA as DER), with their AlgorithmIdentifiers.
 //
 // ML-DSA private keys are their 32-byte seed (RFC 9881). PKCS #8 carries
 // the seed alone ([0] IMPLICIT OCTET STRING, what Go and this package
@@ -13,7 +14,9 @@
 // expanded key, or both (openssl's default, read when they agree), and
 // written as the seed when known. DSA keys go beyond Go, which has no DSA
 // private keys in x509: PKCS #8 and openssl's "DSA PRIVATE KEY" are read,
-// PKCS #8 written.
+// PKCS #8 written. Ed448 and X448 keys (RFC 8410) are their 57-byte seed
+// and 56-byte private key in an OCTET STRING, as Ed25519's are; a
+// OneAsymmetricKey's public key beside them is passed over.
 
 namespace x509;
 
@@ -24,6 +27,8 @@ import crypto.bignum;
 import crypto.bignum.rsa;
 import crypto.bignum.ec;
 import crypto.bignum.ed25519;
+import crypto.bignum.ed448;
+import crypto.bignum.x448;
 import crypto.bignum.mldsa;
 import crypto.bignum.slhdsa;
 import crypto.bignum.mlkem;
@@ -38,19 +43,22 @@ import crypto.bignum.entropy;
 // An ML-KEM key is its expanded decapsulation key kem_dk, with the 64-byte
 // seed d || z it came from in kem_seed when known (empty otherwise).
 // An SLH-DSA key is its 4n bytes SK.seed || SK.prf || PK.seed || PK.root
-// in slh.
+// in slh. An Ed448 key is its 57-byte seed, an X448 key its 56 bytes, in
+// key448.
 struct PrivateKey { kind: i64, ec_sk: u8[..66], seed: u8[32], dsa: bignum::DsaKey, rsa: bignum::RsaPrivateKey,
-                    kem_seed: u8[..64], kem_dk: u8[..3168], slh: u8[..128] }
+                    kem_seed: u8[..64], kem_dk: u8[..3168], slh: u8[..128], key448: u8[..57] }
 
 fn empty_key() -> PrivateKey {
     PrivateKey { kind: KEY_UNKNOWN, ec_sk: [], seed: [0; 32], dsa: bignum::DsaKey { p: [], q: [], g: [], y: [], x: [] },
                  rsa: bignum::RsaPrivateKey { n: [], e: [], d: [], p: [], q: [], dp: [], dq: [], qinv: [] },
-                 kem_seed: [], kem_dk: [], slh: [] }
+                 kem_seed: [], kem_dk: [], slh: [], key448: [] }
 }
 
 fn curve_oid(kind: i64) -> const u8[:] {
     if kind == KEY_EC_P256 { "1.2.840.10045.3.1.7" } else if kind == KEY_EC_P384 { "1.3.132.0.34" }
-    else if kind == KEY_EC_P224 { "1.3.132.0.33" } else { "1.3.132.0.35" }
+    else if kind == KEY_EC_P224 { "1.3.132.0.33" } else if kind == KEY_EC_BP256 { "1.3.36.3.3.2.8.1.1.7" }
+    else if kind == KEY_EC_BP384 { "1.3.36.3.3.2.8.1.1.11" } else if kind == KEY_EC_BP512 { "1.3.36.3.3.2.8.1.1.13" }
+    else { "1.3.132.0.35" }
 }
 
 // A new key from the OS's entropy; `bits` is the modulus size of RSA
@@ -80,6 +88,12 @@ fn generate_key(kind: i64, bits: i64 = 2048) -> PrivateKey {
     } else if kind == KEY_ED25519 {
         let seed, pk = bignum::ed25519_keypair();
         for i in 32 { k.seed[i] = seed[i]; }
+    } else if kind == KEY_ED448 {
+        let seed, pk = bignum::ed448_keypair();
+        k.key448.append(seed);
+    } else if kind == KEY_X448 {
+        let sk, pk = bignum::x448_keypair();
+        k.key448.append(sk);
     } else {
         assert(is_ec(kind));
         let c = curve_of_key(kind);
@@ -263,6 +277,14 @@ fn parse_private_key(d: const u8[:]) -> PrivateKey, bool {
             k.kind = KEY_ED25519;
             return k, true;
         }
+        if asn1::oid_is(d, alg[0], "1.3.101.113") || asn1::oid_is(d, alg[0], "1.3.101.111") {
+            let ed = asn1::oid_is(d, alg[0], "1.3.101.113");
+            let raw, okraw = asn1::read_octets(d, inner);
+            if alg.len != 1 || !okraw || raw.len != (if ed { 57 } else { 56 }) { return k, false; }
+            k.key448.append(raw);
+            k.kind = if ed { KEY_ED448 } else { KEY_X448 };
+            return k, true;
+        }
         let kem = mlkem_k_of_oid(d, alg[0]);
         if kem != 0 {
             if alg.len != 1 { return k, false; }
@@ -319,7 +341,8 @@ fn put_limbs_uint(out: u8[>..]&, xs) {
 fn seq(out: u8[>..]&, content: const u8[:]) { asn1::put(out, asn1::SEQUENCE, content); }
 
 // The public key as its subjectPublicKey contents: RSAPublicKey DER, the
-// uncompressed EC point, the Ed25519 or ML-DSA key, or the DSA INTEGER y.
+// uncompressed EC point, the Ed25519, Ed448, X448 or ML-DSA key, or the DSA
+// INTEGER y.
 fn public_key_bytes(k: const PrivateKey&) -> u8[>..] {
     var out: u8[>..] = [];
     if k.kind == KEY_RSA {
@@ -329,6 +352,10 @@ fn public_key_bytes(k: const PrivateKey&) -> u8[>..] {
         seq(out, body);
     } else if k.kind == KEY_ED25519 {
         out.append(bignum::ed25519_public(k.seed));
+    } else if k.kind == KEY_ED448 {
+        out.append(bignum::ed448_public(k.key448));
+    } else if k.kind == KEY_X448 {
+        out.append(bignum::x448_base(k.key448));
     } else if is_mldsa(k.kind) {
         out = bignum::mldsa_public_key(mldsa_set(k.kind), k.seed);
     } else if is_slhdsa(k.kind) {
@@ -358,6 +385,10 @@ fn key_alg_id(k: const PrivateKey&) -> u8[>..] {
         asn1::put_null(body);
     } else if kind == KEY_ED25519 {
         asn1::put_oid(body, "1.3.101.112");
+    } else if kind == KEY_ED448 {
+        asn1::put_oid(body, "1.3.101.113");
+    } else if kind == KEY_X448 {
+        asn1::put_oid(body, "1.3.101.111");
     } else if is_mldsa(kind) {
         asn1::put_oid(body, mldsa_oid(mldsa_set(kind)));
     } else if is_slhdsa(kind) {
@@ -437,6 +468,7 @@ fn marshal_pkcs8(k: const PrivateKey&) -> u8[>..] {
     var inner: u8[>..] = [];
     if k.kind == KEY_RSA { inner = marshal_pkcs1(k); }
     else if k.kind == KEY_ED25519 { asn1::put_octets(inner, k.seed); }
+    else if k.kind == KEY_ED448 || k.kind == KEY_X448 { asn1::put_octets(inner, k.key448); }
     else if is_mldsa(k.kind) { asn1::put(inner, asn1::ctx(0, false), k.seed); }
     else if is_slhdsa(k.kind) { inner.append(k.slh); }
     else if is_mlkem(k.kind) {
@@ -455,16 +487,18 @@ fn marshal_pkcs8(k: const PrivateKey&) -> u8[>..] {
 
 // The signature algorithm a key signs with by default: PKCS #1 v1.5 with
 // SHA-256 for RSA (as Go), ECDSA with the curve's hash (SHA-256 for P-224,
-// as Go), Ed25519, ML-DSA of the key's set, DSA with SHA-256 (as openssl).
+// as Go; SHA-256, -384 and -512 for brainpoolP256r1, P384r1 and P512r1),
+// Ed25519, Ed448, ML-DSA of the key's set, DSA with SHA-256 (as openssl).
+// SIG_UNKNOWN for a key that does not sign (ML-KEM, X448).
 fn default_sig(kind: i64) -> i64, i64 {
     if kind == KEY_RSA { return SIG_RSA_PKCS1, 256; }
     if kind == KEY_ED25519 { return SIG_ED25519, 0; }
+    if kind == KEY_ED448 { return SIG_ED448, 0; }
+    if kind == KEY_X448 || is_mlkem(kind) { return SIG_UNKNOWN, 0; }
     if is_mldsa(kind) { return SIG_MLDSA, mldsa_set(kind); }
     if is_slhdsa(kind) { return SIG_SLHDSA, slhdsa_set(kind); }
     if kind == KEY_DSA { return SIG_DSA, 256; }
-    if kind == KEY_EC_P256 || kind == KEY_EC_P224 { return SIG_ECDSA, 256; }
-    if kind == KEY_EC_P384 { return SIG_ECDSA, 384; }
-    return SIG_ECDSA, 512;
+    return SIG_ECDSA, ec_hash_of_key(kind);
 }
 
 fn hash_oid(h: i64) -> const u8[:] {
@@ -481,6 +515,8 @@ fn sig_alg_id(alg: i64, h: i64) -> u8[>..] {
         asn1::put_oid(body, if h == 256 { "1.2.840.10045.4.3.2" } else if h == 384 { "1.2.840.10045.4.3.3" } else { "1.2.840.10045.4.3.4" });
     } else if alg == SIG_ED25519 {
         asn1::put_oid(body, "1.3.101.112");
+    } else if alg == SIG_ED448 {
+        asn1::put_oid(body, "1.3.101.113");
     } else if alg == SIG_MLDSA {
         asn1::put_oid(body, mldsa_oid(h));
     } else if alg == SIG_SLHDSA {
@@ -519,6 +555,7 @@ fn sig_fits_key(kind: i64, alg: i64, h: i64) -> bool {
     if alg == SIG_RSA_PKCS1 || alg == SIG_RSA_PSS { return kind == KEY_RSA && (h == 256 || h == 384 || h == 512); }
     if alg == SIG_ECDSA { return is_ec(kind) && (h == 256 || h == 384 || h == 512); }
     if alg == SIG_ED25519 { return kind == KEY_ED25519; }
+    if alg == SIG_ED448 { return kind == KEY_ED448; }
     if alg == SIG_MLDSA { return is_mldsa(kind) && mldsa_set(kind) == h; }
     if alg == SIG_SLHDSA { return is_slhdsa(kind) && slhdsa_set(kind) == h; }
     if alg == SIG_DSA { return kind == KEY_DSA && (h == 224 || h == 256 || h == 384 || h == 512); }
@@ -526,7 +563,8 @@ fn sig_fits_key(kind: i64, alg: i64, h: i64) -> bool {
 }
 
 // A signature over msg and true: PKCS #1 v1.5 or PSS (salt as long as the
-// hash), ECDSA or DSA as a DER SEQUENCE (RFC 6979 nonces), Ed25519, or
+// hash), ECDSA or DSA as a DER SEQUENCE (RFC 6979 nonces), Ed25519, Ed448
+// (the empty context), or
 // ML-DSA or SLH-DSA (hedged, with the empty context; an SLH-DSA "s" key
 // takes seconds). Empty and false when RSA's
 // private operation fails its check (a fault), as Go's Sign returns an
@@ -535,6 +573,7 @@ fn sign(k: const PrivateKey&, alg: i64, h: i64, msg: const u8[:]) -> u8[>..], bo
     assert(sig_fits_key(k.kind, alg, h));
     var out: u8[>..] = [];
     if alg == SIG_ED25519 { out.append(bignum::ed25519_sign(k.seed, msg)); return out, true; }
+    if alg == SIG_ED448 { out.append(bignum::ed448_sign(k.key448, msg)); return out, true; }
     if alg == SIG_MLDSA { out.append(bignum::mldsa_sign(h, k.seed, msg)); return out, true; }
     if alg == SIG_SLHDSA { out.append(bignum::slhdsa_sign(h, k.slh, msg)); return out, true; }
     let s, ok = sign_digest(k, alg, h, bignum::hash_bits(h, msg));
@@ -542,12 +581,12 @@ fn sign(k: const PrivateKey&, alg: i64, h: i64, msg: const u8[:]) -> u8[>..], bo
 }
 
 // The same over a digest made by the hash h, as Go's crypto.Signer takes
-// one: RSA, ECDSA and DSA; empty and false for Ed25519, ML-DSA and SLH-DSA, which
+// one: RSA, ECDSA and DSA; empty and false for Ed25519, Ed448, ML-DSA and SLH-DSA, which
 // sign messages, not digests, and for a digest of another length.
 fn sign_digest(k: const PrivateKey&, alg: i64, h: i64, digest: const u8[:]) -> u8[>..], bool {
     assert(sig_fits_key(k.kind, alg, h));
     var out: u8[>..] = [];
-    if alg == SIG_ED25519 || alg == SIG_MLDSA || alg == SIG_SLHDSA || digest.len != bignum::hash_len(h) { return out, false; }
+    if alg == SIG_ED25519 || alg == SIG_ED448 || alg == SIG_MLDSA || alg == SIG_SLHDSA || digest.len != bignum::hash_len(h) { return out, false; }
     if alg == SIG_RSA_PKCS1 {
         let s, ok = bignum::rsa_sign_pkcs1_digest(k.rsa, digest, h);
         return s, ok;

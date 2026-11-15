@@ -1,16 +1,18 @@
 // bignum.ec: the NIST curves P-224, P-256, P-384 and P-521 (y^2 = x^3 -
-// 3x + b over a prime field): ECDH key agreement, and ECDSA with SHA-224
-// on P-224, SHA-256 on P-256, SHA-384 on P-384 and SHA-512 on P-521, its
-// nonces derived deterministically (RFC 6979).
+// 3x + b over a prime field) and the Brainpool curves brainpoolP256r1,
+// P384r1 and P512r1 (y^2 = x^3 + ax + b, RFC 5639): ECDH key agreement,
+// and ECDSA with SHA-224 on P-224, SHA-256 on P-256 and brainpoolP256r1,
+// SHA-384 on P-384 and brainpoolP384r1 and SHA-512 on P-521 and
+// brainpoolP512r1, its nonces derived deterministically (RFC 6979).
 //
-// One generic implementation serves all four: field elements are
-// limbs of the curve's width (7, 8, 12 or 17) in Montgomery form, multiplied by
+// One generic implementation serves all seven: field elements are
+// limbs of the curve's width (7, 8, 12, 16 or 17) in Montgomery form, multiplied by
 // bignum.mont. Points are projective and added by the complete formulas of
-// Renes, Costello and Batina (2016, algorithm 4 for a = -3), which have no
-// exceptional cases, so doubling is an addition and the point at infinity
-// needs no branch. Scalar multiplication takes 4-bit windows over the full
-// scalar width with a table read by scanning, so its time does not depend
-// on the scalar or the point.
+// Renes, Costello and Batina (2016: algorithm 4 for a = -3, algorithm 1
+// for any a), which have no exceptional cases, so doubling is an addition
+// and the point at infinity needs no branch. Scalar multiplication takes
+// 4-bit windows over the full scalar width with a table read by scanning,
+// so its time does not depend on the scalar or the point.
 
 namespace bignum;
 
@@ -22,12 +24,14 @@ import crypto.bignum.hmac;
 import crypto.bignum.entropy;
 
 // The field prime p and group order n with their Montgomery constants, and
-// p - 2, n - 2 for inversion by Fermat. b, gx and gy are in Montgomery form.
+// p - 2, n - 2 for inversion by Fermat. a, b, b3 = 3b, gx and gy are in
+// Montgomery form; a_is_minus3 picks the faster addition (public).
 struct Curve {
     nl: i64, len: i64, bits: i64, hash: i64,     // limbs, bytes and bits of n, the signing hash
     p: u32[..17], p0i: u32, r2p: u32[..17], pm2: u32[..17],
     n: u32[..17], n0i: u32, r2n: u32[..17], nm2: u32[..17],
-    b: u32[..17], gx: u32[..17], gy: u32[..17],
+    a: u32[..17], b: u32[..17], b3: u32[..17], gx: u32[..17], gy: u32[..17],
+    a_is_minus3: bool,
 }
 
 // Projective (X : Y : Z), Montgomery form; (0 : 1 : 0) is infinity.
@@ -108,7 +112,8 @@ fn ninv(c: const Curve&, a: const u32[:]) -> u32[..17] {
     return r;
 }
 
-// x mod n for x < 2n, as any value below p is (p < 2n on every curve here).
+// x mod n for x < 2n, as any value below p is (p < 2n on every curve here:
+// n is within 2 sqrt(p) of p, the cofactor being 1).
 fn nreduce(c: const Curve&, x: const u32[:]) -> u32[..17] {
     var r = ec_zero(c);
     for i in c.nl { r[i] = x[i]; }
@@ -116,7 +121,8 @@ fn nreduce(c: const Curve&, x: const u32[:]) -> u32[..17] {
     return r;
 }
 
-// x -= 2, for an odd x > 2 (P-224's prime ends in ...0001).
+// x -= 2, for any x >= 2 (the borrow runs through, as P-224's prime ends
+// in ...0001).
 fn ec_sub2(x: u32[:]) {
     var borrow: u64 = 2;
     for i in x.len {
@@ -126,12 +132,13 @@ fn ec_sub2(x: u32[:]) {
     }
 }
 
-fn ec_curve(nl: i64, bits: i64, hash: i64, p: const u8[:], n: const u8[:], b: const u8[:],
-            gx: const u8[:], gy: const u8[:]) -> Curve {
+// A curve from its hex constants; an empty a means a = -3.
+fn ec_curve(nl: i64, bits: i64, hash: i64, p: const u8[:], a: const u8[:], n: const u8[:],
+            b: const u8[:], gx: const u8[:], gy: const u8[:]) -> Curve {
     var c = Curve {
         nl: nl, len: (bits + 7) / 8, bits: bits, hash: hash,
         p: [], p0i: 0, r2p: [], pm2: [], n: [], n0i: 0, r2n: [], nm2: [],
-        b: [], gx: [], gy: [],
+        a: [], b: [], b3: [], gx: [], gy: [], a_is_minus3: a.len == 0,
     };
     c.p = ec_hex(c, p);
     c.n = ec_hex(c, n);
@@ -145,7 +152,15 @@ fn ec_curve(nl: i64, bits: i64, hash: i64, p: const u8[:], n: const u8[:], b: co
     ec_sub2(c.pm2[..]);
     c.nm2 = c.n;
     ec_sub2(c.nm2[..]);
+    if c.a_is_minus3 {
+        var three = ec_zero(c);
+        three[0] = 3;
+        c.a = fsub(c, ec_zero(c)[..], to_mont(c, three[..])[..]);
+    } else {
+        c.a = to_mont(c, ec_hex(c, a)[..]);
+    }
     c.b = to_mont(c, ec_hex(c, b)[..]);
+    c.b3 = fadd(c, fadd(c, c.b[..], c.b[..])[..], c.b[..]);
     c.gx = to_mont(c, ec_hex(c, gx)[..]);
     c.gy = to_mont(c, ec_hex(c, gy)[..]);
     return c;
@@ -155,6 +170,7 @@ fn ec_curve(nl: i64, bits: i64, hash: i64, p: const u8[:], n: const u8[:], b: co
 fn p224() -> Curve {
     ec_curve(7, 224, 224,
         "ffffffffffffffffffffffffffffffff000000000000000000000001",
+        "",
         "ffffffffffffffffffffffffffff16a2e0b8f03e13dd29455c5c2a3d",
         "b4050a850c04b3abf54132565044b0b7d7bfd8ba270b39432355ffb4",
         "b70e0cbd6bb4bf7f321390b94a03c1d356c21122343280d6115c1d21",
@@ -165,6 +181,7 @@ fn p224() -> Curve {
 fn p256() -> Curve {
     ec_curve(8, 256, 256,
         "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff",
+        "",
         "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551",
         "5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b",
         "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296",
@@ -175,6 +192,7 @@ fn p256() -> Curve {
 fn p384() -> Curve {
     ec_curve(12, 384, 384,
         "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000ffffffff",
+        "",
         "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973",
         "b3312fa7e23ee7e4988e056be3f82d19181d9c6efe8141120314088f5013875ac656398d8a2ed19d2a85c8edd3ec2aef",
         "aa87ca22be8b05378eb1c71ef320ad746e1d3b628ba79b9859f741e082542a385502f25dbf55296c3a545e3872760ab7",
@@ -185,10 +203,44 @@ fn p384() -> Curve {
 fn p521() -> Curve {
     ec_curve(17, 521, 512,
         "01ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "",
         "01fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffa51868783bf2f966b7fcc0148f709a5d03bb5c9b8899c47aebb6fb71e91386409",
         "0051953eb9618e1c9a1f929a21a0b68540eea2da725b99b315f3b8b489918ef109e156193951ec7e937b1652c0bd3bb1bf073573df883d2c34f1ef451fd46b503f00",
         "00c6858e06b70404e9cd9e3ecb662395b4429c648139053fb521f828af606b4d3dbaa14b5e77efe75928fe1dc127a2ffa8de3348b3c1856a429bf97e7e31c2e5bd66",
         "011839296a789a3bc0045c8a5fb42c7d1bd998f54449579b446817afbd17273e662c97ee72995ef42640c550b9013fad0761353c7086a272c24088be94769fd16650")
+}
+
+// brainpoolP256r1 (RFC 5639 §3.4), signing with SHA-256.
+fn bp256() -> Curve {
+    ec_curve(8, 256, 256,
+        "a9fb57dba1eea9bc3e660a909d838d726e3bf623d52620282013481d1f6e5377",
+        "7d5a0975fc2c3057eef67530417affe7fb8055c126dc5c6ce94a4b44f330b5d9",
+        "a9fb57dba1eea9bc3e660a909d838d718c397aa3b561a6f7901e0e82974856a7",
+        "26dc5c6ce94a4b44f330b5d9bbd77cbf958416295cf7e1ce6bccdc18ff8c07b6",
+        "8bd2aeb9cb7e57cb2c4b482ffc81b7afb9de27e1e3bd23c23a4453bd9ace3262",
+        "547ef835c3dac4fd97f8461a14611dc9c27745132ded8e545c1d54c72f046997")
+}
+
+// brainpoolP384r1 (RFC 5639 §3.6), signing with SHA-384.
+fn bp384() -> Curve {
+    ec_curve(12, 384, 384,
+        "8cb91e82a3386d280f5d6f7e50e641df152f7109ed5456b412b1da197fb71123acd3a729901d1a71874700133107ec53",
+        "7bc382c63d8c150c3c72080ace05afa0c2bea28e4fb22787139165efba91f90f8aa5814a503ad4eb04a8c7dd22ce2826",
+        "8cb91e82a3386d280f5d6f7e50e641df152f7109ed5456b31f166e6cac0425a7cf3ab6af6b7fc3103b883202e9046565",
+        "04a8c7dd22ce28268b39b55416f0447c2fb77de107dcd2a62e880ea53eeb62d57cb4390295dbc9943ab78696fa504c11",
+        "1d1c64f068cf45ffa2a63a81b7c13f6b8847a3e77ef14fe3db7fcafe0cbd10e8e826e03436d646aaef87b2e247d4af1e",
+        "8abe1d7520f9c2a45cb1eb8e95cfd55262b70b29feec5864e19c054ff99129280e4646217791811142820341263c5315")
+}
+
+// brainpoolP512r1 (RFC 5639 §3.7), signing with SHA-512.
+fn bp512() -> Curve {
+    ec_curve(16, 512, 512,
+        "aadd9db8dbe9c48b3fd4e6ae33c9fc07cb308db3b3c9d20ed6639cca703308717d4d9b009bc66842aecda12ae6a380e62881ff2f2d82c68528aa6056583a48f3",
+        "7830a3318b603b89e2327145ac234cc594cbdd8d3df91610a83441caea9863bc2ded5d5aa8253aa10a2ef1c98b9ac8b57f1117a72bf2c7b9e7c1ac4d77fc94ca",
+        "aadd9db8dbe9c48b3fd4e6ae33c9fc07cb308db3b3c9d20ed6639cca70330870553e5c414ca92619418661197fac10471db1d381085ddaddb58796829ca90069",
+        "3df91610a83441caea9863bc2ded5d5aa8253aa10a2ef1c98b9ac8b57f1117a72bf2c7b9e7c1ac4d77fc94cadc083e67984050b75ebae5dd2809bd638016f723",
+        "81aee4bdd82ed9645a21322e9c4c6a9385ed9f70b5d916c1b43b62eef4d0098eff3b1f78e2d0d48d50d1687b93b97d5f7c6d5047406a5e688b352209bcb9f822",
+        "7dde385d566332ecc0eabfa9cf7822fdf209f70024a57b1aa000c55b881f8111b2dcde494a5f485e5bca4bd88a2763aed1ca2b2fa8f0540678cd1e0f3ad80892")
 }
 
 fn ec_infinity(c: const Curve&) -> EcPoint {
@@ -203,8 +255,15 @@ fn ec_generator(c: const Curve&) -> EcPoint {
     return EcPoint { x: c.gx, y: c.gy, z: to_mont(c, z[..]) };
 }
 
-// p + q by the complete formulas (Renes, Costello and Batina, algorithm 4).
+// p + q by the complete formulas: algorithm 4 of Renes, Costello and Batina
+// when a = -3, else their algorithm 1. The choice is the curve's, public.
 fn ec_add(c: const Curve&, p: const EcPoint&, q: const EcPoint&) -> EcPoint {
+    if c.a_is_minus3 { return ec_add_m3(c, p, q); }
+    return ec_add_any(c, p, q);
+}
+
+// Algorithm 4 (a = -3): 12 multiplications and 2 by b.
+fn ec_add_m3(c: const Curve&, p: const EcPoint&, q: const EcPoint&) -> EcPoint {
     var t0 = fmul(c, p.x[..], q.x[..]);
     var t1 = fmul(c, p.y[..], q.y[..]);
     var t2 = fmul(c, p.z[..], q.z[..]);
@@ -248,6 +307,51 @@ fn ec_add(c: const Curve&, p: const EcPoint&, q: const EcPoint&) -> EcPoint {
     z3 = fmul(c, t4[..], z3[..]);
     t1 = fmul(c, t3[..], t0[..]);
     z3 = fadd(c, z3[..], t1[..]);
+    return EcPoint { x: x3, y: y3, z: z3 };
+}
+
+// Algorithm 1 (any a): 12 multiplications, 3 by a and 2 by b3 = 3b.
+fn ec_add_any(c: const Curve&, p: const EcPoint&, q: const EcPoint&) -> EcPoint {
+    var t0 = fmul(c, p.x[..], q.x[..]);
+    var t1 = fmul(c, p.y[..], q.y[..]);
+    var t2 = fmul(c, p.z[..], q.z[..]);
+    var t3 = fadd(c, p.x[..], p.y[..]);
+    var t4 = fadd(c, q.x[..], q.y[..]);
+    t3 = fmul(c, t3[..], t4[..]);
+    t4 = fadd(c, t0[..], t1[..]);
+    t3 = fsub(c, t3[..], t4[..]);                // X1 Y2 + X2 Y1
+    t4 = fadd(c, p.x[..], p.z[..]);
+    var t5 = fadd(c, q.x[..], q.z[..]);
+    t4 = fmul(c, t4[..], t5[..]);
+    t5 = fadd(c, t0[..], t2[..]);
+    t4 = fsub(c, t4[..], t5[..]);                // X1 Z2 + X2 Z1
+    t5 = fadd(c, p.y[..], p.z[..]);
+    var x3 = fadd(c, q.y[..], q.z[..]);
+    t5 = fmul(c, t5[..], x3[..]);
+    x3 = fadd(c, t1[..], t2[..]);
+    t5 = fsub(c, t5[..], x3[..]);                // Y1 Z2 + Y2 Z1
+    var z3 = fmul(c, c.a[..], t4[..]);
+    x3 = fmul(c, c.b3[..], t2[..]);
+    z3 = fadd(c, x3[..], z3[..]);
+    x3 = fsub(c, t1[..], z3[..]);
+    z3 = fadd(c, t1[..], z3[..]);
+    var y3 = fmul(c, x3[..], z3[..]);
+    t1 = fadd(c, t0[..], t0[..]);
+    t1 = fadd(c, t1[..], t0[..]);
+    t2 = fmul(c, c.a[..], t2[..]);
+    t4 = fmul(c, c.b3[..], t4[..]);
+    t1 = fadd(c, t1[..], t2[..]);
+    t2 = fsub(c, t0[..], t2[..]);
+    t2 = fmul(c, c.a[..], t2[..]);
+    t4 = fadd(c, t4[..], t2[..]);
+    t0 = fmul(c, t1[..], t4[..]);
+    y3 = fadd(c, y3[..], t0[..]);
+    t0 = fmul(c, t5[..], t4[..]);
+    x3 = fmul(c, t3[..], x3[..]);
+    x3 = fsub(c, x3[..], t0[..]);
+    t0 = fmul(c, t3[..], t1[..]);
+    z3 = fmul(c, t5[..], z3[..]);
+    z3 = fadd(c, z3[..], t0[..]);
     return EcPoint { x: x3, y: y3, z: z3 };
 }
 
@@ -304,6 +408,14 @@ fn ec_encode(c: const Curve&, p: const EcPoint&) -> u8[>..] {
     return out;
 }
 
+// x^3 + ax + b, for x in Montgomery form.
+fn ec_rhs(c: const Curve&, xm: const u32[:]) -> u32[..17] {
+    let x2 = fmul(c, xm, xm);
+    let x3 = fmul(c, x2[..], xm);
+    let ax = fmul(c, c.a[..], xm);
+    return fadd(c, fadd(c, x3[..], ax[..])[..], c.b[..]);
+}
+
 // A point from its uncompressed encoding, checked to lie on the curve
 // (which, with cofactor 1, also puts it in the group). Public data.
 fn ec_decode(c: const Curve&, s: const u8[:]) -> EcPoint, bool {
@@ -316,13 +428,9 @@ fn ec_decode(c: const Curve&, s: const u8[:]) -> EcPoint, bool {
     if ct_lt(x[..], c.p[..]) == 0 || ct_lt(y[..], c.p[..]) == 0 { return p, false; }
     let xm = to_mont(c, x[..]);
     let ym = to_mont(c, y[..]);
-    // y^2 == x^3 - 3x + b
+    // y^2 == x^3 + ax + b
     let lhs = fmul(c, ym[..], ym[..]);
-    let x2 = fmul(c, xm[..], xm[..]);
-    let x3 = fmul(c, x2[..], xm[..]);
-    let x3b = fadd(c, x3[..], c.b[..]);
-    let tx = fadd(c, fadd(c, xm[..], xm[..])[..], xm[..]);
-    let rhs = fsub(c, x3b[..], tx[..]);
+    let rhs = ec_rhs(c, xm[..]);
     if ct_eq(lhs[..], rhs[..]) == 0 { return p, false; }
     p.x = xm;
     p.y = ym;
@@ -349,9 +457,9 @@ fn ec_encode_compressed(c: const Curve&, p: const EcPoint&) -> u8[>..] {
 }
 
 // A point from its compressed encoding (SEC 1 §2.3.4): y the square root
-// of x^3 - 3x + b of the parity asked, a^((p+1)/4) as p = 3 (mod 4) on
-// P-256, P-384 and P-521 (false on P-224, whose p is not). False for an
-// x not below p or with no point. Public data.
+// of x^3 + ax + b of the parity asked, v^((p+1)/4) as p = 3 (mod 4) on
+// P-256, P-384, P-521 and the three Brainpool curves (false on P-224,
+// whose p is not). False for an x not below p or with no point. Public data.
 fn ec_decode_compressed(c: const Curve&, s: const u8[:]) -> EcPoint, bool {
     var p = ec_infinity(c);
     if s.len != 1 + c.len || (s[0] != 2 && s[0] != 3) || c.p[0] & 3 != 3 { return p, false; }
@@ -359,10 +467,7 @@ fn ec_decode_compressed(c: const Curve&, s: const u8[:]) -> EcPoint, bool {
     limbs_from_be(x[..], s[1..]);
     if ct_lt(x[..], c.p[..]) == 0 { return p, false; }
     let xm = to_mont(c, x[..]);
-    let x2 = fmul(c, xm[..], xm[..]);
-    let x3 = fmul(c, x2[..], xm[..]);
-    let tx = fadd(c, fadd(c, xm[..], xm[..])[..], xm[..]);
-    let rhs = fsub(c, fadd(c, x3[..], c.b[..])[..], tx[..]);
+    let rhs = ec_rhs(c, xm[..]);
     // (p + 1) / 4 = (p >> 2) + 1, as p = 3 (mod 4).
     var e = ec_zero(c);
     for i in c.nl {
@@ -565,7 +670,7 @@ fn ecdsa_sig_to_der(raw: const u8[:]) -> u8[>..] {
     der_uint(body, raw[half..]);
     var out: u8[>..] = [];
     out.push(0x30);
-    if body.len >= 128 { out.push(0x81); }      // P-521's can pass 127 bytes
+    if body.len >= 128 { out.push(0x81); }      // P-521's and brainpoolP512r1's can pass 127 bytes
     out.push(body.len as! u8);
     out.append(body);
     return out;

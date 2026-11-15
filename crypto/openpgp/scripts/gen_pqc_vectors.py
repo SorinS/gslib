@@ -16,9 +16,10 @@ for tests only; the protected one's passphrase is vectors/passphrase.txt's.
   enc_pqc_prot.asc        msg.txt to pqc_prot, armored
   enc_pqc_signed.gpg      msg.txt to pqc and pqc_prot, signed by pqc
 
-gpg's default "pqc" key (Brainpool P-384 with ky768_bp256) is not made:
-Brainpool is not in crypto/bignum. The RFC 9980 vectors (rfc9980_a*.asc)
-are its Appendix A, copied as they are; gpg 2.5 does not read them.
+gpg's default "pqc" key (brainpoolP384r1 with ky768_bp256) is made by
+gen_curve_vectors.py, with the other newer curves. The RFC 9980 vectors
+(rfc9980_a*.asc) are its Appendix A, copied as they are; gpg 2.5 does not
+read them.
 """
 
 import os

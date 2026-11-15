@@ -42,7 +42,7 @@ struct Claims {
     iss: u8[..256],
     sub: u8[..256],
     jti: u8[..256],
-    aud: u8[..1024],            // the audiences, each followed by a NUL
+    aud: u8[..1024],            // the audiences, each its length (2 bytes, big-endian) then its bytes
     exp: i64,
     nbf: i64,
     iat: i64,
@@ -54,17 +54,23 @@ fn new_claims() -> Claims {
     Claims { iss: [], sub: [], jti: [], aud: [], exp: 0, nbf: 0, iat: 0, has: 0, private: [] }
 }
 
+// An audience, any bytes (a JSON string may hold a NUL): each is kept
+// with its length, so it reads back the same string, empty ones too.
 fn add_audience(c: Claims&, aud: const u8[:]) {
-    assert(c.aud.len + aud.len + 1 <= 1024);
+    assert(c.aud.len + aud.len + 2 <= 1024);
+    c.aud.push((aud.len >> 8) as! u8);
+    c.aud.push((aud.len & 0xff) as! u8);
     c.aud.append(aud);
-    c.aud.push(0);
     c.has = c.has | CLAIM_AUD;
 }
 
 fn audiences(c: const Claims&) -> const u8[:][>..] {
     var out: const u8[:][>..] = [];
-    for a in split(c.aud, 0) {
-        if a.len > 0 { out.push(a); }
+    var i = 0;
+    while i + 2 <= c.aud.len {
+        let n = ((c.aud[i] as i64) << 8) | c.aud[i + 1];
+        out.push(c.aud[i + 2..i + 2 + n]);
+        i = i + 2 + n;
     }
     return out;
 }
@@ -233,13 +239,13 @@ fn parse_claims(text: const u8[:], c: Claims&) -> i64 {
         var bad = false;
         match am.val {
             Str s => {
-                if s.s.len + 1 > 1024 { return jwx::ERR_MALFORMED; }
+                if s.s.len + 2 > 1024 { return jwx::ERR_MALFORMED; }
                 add_audience(c, s.s);
             },
             Arr => {
                 json::each(am) { a =>
                     let s, ok = json::as_string(a);
-                    if !ok || c.aud.len + s.len + 1 > 1024 { bad = true; } else { add_audience(c, s); }
+                    if !ok || c.aud.len + s.len + 2 > 1024 { bad = true; } else { add_audience(c, s); }
                 };
                 c.has = c.has | CLAIM_AUD;
             },

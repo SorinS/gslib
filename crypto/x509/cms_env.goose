@@ -10,11 +10,17 @@
 //   - an RSA certificate: KeyTransRecipientInfo, RSAES-OAEP with SHA-256
 //     and MGF1-SHA-256 (RFC 8017, RFC 4055), or RSAES-PKCS1-v1_5 when
 //     asked (what openssl sends by default);
-//   - an EC certificate (P-256, P-384, P-521): KeyAgreeRecipientInfo,
-//     ephemeral-static ECDH (RFC 5753), the X9.63 KDF over SHA-256, -384
-//     or -512 as the curve (dhSinglePass-stdDH-sha256kdf-scheme and so
-//     on; openssl's default is the SHA-1 one, which is read too), the key
-//     wrapped by AES key wrap (RFC 3394) of the content key's size;
+//   - an EC certificate (P-256, P-384, P-521, brainpoolP256r1, P384r1,
+//     P512r1): KeyAgreeRecipientInfo, ephemeral-static ECDH (RFC 5753),
+//     the X9.63 KDF over SHA-256, -384 or -512 as the curve
+//     (dhSinglePass-stdDH-sha256kdf-scheme and so on; openssl's default
+//     is the SHA-1 one, which is read too), the key wrapped by AES key
+//     wrap (RFC 3394) of the content key's size;
+//   - an X448 certificate: KeyAgreeRecipientInfo by RFC 8418, the
+//     originator's ephemeral key under id-X448, the X9.63 KDF over
+//     SHA-512 (dhSinglePass-stdDH-sha512kdf-scheme), or HKDF-SHA512
+//     (dhSinglePass-stdDH-hkdf-sha512-scheme) when asked, then AES key
+//     wrap as for EC;
 //   - an ML-KEM certificate (ML-KEM-512, -768, -1024; RFC 9935):
 //     KEMRecipientInfo (RFC 9629) in an OtherRecipientInfo (id-ori-kem),
 //     ML-KEM by RFC 9936: the shared secret through HKDF-SHA256 with
@@ -32,7 +38,9 @@
 // PKCS #1 v1.5, which is decrypted as Go's DecryptPKCS1v15SessionKey does
 // (a malformed block gives a random key of the right length, not an
 // error, so no padding oracle: the content then fails to decrypt); key
-// agreement by ECDH with any of the KDFs above, with or without a ukm;
+// agreement by ECDH or X448 with any of the X9.63 KDFs above or RFC
+// 8418's HKDF ones (SHA-256, -384, -512: the ukm the salt), with or
+// without a ukm;
 // KEMRecipientInfo by ML-KEM with HKDF-SHA256, -384 or -512, with or
 // without a ukm (other OtherRecipientInfo types are skipped).
 // The content: AES-128, -192 or -256 in CBC (PKCS #7 padding, checked in
@@ -51,6 +59,7 @@ import encoding.asn1;
 import crypto.bignum;
 import crypto.bignum.rsa;
 import crypto.bignum.ec;
+import crypto.bignum.x448;
 import crypto.bignum.mlkem;
 import crypto.bignum.aes;
 import crypto.bignum.modes;
@@ -73,6 +82,10 @@ let OID_ORI_KEM:                 const u8[:] = "1.2.840.113549.1.9.16.13.3";   /
 let OID_HKDF_SHA256:             const u8[:] = "1.2.840.113549.1.9.16.3.28";   // id-alg-hkdf-with-sha256 (RFC 8619)
 let OID_HKDF_SHA384:             const u8[:] = "1.2.840.113549.1.9.16.3.29";
 let OID_HKDF_SHA512:             const u8[:] = "1.2.840.113549.1.9.16.3.30";
+let OID_X448:                    const u8[:] = "1.3.101.111";
+let OID_ECDH_HKDF_SHA256:        const u8[:] = "1.2.840.113549.1.9.16.3.19";   // dhSinglePass-stdDH-hkdf-sha256-scheme (RFC 8418)
+let OID_ECDH_HKDF_SHA384:        const u8[:] = "1.2.840.113549.1.9.16.3.20";
+let OID_ECDH_HKDF_SHA512:        const u8[:] = "1.2.840.113549.1.9.16.3.21";
 
 // Content-encryption algorithms.
 let CMS_AES128_CBC: i64 = 1;
@@ -93,6 +106,7 @@ struct CmsEncryptOptions {
     rsa_pkcs1: bool     = false,          // RSAES-PKCS1-v1_5 for RSA recipients in place of OAEP
     by_key_id: bool     = false,          // recipients named by subject key identifier, when they have one
     kem_ukm:   u8[..64] = [],             // user keying material for ML-KEM recipients (RFC 9629's ukm); none if empty
+    x448_hkdf: bool     = false,          // HKDF-SHA512 for X448 recipients in place of the X9.63 KDF (RFC 8418)
 }
 
 fn cms_cipher_oid(c: i64) -> const u8[:] {
@@ -137,13 +151,24 @@ fn cms_wrap_len_of(d: const u8[:], t: asn1::Tlv) -> i64 {
     return 0;
 }
 
-// The hash of an ECDH key agreement scheme OID (RFC 5753 §7.1.4), or 0.
-fn cms_kdf_hash_of(d: const u8[:], t: asn1::Tlv) -> i64 {
-    if asn1::oid_is(d, t, OID_ECDH_SHA1KDF) { return 160; }
-    if asn1::oid_is(d, t, OID_ECDH_SHA256KDF) { return 256; }
-    if asn1::oid_is(d, t, OID_ECDH_SHA384KDF) { return 384; }
-    if asn1::oid_is(d, t, OID_ECDH_SHA512KDF) { return 512; }
-    return 0;
+// The hash of an ECDH key agreement scheme OID (RFC 5753 §7.1.4), or 0,
+// and whether the KDF is HKDF (RFC 8418 §2.2) rather than ANSI X9.63's.
+fn cms_kdf_hash_of(d: const u8[:], t: asn1::Tlv) -> i64, bool {
+    if asn1::oid_is(d, t, OID_ECDH_SHA1KDF) { return 160, false; }
+    if asn1::oid_is(d, t, OID_ECDH_SHA256KDF) { return 256, false; }
+    if asn1::oid_is(d, t, OID_ECDH_SHA384KDF) { return 384, false; }
+    if asn1::oid_is(d, t, OID_ECDH_SHA512KDF) { return 512, false; }
+    if asn1::oid_is(d, t, OID_ECDH_HKDF_SHA256) { return 256, true; }
+    if asn1::oid_is(d, t, OID_ECDH_HKDF_SHA384) { return 384, true; }
+    if asn1::oid_is(d, t, OID_ECDH_HKDF_SHA512) { return 512, true; }
+    return 0, false;
+}
+
+// The key-encryption key of key agreement: X9.63's KDF over z and the
+// shared info, or HKDF with the ukm as its salt (none without one).
+fn cms_kari_kek(h: i64, hkdf: bool, z: const u8[:], ukm: const u8[:], info: const u8[:], n: i64) -> u8[>..] {
+    if hkdf { return bignum::hkdf(h, ukm, z, info, n); }
+    return cms_x963_kdf(h, z, info, n);
 }
 
 // The ANSI X9.63 KDF (SEC 1 §3.6.1): n bytes of
@@ -354,34 +379,51 @@ fn cms_recipient_info(out: u8[>..]&, rc: const Cert&, cek: const u8[:], o: const
         asn1::put(out, asn1::SEQUENCE, ri);
         return if v2 { 2 } else { 0 }, OK;
     }
-    if rc.key_type == KEY_EC_P256 || rc.key_type == KEY_EC_P384 || rc.key_type == KEY_EC_P521 {
+    let x448 = rc.key_type == KEY_X448;
+    if (is_ec(rc.key_type) && rc.key_type != KEY_EC_P224) || x448 {
         if rc.has_key_usage && rc.key_usage & KU_KEY_AGREEMENT == 0 { return 0, ERR_KEY_USAGE; }
-        let curve = curve_of_key(rc.key_type);
-        let h = if rc.key_type == KEY_EC_P384 { 384 } else if rc.key_type == KEY_EC_P521 { 512 } else { 256 };
-        let esk, epk = bignum::ec_keypair(curve);
-        let z, okz = bignum::ecdh_shared(curve, esk, kb);
-        if !okz { return 0, ERR_MALFORMED; }
+        let h = if x448 { 512 } else { ec_hash_of_key(rc.key_type) };
+        let hkdf = x448 && o.x448_hkdf;
+        var epk: u8[>..] = [];
+        var z:   u8[>..] = [];
+        if x448 {
+            if kb.len != 56 { return 0, ERR_MALFORMED; }
+            let esk, xpk = bignum::x448_keypair();
+            let zx, okz = bignum::x448_shared(esk, kb);
+            if !okz { return 0, ERR_MALFORMED; }
+            epk.append(xpk);
+            z.append(zx);
+        } else {
+            let curve = curve_of_key(rc.key_type);
+            let esk, ecpk = bignum::ec_keypair(curve);
+            let ze, okz = bignum::ecdh_shared(curve, esk, kb);
+            if !okz { return 0, ERR_MALFORMED; }
+            epk.append(ecpk);
+            z.append(ze);
+        }
         var wrap: u8[>..] = [];
         var wb:   u8[>..] = [];
         asn1::put_oid(wb, cms_wrap_oid(cek.len));
         asn1::put(wrap, asn1::SEQUENCE, wb);
-        let kek = cms_x963_kdf(h, z, cms_shared_info(wrap, "", false, cek.len), cek.len);
+        let kek = cms_kari_kek(h, hkdf, z, "", cms_shared_info(wrap, "", false, cek.len), cek.len);
         let ek, okw = bignum::aes_key_wrap(kek, cek);
         assert(okw);
         var kari: u8[>..] = [];
         asn1::put_i64(kari, 3);
         // originator [0]: originatorKey [1], id-ecPublicKey without the
-        // curve (as openssl writes it; the recipient knows it) and the point.
+        // curve (as openssl writes it; the recipient knows it) and the
+        // point, or id-X448 (parameters absent) and its 56 bytes.
         var opk:  u8[>..] = [];
         var ealg: u8[>..] = [];
-        asn1::put_oid(ealg, OID_EC_PUBLIC_KEY);
+        asn1::put_oid(ealg, if x448 { OID_X448 } else { OID_EC_PUBLIC_KEY });
         asn1::put(opk, asn1::SEQUENCE, ealg);
         asn1::put_bits(opk, epk);
         var orig: u8[>..] = [];
         asn1::put(orig, asn1::ctx(1, true), opk);
         asn1::put(kari, asn1::ctx(0, true), orig);
         var kea: u8[>..] = [];
-        asn1::put_oid(kea, if h == 384 { OID_ECDH_SHA384KDF } else if h == 512 { OID_ECDH_SHA512KDF } else { OID_ECDH_SHA256KDF });
+        asn1::put_oid(kea, if hkdf { OID_ECDH_HKDF_SHA512 } else if h == 384 { OID_ECDH_SHA384KDF }
+                           else if h == 512 { OID_ECDH_SHA512KDF } else { OID_ECDH_SHA256KDF });
         kea.append(wrap);
         asn1::put(kari, asn1::SEQUENCE, kea);
         var rek: u8[>..] = [];
@@ -571,17 +613,22 @@ fn cms_recover_cek(d: const u8[:], ris: asn1::Tlv, key: const PrivateKey&, cert:
             if !found && cms_kari_rid_matches(d, q[0], cert) { found = true; ek = q[1]; }
         }
         if !found { continue; }
-        if key.kind != KEY_EC_P256 && key.kind != KEY_EC_P384 && key.kind != KEY_EC_P521 { return none, ERR_CMS_DECRYPT; }
-        let curve = curve_of_key(key.kind);
+        let x448 = key.kind == KEY_X448;
+        if (!is_ec(key.kind) || key.kind == KEY_EC_P224) && !x448 { return none, ERR_CMS_DECRYPT; }
         // The originator's ephemeral key: originatorKey [1] only.
         let orig, oko = asn1::explicit(d, p[1]);
         if !oko || orig.tag != asn1::ctx(1, true) { return none, ERR_UNSUPPORTED_ALGORITHM; }
         let ok2, oko2 = asn1::children(d, orig);
         if !oko2 || ok2.len != 2 { return none, ERR_MALFORMED; }
         let oa, okoa = asn1::children_of(d, ok2[0], asn1::SEQUENCE);
-        if !okoa || oa.len < 1 || oa.len > 2 || !asn1::oid_is(d, oa[0], OID_EC_PUBLIC_KEY) { return none, ERR_UNSUPPORTED_ALGORITHM; }
-        if oa.len == 2 && !asn1::read_null(d, oa[1]) && !asn1::oid_is(d, oa[1], curve_oid(key.kind)) {
-            return none, ERR_CMS_DECRYPT;
+        if !okoa || oa.len < 1 || oa.len > 2 { return none, ERR_UNSUPPORTED_ALGORITHM; }
+        if x448 {
+            if oa.len != 1 || !asn1::oid_is(d, oa[0], OID_X448) { return none, ERR_CMS_DECRYPT; }
+        } else {
+            if !asn1::oid_is(d, oa[0], OID_EC_PUBLIC_KEY) { return none, ERR_UNSUPPORTED_ALGORITHM; }
+            if oa.len == 2 && !asn1::read_null(d, oa[1]) && !asn1::oid_is(d, oa[1], curve_oid(key.kind)) {
+                return none, ERR_CMS_DECRYPT;
+            }
         }
         let epk, oke = key_bytes(d, ok2[1]);
         if !oke { return none, ERR_MALFORMED; }
@@ -593,13 +640,23 @@ fn cms_recover_cek(d: const u8[:], ris: asn1::Tlv, key: const PrivateKey&, cert:
         }
         let kea, okk = asn1::children_of(d, p[p.len - 2], asn1::SEQUENCE);
         if !okk || kea.len != 2 { return none, ERR_MALFORMED; }
-        let h = cms_kdf_hash_of(d, kea[0]);
+        let h, hkdf = cms_kdf_hash_of(d, kea[0]);
         let kek_len = cms_wrap_len_of(d, kea[1]);
         if h == 0 || kek_len == 0 { return none, ERR_UNSUPPORTED_ALGORITHM; }
-        let z, okz = bignum::ecdh_shared(curve, key.ec_sk, epk);
-        if !okz { return none, ERR_CMS_DECRYPT; }
+        var z: u8[>..] = [];
+        if x448 {
+            if epk.len != 56 { return none, ERR_CMS_DECRYPT; }
+            let zx, okz = bignum::x448_shared(key.key448, epk);
+            if !okz { return none, ERR_CMS_DECRYPT; }
+            z.append(zx);
+        } else {
+            let curve = curve_of_key(key.kind);
+            let ze, okz = bignum::ecdh_shared(curve, key.ec_sk, epk);
+            if !okz { return none, ERR_CMS_DECRYPT; }
+            z.append(ze);
+        }
         let info = cms_shared_info(d[kea[1].start..kea[1].end], ukm, has_ukm, kek_len);
-        let kek = cms_x963_kdf(h, z, info, kek_len);
+        let kek = cms_kari_kek(h, hkdf, z, ukm, info, kek_len);
         let cek, okw = bignum::aes_key_unwrap(kek, d[ek.off..ek.end]);
         if !okw || cek.len != kl { return none, ERR_CMS_DECRYPT; }
         return cek, OK;

@@ -23,6 +23,8 @@ import gslib.crypto.bignum.hmac;
 import gslib.crypto.bignum.ec;
 import gslib.crypto.bignum.ed25519;
 import gslib.crypto.bignum.x25519;
+import gslib.crypto.bignum.ed448;
+import gslib.crypto.bignum.x448;
 import gslib.crypto.bignum.rsa;
 import gslib.crypto.bignum.dsa;
 import gslib.crypto.bignum.mlkem;
@@ -59,7 +61,11 @@ fn num(s: const u8[:]) -> i64 {
     return v;
 }
 
+// A curve by its id: its size in bits, 2000 more for Brainpool's.
 fn curve(bits: i64) -> bignum::Curve {
+    if bits == 2256 { return bignum::bp256(); }
+    if bits == 2384 { return bignum::bp384(); }
+    if bits == 2512 { return bignum::bp512(); }
     if bits == 224 { return bignum::p224(); }
     if bits == 384 { return bignum::p384(); }
     if bits == 521 { return bignum::p521(); }
@@ -189,6 +195,18 @@ fn run(w: const u8[:][:]) -> bool {
         let shared, ok = bignum::ecdh_shared(c, unhex(w[5]), unhex(w[4]));
         return ok && shared == unhex(w[6]);
     }
+    if k == "ecdh_asn" {
+        // The point from a SubjectPublicKeyInfo, compressed at times.
+        let c = curve(num(w[3]));
+        var peer = unhex(w[4]);
+        if peer.len == 1 + c.len && (peer[0] == 2 || peer[0] == 3) {
+            let p, okp = bignum::ec_decode_compressed(c, peer);
+            if !okp { return false; }
+            peer = bignum::ec_encode(c, p);
+        }
+        let shared, ok = bignum::ecdh_shared(c, unhex(w[5]), peer);
+        return ok && shared == unhex(w[6]);
+    }
     if k == "ecdsa" {
         let c = curve(num(w[3]));
         let digest = bignum::hash_bits(num(w[4]), unhex(w[6]));
@@ -207,6 +225,17 @@ fn run(w: const u8[:][:]) -> bool {
     }
     if k == "x25519" {
         let shared, ok = bignum::x25519_shared(unhex(w[4]), unhex(w[3]));
+        return ok && shared[..] == unhex(w[5])[..];
+    }
+    if k == "ed448" {
+        return bignum::ed448_verify(unhex(w[3]), unhex(w[4]), unhex(w[5]));
+    }
+    if k == "x448" {
+        // x448 asserts 56-byte inputs: other lengths are refused before the call.
+        let pub = unhex(w[3]);
+        let priv = unhex(w[4]);
+        if pub.len != 56 || priv.len != 56 { return false; }
+        let shared, ok = bignum::x448_shared(priv, pub);
         return ok && shared[..] == unhex(w[5])[..];
     }
     if k == "rsa_pkcs1_verify" || k == "rsa_pss_verify" {

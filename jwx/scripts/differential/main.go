@@ -1,5 +1,8 @@
 // differential: gslib's jwx against Go's lestrrat-go/jwx (v4, whose ML-DSA
-// needs Go 1.27's crypto/mldsa), both ways.
+// needs Go 1.27's crypto/mldsa), both ways. Ed448 ("Ed448", RFC 9864) and
+// X448 come from jwx's extension modules github.com/jwx-go/ed448 and
+// github.com/jwx-go/x448 (cloudflare/circl underneath); v4 signs Ed448 only
+// under "Ed448", not "EdDSA".
 //
 //	go run . gen [-n N] > ../../test/vectors/go_jwx.txt
 //	    tokens made by Go's jwx, for test/go_jwx.goose to verify and decrypt
@@ -26,6 +29,10 @@ import (
 	"os"
 	"strings"
 
+	"github.com/cloudflare/circl/dh/x448"
+	"github.com/cloudflare/circl/sign/ed448"
+	_ "github.com/jwx-go/ed448/v4"
+	x448ext "github.com/jwx-go/x448/v4"
 	"github.com/lestrrat-go/jwx/v4/jwa"
 	"github.com/lestrrat-go/jwx/v4/jwe"
 	"github.com/lestrrat-go/jwx/v4/jwk"
@@ -33,7 +40,7 @@ import (
 )
 
 var sigAlgs = []string{"HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "PS256", "PS384", "PS512",
-	"ES256", "ES384", "ES512", "EdDSA", "ML-DSA-44", "ML-DSA-65", "ML-DSA-87"}
+	"ES256", "ES384", "ES512", "EdDSA", "Ed448", "ML-DSA-44", "ML-DSA-65", "ML-DSA-87"}
 
 var keyAlgs = []string{"RSA1_5", "RSA-OAEP", "RSA-OAEP-256", "RSA-OAEP-384", "RSA-OAEP-512",
 	"A128KW", "A192KW", "A256KW", "dir", "ECDH-ES", "ECDH-ES+A128KW", "ECDH-ES+A192KW", "ECDH-ES+A256KW",
@@ -78,6 +85,9 @@ func sigKey(alg string) any {
 		return must(mldsa.GenerateKey(mldsa.MLDSA65()))
 	case alg == "ML-DSA-87":
 		return must(mldsa.GenerateKey(mldsa.MLDSA87()))
+	case alg == "Ed448":
+		_, k := must2(ed448.GenerateKey(rand.Reader))
+		return k
 	default:
 		_, k := must2(ed25519.GenerateKey(rand.Reader))
 		return k
@@ -99,15 +109,19 @@ func encKey(alg, enc string, i int) any {
 	case alg == "dir":
 		return random(cekLen[enc])
 	case strings.HasPrefix(alg, "ECDH-ES"):
-		switch i % 4 {
+		switch i % 5 {
 		case 0:
 			return must(ecdsa.GenerateKey(elliptic.P256(), rand.Reader))
 		case 1:
 			return must(ecdsa.GenerateKey(elliptic.P384(), rand.Reader))
 		case 2:
 			return must(ecdsa.GenerateKey(elliptic.P521(), rand.Reader))
-		default:
+		case 3:
 			return must(ecdh.X25519().GenerateKey(rand.Reader))
+		default:
+			var seed x448.Key
+			must(rand.Read(seed[:]))
+			return x448ext.NewPrivateKey(seed)
 		}
 	case strings.HasPrefix(alg, "PBES2"):
 		return []byte(fmt.Sprintf("password %d", i))

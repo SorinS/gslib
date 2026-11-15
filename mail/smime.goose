@@ -27,14 +27,16 @@
 // names the digest; the signature, a detached SignedData over id-data
 // with signingTime and smimeCapabilities, is application/pkcs7-signature
 // (smime.p7s) in base64. RSA signs with PKCS #1 v1.5 (or PSS when asked),
-// EC keys with ECDSA, Ed25519 keys with Ed25519 (RFC 8419, micalg
-// sha-512), ML-DSA keys with pure ML-DSA (RFC 9882, micalg sha-512; the
-// digest is SHA-512 whatever Options.hash says). sign_opaque makes application/pkcs7-mime; smime-type=
+// EC keys (the NIST curves and brainpool) with ECDSA, Ed25519 keys with
+// Ed25519 (RFC 8419, micalg sha-512), ML-DSA keys with pure ML-DSA (RFC
+// 9882, micalg sha-512; the digest is SHA-512 whatever Options.hash
+// says). Ed448 keys do not sign here (ERR_KEY): RFC 8419 gives them
+// SHAKE256, which has no micalg; their signatures are read. sign_opaque makes application/pkcs7-mime; smime-type=
 // signed-data instead, the entity inside the SignedData. encrypt makes
 // application/pkcs7-mime; smime-type=enveloped-data (AES-CBC), or
 // authEnveloped-data for AES-GCM (RFC 8551 §3.3, §3.4), to the
-// recipients' certificates: RSA, EC or ML-KEM (RFC 9936, through x509's
-// cms_env); the sender reads it later only if their own
+// recipients' certificates: RSA, EC (NIST and brainpool), X448 (RFC
+// 8418) or ML-KEM (RFC 9936, through x509's cms_env); the sender reads it later only if their own
 // certificate is among them. sign_encrypt signs, then encrypts that.
 //
 // Reading, open goes through the layers as it finds them, decrypting
@@ -259,7 +261,8 @@ fn from_address(msg: const u8[:]) -> u8[>..] {
 fn sig_alg(key: const x509::PrivateKey&, o: const Options&) -> i64, i64, i64 {
     if o.hash != 256 && o.hash != 384 && o.hash != 512 { return 0, 0, mail::ERR_ARG; }
     if key.kind == x509::KEY_RSA { return if o.pss { x509::SIG_RSA_PSS } else { x509::SIG_RSA_PKCS1 }, o.hash, mail::OK; }
-    if key.kind == x509::KEY_EC_P256 || key.kind == x509::KEY_EC_P384 || key.kind == x509::KEY_EC_P521 {
+    if key.kind == x509::KEY_EC_P256 || key.kind == x509::KEY_EC_P384 || key.kind == x509::KEY_EC_P521 ||
+       x509::is_brainpool(key.kind) {
         return x509::SIG_ECDSA, o.hash, mail::OK;
     }
     if key.kind == x509::KEY_ED25519 { return x509::SIG_ED25519, 512, mail::OK; }

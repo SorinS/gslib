@@ -73,6 +73,9 @@ static int wait_readable(sock_t s, int timeout_ms) {
     return WSAPoll(&p, 1, timeout_ms);
 }
 static void sock_close(sock_t s) { closesocket(s); }
+static void set_nonblocking(sock_t s) { u_long v = 1; ioctlsocket(s, FIONBIO, &v); }
+static int would_block(void) { return WSAGetLastError() == WSAEWOULDBLOCK; }
+static int64_t now_ms(void) { return (int64_t)GetTickCount64(); }
 #else
 static void start(void) {}
 static int wait_readable(sock_t s, int timeout_ms) {
@@ -82,12 +85,21 @@ static int wait_readable(sock_t s, int timeout_ms) {
     return r;
 }
 static void sock_close(sock_t s) { close(s); }
+static void set_nonblocking(sock_t s) { fcntl(s, F_SETFL, fcntl(s, F_GETFL, 0) | O_NONBLOCK); }
+static int would_block(void) { return errno == EAGAIN || errno == EWOULDBLOCK; }
+static int64_t now_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
 #endif
 
 /* Sends req to host:port over UDP and waits up to timeout_ms for one
    datagram back: its length (the bytes in out), or an error. Each of the
    host's addresses is tried in turn. The socket is connected, so only
-   the KDC's own replies are taken. */
+   the KDC's own replies are taken. The receive is non-blocking: a
+   datagram poll saw may be dropped before recv (a bad checksum), and a
+   blocking recv would then wait past the timeout, for ever. */
 int64_t krb5sys_udp_exchange(krb5sys_slice host, int32_t port, krb5sys_slice req, krb5sys_buf out, int32_t timeout_ms) {
     char h[256], p[16];
     if (!cstr(h, sizeof h, host) || port <= 0 || port > 65535 || req.len <= 0 || out.len <= 0) return KRB5SYS_EARG;
@@ -110,19 +122,31 @@ int64_t krb5sys_udp_exchange(krb5sys_slice host, int32_t port, krb5sys_slice req
         do { sent = send(s, req.data, (size_t)req.len, 0); } while (sent < 0 && errno == EINTR);
 #endif
         if (sent != req.len) { sock_close(s); result = KRB5SYS_EIO; continue; }
-        int r = wait_readable(s, timeout_ms > 0 ? timeout_ms : -1);
-        if (r == 0) { sock_close(s); result = KRB5SYS_ETIMEOUT; continue; }
-        if (r < 0) { sock_close(s); result = KRB5SYS_EIO; continue; }
+        set_nonblocking(s);
+        int64_t deadline = timeout_ms > 0 ? now_ms() + timeout_ms : 0;
+        int64_t n = -1;
+        int r;
+        for (;;) {
+            int ms = -1;
+            if (deadline) {
+                int64_t l = deadline - now_ms();
+                ms = l < 0 ? 0 : l > 0x7fffffff ? 0x7fffffff : (int)l;
+            }
+            r = wait_readable(s, ms);
+            if (r <= 0) break;
 #if defined(_WIN32)
-        int n = recv(s, (char *)out.data, (int)out.len, 0);
+            n = recv(s, (char *)out.data, (int)out.len, 0);
 #else
-        ssize_t n;
-        do { n = recv(s, out.data, (size_t)out.len, 0); } while (n < 0 && errno == EINTR);
+            do { n = recv(s, out.data, (size_t)out.len, 0); } while (n < 0 && errno == EINTR);
 #endif
+            if (n >= 0 || !would_block()) break;
+        }
         sock_close(s);
+        if (r == 0) { result = KRB5SYS_ETIMEOUT; continue; }
+        if (r < 0) { result = KRB5SYS_EIO; continue; }
         /* An ICMP port unreachable shows as a refused receive. */
         if (n < 0) { result = KRB5SYS_ECONNECT; continue; }
-        result = (int64_t)n;
+        result = n;
         break;
     }
     freeaddrinfo(res);

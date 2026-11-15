@@ -2,8 +2,9 @@
 """src/net.c without Goose: test/native/net_drive.c compiled with
 it and run against two servers on 127.0.0.1 (an HTTP one, and one that
 accepts and never answers): connecting by address and by name, writing,
-reading to the end, a read timing out, refused, unresolvable and empty
-hosts, and whether a connection the server closed reads as such.
+reading to the end, a read timing out, a write to a peer that never
+reads timing out, refused, unresolvable and empty hosts, and whether a
+connection the server closed reads as such.
 
     python3 scripts/net_check.py [--cc CC]       # POSIX: cc, -Wall -Wextra
     python3 scripts/net_check.py --msvc          # Windows: cl /W4, from a vcvars64 shell
@@ -62,12 +63,20 @@ def main():
                 pass
         threading.Thread(target=accept, daemon=True).start()
         threading.Thread(target=h.serve_forever, daemon=True).start()
-        p = subprocess.run([exe, str(h.server_address[1]), str(s.getsockname()[1])], capture_output=True, text=True,
-                           timeout=120)
-        print(p.stdout, end="")
+        # The watchdog: a call that blocks past its timeout fails the run
+        # instead of hanging it.
+        try:
+            p = subprocess.run([exe, str(h.server_address[1]), str(s.getsockname()[1])], capture_output=True,
+                               text=True, timeout=30)
+            out, rc = p.stdout, p.returncode
+        except subprocess.TimeoutExpired as e:
+            out = (e.stdout.decode() if isinstance(e.stdout, bytes) else e.stdout or "")
+            out += "FAIL the driver was still running after 30 s, and was killed\n"
+            rc = 1
+        print(out, end="")
         h.shutdown()
         s.close()
-        sys.exit(p.returncode)
+        sys.exit(rc)
 
 
 if __name__ == "__main__":

@@ -12,10 +12,10 @@ namespace `openpgp`.
 | `openpgp.packet` | `Packet`, `next_packet`, `packet_body` (partial lengths joined), `put_packet`, `put_old_packet` |
 | `openpgp.ocb` | AES-OCB (RFC 7253), which bignum does not have |
 | `openpgp.key` | `Key`: one key packet (v4, LibrePGP's v5, v6), its fingerprint and key ID, `unlock_key`, signing and verifying a digest, wrapping and unwrapping session keys |
-| `openpgp.sig` | `Signature`: signature packets and subpackets, `verify_signature`, `make_signature` |
+| `openpgp.sig` | `Signature`: signature packets (v4, LibrePGP's v5 as gpg's Ed448 keys make them, v6) and subpackets, `verify_signature`, `make_signature` |
 | `openpgp.keyring` | `Keyring`: transferable keys with their user IDs and subkeys checked, `add_keys`, `find_key`, `unlock`, `signing_key`, `encryption_key`, `export_public`, `export_secret` |
 | `openpgp.message` | `sign`, `sign_detached`, `sign_cleartext`, `encrypt`; `read_message`, `decrypt`, `verify`, `verify_detached`, `verify_cleartext` |
-| `openpgp.keygen` | `generate_key` (Ed25519 + Curve25519), `generate_rsa_key`; post-quantum: `generate_pqc_key` (gpg 2.5's Kyber), `generate_rfc9980_key` |
+| `openpgp.keygen` | `generate_key` (Ed25519 + Curve25519), `generate_rsa_key`, `generate_brainpool_key`, `generate_ed448_key` (gpg's v5 Ed448 + cv448), `generate_ed448_v6_key` (RFC 9580's Ed448 + X448); post-quantum: `generate_pqc_bp_key` (gpg 2.5's default, brainpoolP384r1 + ky768_bp256), `generate_pqc_key` (Ed25519 + ky768_cv25519), `generate_rfc9980_key` |
 | `openpgp.pqc` | the composite KEMs of RFC 9980 and LibrePGP, gpg-agent's S-expressions and their OCB protection (gpg's "mode 1003" secret keys) |
 | `openpgp.dump` | `list_packets`, in the manner of `gpg --list-packets` |
 
@@ -57,26 +57,40 @@ gpg 2.5.22's defaults, with keys made by `gpg --quick-gen-key`:
 | encryption to its own keys | LibrePGP's OCB Encrypted Data packet (tag 20, AES-256, chunk byte 16), because its keys advertise AEAD (features 0x07) | read |
 | encryption to a passphrase, or to keys without the AEAD feature | SKESK v4 and SEIPD v1 (CFB with the MDC) | read and written |
 | compression | ZIP for signed messages, ZLIB to its keys (old-format packets of indeterminate length) | ZIP, ZLIB and BZip2 read and written |
-| post-quantum keys | `ed25519 cert` then `--quick-add-key FPR ky768_cv25519 encr`: a v5 Kyber subkey (algo 8, LibrePGP's ML-KEM-768+X25519), its secret exported in gpg-agent's format (mode 1003) | read and written (`generate_pqc_key`); encrypted to and decrypted both ways |
+| post-quantum keys | `pqc` (its default): a v4 brainpoolP384r1 ECDSA primary with a v5 Kyber subkey, ky768_bp256 (algo 8, LibrePGP's ML-KEM-768+brainpoolP256r1); `ed25519 cert` then `--quick-add-key FPR ky768_cv25519 encr`; also ky1024_bp384 and ky1024_cv448. The Kyber secret is exported in gpg-agent's format (mode 1003) | read and written (`generate_pqc_bp_key`, `generate_pqc_key`); encrypted to and decrypted both ways (ky1024 read, encrypted to and decrypted; not generated) |
+| Brainpool keys | `brainpoolP256r1` (P384r1, P512r1): v4 ECDSA, and ECDH with the KDF by size (SHA-256/AES-128, SHA-384/AES-256, SHA-512/AES-256); signatures with a hash as long as the curve | read and written (`generate_brainpool_key`) |
+| Ed448 keys | `ed448` and `cv448`: v5 keys only (EdDSALegacy under OID 1.3.101.113, ECDH under 1.3.101.111 with SHA-512/AES-256), the native octets as SOS (no 0x40 prefix, X448's secret little-endian); v5 signatures, SHA-512 | read and written (`generate_ed448_key`), v5 signatures too |
 
-Also read: RFC 9580's v6 keys (Ed25519, X25519), v6 signatures (salted),
-X25519 PKESK v3, PKESK v6, SEIPD v2 (OCB), Argon2 S2K, old-format headers and
-partial body lengths, the cleartext framework with or without a `Hash:`
-header. Written: v4 keys, PKESK v3, SKESK v4, SEIPD v1 with the MDC (which
-every implementation reads, gpg included whatever the key advertises),
-one-pass signed messages, v4 signatures (v6 for v6 keys).
+Also read: RFC 9580's v6 keys (Ed25519, X25519, Ed448, X448), v6
+signatures (salted), X25519 and X448 PKESK v3, PKESK v6, SEIPD v2 (OCB),
+Argon2 S2K, old-format headers and partial body lengths, the cleartext
+framework with or without a `Hash:` header. Written: v4 keys (v5 for gpg's
+Ed448 and Kyber kinds, v6 for RFC 9580's and RFC 9980's), PKESK v3, SKESK
+v4, SEIPD v1 with the MDC (which every implementation reads, gpg included
+whatever the key advertises), one-pass signed messages, v4 signatures (v5
+for v5 keys, v6 for v6 keys).
+
+A v5 signature (LibrePGP; what gpg's v5 keys make) is laid out as a v4 one,
+with the issuer's v5 fingerprint and no key ID, but hashes more: over a
+document (types 0x00 and 0x01) the literal packet's format, name length,
+name and date follow the hashed area, six zero octets for a detached
+signature and `'t'`, 0 and a zero date for a cleartext one (the literal
+packet gpg's armor fakes for it); then 05 FF and an 8-octet length. So an
+inline v5 signature also covers the literal packet's name and date.
 
 | Public-key algorithm | |
 |---|---|
 | RSA (1, 2, 3), 1024 to 8192 bits | sign, verify, encrypt, decrypt (PKCS #1 v1.5) |
-| EdDSALegacy (22) and Ed25519 (27) | sign, verify |
-| ECDSA (19) on P-256, P-384, P-521 | sign, verify |
-| ECDH (18) on Curve25519 and P-256, P-384, P-521 | encrypt, decrypt (RFC 6637 KDF, AES key wrap) |
+| EdDSALegacy (22): Ed25519, and Ed448 (gpg's, OID 1.3.101.113) | sign, verify |
+| Ed25519 (27), Ed448 (28; a hash of 512 bits at least) | sign, verify |
+| ECDSA (19) on P-256, P-384, P-521, brainpoolP256r1, P384r1, P512r1 | sign, verify |
+| ECDH (18) on Curve25519, X448 (gpg's cv448), P-256, P-384, P-521 and the three Brainpool curves | encrypt, decrypt (RFC 6637 KDF, AES key wrap) |
 | X25519 (25) | encrypt, decrypt (HKDF-SHA256, AES-128 key wrap) |
+| X448 (26) | encrypt, decrypt (HKDF-SHA512, AES-256 key wrap) |
 | ML-KEM-768+X25519 (35, RFC 9980), v4 and v6 keys | encrypt, decrypt; v3 and v6 PKESK read, v3 written |
 | ML-DSA-65+Ed25519 (30, RFC 9980), v6 keys | sign, verify |
-| Kyber (8, LibrePGP: gpg 2.5's ky768_cv25519), v5 subkeys | encrypt, decrypt (v3 PKESK) |
-| DSA, ElGamal, X448, Ed448, ML-KEM-1024+X448 (36), ML-DSA-87+Ed448 (31), SLH-DSA (32-34), gpg's Brainpool and X448 Kyber keys | listed, fingerprinted; `ERR_UNSUPPORTED` when used |
+| Kyber (8, LibrePGP), v5 subkeys: ML-KEM-768 or -1024 with X25519, X448 or a Weierstrass curve (gpg's ky768_cv25519, ky768_bp256, ky1024_bp384, ky1024_cv448) | encrypt, decrypt (v3 PKESK) |
+| DSA, ElGamal, ML-KEM-1024+X448 (36), ML-DSA-87+Ed448 (31), SLH-DSA (32-34) | listed, fingerprinted; `ERR_UNSUPPORTED` when used |
 
 Symmetric ciphers: AES-128/192/256, CAST5, Twofish, Camellia, Blowfish
 and triple DES read; AES, CAST5, Twofish and Camellia written. Hashes:
@@ -122,7 +136,10 @@ while still locked.
 `sign_detached` and `sign_cleartext` take the signer as a primary key
 (whose signing key signs) or a key. `WriteOptions` give the hash (SHA-256
 by default), the time, text mode (signature type 0x01 over CRLF line
-ends), armor, and the literal's name and date.
+ends, and a 'u' literal holding the text with CRLF line ends, as RFC 9580
+§5.9 asks and gpg writes), armor, and the literal's name and date. Reading
+gives a text literal's data as it is in the packet, CRLF and all;
+goose-pgp writes it out with LF line ends, as gpg does.
 
 Reading, `read_message` checks every signature it finds and puts the
 results in `m.sigs`; `signature_status(m)` is OK when one verifies.
@@ -179,9 +196,17 @@ oracle for those.
 | key | v5 subkey | v4 subkey or v6 |
 | public key | OID 1.3.101.110, `40` X25519 point (as an MPI), 4-octet length, ML-KEM key | X25519 key (32), ML-KEM key (1184) |
 | secret key | gpg-agent's S-expression (S2K mode 1003): `(composite-key (private-key (ecc ... (q ...)(d ...))) (private-key (kyber768 (p ...)(s ...)(seed ...))))` | X25519 secret (32), the seed d \|\| z (64) |
-| ECDH share | SHA3-256(X25519(eph, R) \|\| eph \|\| R) | X25519(eph, R) |
+| ECDH share | SHA3-256(X25519(eph, R) \|\| eph \|\| R); on brainpoolP256r1 the whole point eph·R (04 \|\| x \|\| y) in its place, with eph and R 65 octets; SHA3-512 past 256-bit curves (X448, bp384, bp512) | X25519(eph, R) |
 | KEK | KMAC256(key "OpenPGPCompositeKeyDerivationFunction", 00000001 \|\| eccSS \|\| eph \|\| mlkemSS \|\| mlkemCT \|\| cipher \|\| v5 fingerprint, 256, "KDF") | SHA3-256(mlkemSS \|\| ecdhSS \|\| eph \|\| R \|\| 35 \|\| "OpenPGPCompositeKDFv1" \|\| 21) |
 | PKESK fields (v3) | eph as an SOS, 4-octet length and ML-KEM ciphertext, cipher, length, AES-256 key wrap of the session key | eph, ML-KEM ciphertext, length, cipher, AES-256 key wrap |
+
+gpg's Kyber keys on other curves work the same way: the ECC half's OID
+(RFC 8410's X448, or a Brainpool or NIST curve), its point (X448's 56
+native octets, or 04 || x || y), ML-KEM-1024's 1568-octet key for ky1024;
+the agent's S-expression names the curve (`(curve brainpoolP256r1)`,
+`(curve X448)`) with no djb-tweak flag, the secret big-endian on a
+Weierstrass curve and native for X448, and `kyber1024` for ML-KEM-1024.
+gpg's default `pqc` key is brainpoolP384r1 with ky768_bp256.
 
 Both were checked against their oracles: gpg 2.5.22 decrypts what is
 written here to its keys and to keys made here, and the other way round
@@ -235,15 +260,13 @@ only). v6 PKESKs (with SEIPD v2) are read, not written.
 
 ## Not here
 
-- LibrePGP's v5 signatures (v5 keys are read and written as gpg uses
-  them, under v4 signatures); v6 SKESK, and v6 PKESK written, so nothing
-  is written in SEIPD v2;
-- gpg's default `pqc` key (Brainpool P-384 with ky768_bp256): crypto/bignum
-  has no Brainpool curves; X448 and Ed448, so neither RFC 9980's
-  ML-KEM-1024+X448 and ML-DSA-87+Ed448 nor gpg's ky1024_cv448; SLH-DSA
-  (32-34) in OpenPGP;
+- v6 SKESK, and v6 PKESK written, so nothing is written in SEIPD v2;
+  LibrePGP's v5 one-pass signatures and v5 PKESK (gpg writes v3 for both);
+- RFC 9980's ML-KEM-1024+X448 (36) and ML-DSA-87+Ed448 (31), and SLH-DSA
+  (32-34) in OpenPGP; generating gpg's ky1024 subkeys (they are read and
+  used);
 - EAX and GCM (read or written): gpg uses OCB;
-- DSA and ElGamal operations, X448 and Ed448;
+- DSA and ElGamal operations;
 - revoking keys, certifying other keys, adding user IDs or subkeys to a
   key; key expiry when generating;
 - the web of trust and trust signatures; keyserver and WKD lookups.
@@ -263,6 +286,14 @@ and with --debug:
   both kinds made, exported, read back and used;
 - `framing`: armor, CRC24, packet headers of every kind, partial lengths,
   MPIs, the cleartext text rules;
+- `curves`: gpg's Brainpool, Ed448/cv448 (v5) and Kyber keys on
+  brainpoolP256r1, P384r1 and X448 (test/vectors, from
+  `scripts/gen_curve_vectors.py`): fingerprints and names as gpg lists
+  them, every kind of signature verified and refused over changed data,
+  messages decrypted (protected keys unlocked), public exports identical
+  to gpg's, secrets exported and read back; a v5 signature's trailer octet
+  by octet; keys of every new kind made here (RFC 9580's Ed448 and X448
+  among them: its Appendix A has no 448 samples), used both ways;
 - `gpg_vectors`: what gpg wrote (test/vectors, from
   `scripts/gen_vectors.py`: test keys only, their passphrase in
   passphrase.txt), and RFC 9580 Appendix A's v4 and v6 samples;
@@ -272,22 +303,33 @@ and with --debug:
   among them).
 
 The examples are in [examples/openpgp](../../examples/openpgp):
-`sign_verify` (Ed25519, gpg's test key) and `pqc` (a key of gpg 2.5's
-post-quantum kind exported armored, encrypted to and decrypted; an RFC
-9980 key signing and encrypting). Both run offline and check their
-results.
+`sign_verify` (Ed25519, gpg's test key), `pqc` (a key of gpg 2.5's
+ky768_cv25519 kind exported armored, encrypted to and decrypted; an RFC
+9980 key signing and encrypting) and `new_curves` (brainpoolP384r1, gpg's
+Ed448, RFC 9580's Ed448 and X448, and gpg's default post-quantum key:
+each made, signing and verifying, encrypting and decrypting through a
+protected export). All run offline and check their results.
 
 `python3 scripts/interop.py` runs goose-pgp against gpg both ways (it
 skips when gpg is missing): signatures of every kind, encryption to each
 kind of key, compression, armor, passphrases, and keys made by each side,
 gpg's post-quantum Kyber keys and goose-pgp's (its secret key imported
-into gpg, gpg's protected Kyber export read here).
+into gpg, gpg's protected Kyber export read here), and the newer curves:
+gpg's Brainpool keys, its Ed448 + cv448, its default `pqc` key and its
+ky1024_bp384 and ky1024_cv448 kinds, and goose-pgp's Brainpool, Ed448 and
+`pqc` keys (imported into gpg, secrets and all): signatures of every kind
+and encryption both ways, gpg's secret exports read here (protected ones
+for goose-pgp's keys).
 It uses its own GNUPGHOME in a temp directory and stops its agent with
 `gpgconf --kill gpg-agent` there.
 
 `tools/pgp.goose` is goose-pgp: `sign`, `verify`, `encrypt`, `decrypt`,
 `list-packets`, `list-keys`, `export`, `armor`, `dearmor` and `genkey`.
 Passphrases come from a file (`--pass-file`). `genkey --type` makes
-`ed25519` (the default), `rsa`, `pqc` (gpg 2.5's post-quantum kind, which
-gpg imports and encrypts to) or `rfc9980` (ML-DSA-65+Ed25519 with
-ML-KEM-768+X25519, v6).
+`ed25519` (the default), `rsa`, `brainpoolP256r1`, `brainpoolP384r1`,
+`brainpoolP512r1`, `ed448` (gpg's v5 Ed448 + cv448), `ed448-v6` (RFC
+9580's Ed448 + X448, which gpg does not read), `pqc` (gpg 2.5's default
+post-quantum key: brainpoolP384r1 with ky768_bp256), `ky768_cv25519`
+(Ed25519 with ky768_cv25519; what `pqc` made before gpg's default could be
+made here) or `rfc9980` (ML-DSA-65+Ed25519 with ML-KEM-768+X25519, v6).
+gpg imports all but `ed448-v6` and `rfc9980`, secrets and all.

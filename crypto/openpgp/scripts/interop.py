@@ -17,6 +17,12 @@ Then each side reads what the other writes:
                      and its protected secret key exports (a Kyber
                      subkey's in gpg's mode 1003, under its agent's OCB)
   post-quantum       both ways, to gpg's Kyber key and to goose-pgp's
+  new curves         Brainpool (ECDSA + ECDH on P256r1, P384r1, P512r1),
+                     Ed448 + cv448 (gpg's v5 keys and v5 signatures), gpg's
+                     default "pqc" key (brainpoolP384r1 + ky768_bp256) and
+                     its ky1024_bp384 and ky1024_cv448 subkeys: keys made
+                     by each side, signatures of every kind and encryption
+                     both ways, secret keys imported both ways
 
     python3 scripts/interop.py [--goose PATH] [--tool PATH] [-k NAME]
 
@@ -125,8 +131,9 @@ def setup(r):
     r.write("pqc.pub", g.gpg("--export", "pqc@example.com").stdout)
     r.write("pqc.sec", g.gpg("--pinentry-mode", "loopback", "--passphrase", "", "--export-secret-keys",
                              "pqc@example.com").stdout)
-    p = r.goose("genkey", "--type", "pqc", "--pass-file", r.pf, "Interop Goose PQC <gpq@example.com>", "gpq.sec", "gpq.pub")
-    r.case("genkey --type pqc", p.returncode == 0, p.stderr)
+    p = r.goose("genkey", "--type", "ky768_cv25519", "--pass-file", r.pf, "Interop Goose PQC <gpq@example.com>",
+                "gpq.sec", "gpq.pub")
+    r.case("genkey --type ky768_cv25519", p.returncode == 0, p.stderr)
     p = r.gpg("--import", r.path("gpq.sec"))
     r.case("gpg imports goose-pgp's PQC key", p.returncode == 0 and b"secret keys imported: 1" in p.stderr, p.stderr)
     p = r.gpg("--with-colons", "--list-keys", "gpq@example.com")
@@ -165,6 +172,12 @@ def ours_to_gpg(r):
             p = r.goose("sign", *keys, "-u", who, "--detach", "--text", "text.txt", "o.sig")
             q = r.gpg("--verify", r.path("o.sig"), r.path("text.txt"))
             r.case(name, p.returncode == 0 and q.returncode == 0 and b"Good signature" in q.stderr, p.stderr + q.stderr)
+        name = f"gpg reads our text-mode inline {signer}"
+        if r.want(name):
+            p = r.goose("sign", *keys, "-u", who, "--text", "text.txt", "o.asc")
+            q = r.gpg("-o", r.path("o.out"), "--decrypt", r.path("o.asc"))
+            ok = q.returncode == 0 and b"Good signature" in q.stderr and r.read("o.out") == TEXT
+            r.case(name, p.returncode == 0 and ok, p.stderr + q.stderr)
     for rcpt in ("ed", "rsa", "goose", "nist"):
         for z, armor in (("none", "armor"), ("zlib", "binary"), ("zip", "armor"), ("bzip2", "binary")):
             name = f"gpg decrypts ours to {rcpt} -z {z} {armor}"
@@ -244,6 +257,12 @@ def gpg_to_ours(r):
             q = r.gpg("-u", who, "--textmode", "-o", r.path("g.sig"), "-b", r.path("text.txt"))
             p = r.goose("verify", *pubs, "text.txt", "g.sig")
             r.case(name, q.returncode == 0 and p.returncode == 0 and b"good signature" in p.stdout, q.stderr + p.stdout + p.stderr)
+        name = f"we read gpg's text-mode inline {signer}"
+        if r.want(name):
+            q = r.gpg("-u", who, "--textmode", "-o", r.path("g.gpg"), "-s", r.path("text.txt"))
+            p = r.goose("decrypt", *keys, "g.gpg", "g.out")
+            ok = p.returncode == 0 and b"good signature" in p.stderr and r.read("g.out") == TEXT
+            r.case(name, q.returncode == 0 and ok, q.stderr + p.stdout + p.stderr)
     for rcpt in ("ed", "rsa", "goose", "nist"):
         for z, armor in (("0", True), ("1", False), ("2", True), ("3", False)):
             name = f"we decrypt gpg's to {rcpt} -z algo {z} {'armor' if armor else 'binary'}"
@@ -323,6 +342,114 @@ def gpg_to_ours(r):
         r.case(name, q.returncode == 0 and p.returncode != 0 and b"integrity" in p.stderr, q.stderr + p.stderr)
 
 
+# The new curves: gpg's keys (name: primary, its usage, then subkeys) and
+# goose-pgp's (name: genkey --type, and what gpg lists for its subkey).
+GPG_CURVE_KEYS = [
+    ("bp256", "brainpoolP256r1", "sign,cert", ["brainpoolP256r1"]),
+    ("bp384", "brainpoolP384r1", "sign,cert", ["brainpoolP384r1"]),
+    ("bp512", "brainpoolP512r1", "sign,cert", ["brainpoolP512r1"]),
+    ("ed448", "ed448", "sign,cert", ["cv448"]),
+    ("gpqc", "pqc", "default", []),                 # gpg's default: bp384 + ky768_bp256
+    ("ky1024bp", "brainpoolP384r1", "sign,cert", ["ky1024_bp384"]),
+    ("ky1024cv", "ed448", "sign,cert", ["ky1024_cv448"]),
+]
+GOOSE_CURVE_KEYS = [
+    ("gbp256", "brainpoolP256r1", "brainpoolP256r1"),
+    ("gbp384", "brainpoolP384r1", "brainpoolP384r1"),
+    ("gbp512", "brainpoolP512r1", "brainpoolP512r1"),
+    ("ged448", "ed448", "cv448"),
+    ("gbpq", "pqc", "ky768_bp256"),
+]
+
+
+def curves_setup(r):
+    g = r.g
+    if r.filt and "curves" not in r.filt:
+        return
+    none = ["--passphrase", "", "--pinentry-mode", "loopback"]
+    for name, algo, usage, subs in GPG_CURVE_KEYS:
+        who = name + "@example.com"
+        g.gpg(*none, "--quick-gen-key", f"Interop {name} <{who}>", algo, usage, "never")
+        fpr = [l.split(":")[9] for l in g.gpg("--with-colons", "--fingerprint", "--list-keys", who)
+               .stdout.decode().splitlines() if l.startswith("fpr:")][0]
+        for sub in subs:
+            g.gpg(*none, "--quick-add-key", fpr, sub, "encr", "never")
+        r.write(name + ".pub", g.gpg("--export", who).stdout)
+        r.write(name + ".sec", g.gpg(*none, "--export-secret-keys", who).stdout)
+    for name, typ, sub in GOOSE_CURVE_KEYS:
+        who = name + "@example.com"
+        p = r.goose("genkey", "--type", typ, "--pass-file", r.pf, f"Interop {name} <{who}>", name + ".sec", name + ".pub")
+        r.case(f"curves: genkey --type {typ}", p.returncode == 0, p.stderr)
+        p = r.gpg("--import", r.path(name + ".sec"))
+        r.case(f"curves: gpg imports goose-pgp's {typ} key, secret and all",
+               p.returncode == 0 and b"secret keys imported: 1" in p.stderr, p.stderr)
+        p = r.gpg("--with-colons", "-K", who)
+        ok = p.returncode == 0 and f":{sub}:".encode() in p.stdout and b"\nssb:" in p.stdout
+        r.case(f"curves: gpg lists goose-pgp's {typ} key with a {sub} subkey", ok, p.stdout + p.stderr)
+
+
+def curves_both_ways(r):
+    for name, *_ in GPG_CURVE_KEYS + GOOSE_CURVE_KEYS:
+        who = name + "@example.com"
+        sec = ["-k", name + ".sec", "--pass-file", r.pf]
+        pub = ["-k", name + ".pub"]
+        # goose-pgp signs with the key (gpg's export, or its own), gpg verifies.
+        for kind, args, verify in (
+                ("detached", ["--detach"], lambda: r.gpg("--verify", r.path("o.sig"), r.path("bin.dat"))),
+                ("inline", ["-z", "zip"], lambda: r.gpg("-o", r.path("o.out"), "--decrypt", r.path("o.sig"))),
+                ("cleartext", ["--clear"], lambda: r.gpg("--verify", r.path("o.sig"))),
+                ("text-mode detached", ["--detach", "--text"], lambda: r.gpg("--verify", r.path("o.sig"), r.path("text.txt")))):
+            case = f"curves: gpg verifies our {kind} {name}"
+            if r.want(case):
+                src = "bin.dat" if kind in ("detached", "inline") else "text.txt"
+                p = r.goose("sign", *sec, "-u", who, *args, src, "o.sig")
+                q = verify()
+                ok = p.returncode == 0 and q.returncode == 0 and b"Good signature" in q.stderr
+                if kind == "inline":
+                    ok = ok and r.read("o.out") == r.read("bin.dat")
+                r.case(case, ok, p.stderr + q.stderr)
+        # gpg signs, goose-pgp verifies.
+        for kind, args, files in (("detached", ["-b"], ["bin.dat", "g.sig"]), ("inline", ["-s"], ["g.sig"]),
+                                  ("inline text-mode", ["--textmode", "-s"], ["g.sig"]),
+                                  ("cleartext", ["--clearsign"], ["g.sig"]),
+                                  ("text-mode detached", ["--textmode", "-b"], ["text.txt", "g.sig"])):
+            case = f"curves: we verify gpg's {kind} {name}"
+            if r.want(case):
+                src = "bin.dat" if kind in ("detached", "inline") else "text.txt"
+                q = r.gpg("-u", who, "-o", r.path("g.sig"), *args, r.path(src))
+                p = r.goose("verify", *pub, *files)
+                ok = q.returncode == 0 and p.returncode == 0 and b"good signature" in p.stdout
+                r.case(case, ok, q.stderr + p.stdout + p.stderr)
+        # Encryption both ways: to the newest encryption subkey.
+        case = f"curves: gpg decrypts ours to {name}"
+        if r.want(case):
+            p = r.goose("encrypt", *pub, "-r", who, "bin.dat", "o.gpg")
+            q = r.gpg("-o", r.path("o.out"), "--decrypt", r.path("o.gpg"))
+            r.case(case, p.returncode == 0 and q.returncode == 0 and r.read("o.out") == r.read("bin.dat"), p.stderr + q.stderr)
+        case = f"curves: we decrypt gpg's to {name}"
+        if r.want(case):
+            q = r.gpg("-r", who, "-o", r.path("g.gpg"), "-e", r.path("bin.dat"))
+            p = r.goose("decrypt", *sec, "g.gpg", "g.out")
+            r.case(case, q.returncode == 0 and p.returncode == 0 and r.read("g.out") == r.read("bin.dat"), q.stderr + p.stderr)
+        case = f"curves: we decrypt gpg's to {name}, signed by it"
+        if r.want(case):
+            q = r.gpg("-r", who, "-u", who, "-o", r.path("g.gpg"), "-s", "-e", r.path("text.txt"))
+            p = r.goose("decrypt", *sec, "g.gpg", "g.out")
+            ok = p.returncode == 0 and r.read("g.out") == TEXT and b"good signature" in p.stderr
+            r.case(case, q.returncode == 0 and ok, q.stderr + p.stderr)
+        # gpg's secret export of the key (protected for goose-pgp's keys), read
+        # here: it decrypts and signs.
+        case = f"curves: we read gpg's secret export of {name}"
+        if r.want(case):
+            q = r.gpg("-o", r.path("g.sec"), "--export-secret-keys", who)
+            e = r.gpg("-r", who, "-o", r.path("g.gpg"), "-e", r.path("text.txt"))
+            p = r.goose("decrypt", "-k", "g.sec", "--pass-file", r.pf, "g.gpg", "g.out")
+            s = r.goose("sign", "-k", "g.sec", "--pass-file", r.pf, "--detach", "text.txt", "g2.sig")
+            v = r.gpg("--verify", r.path("g2.sig"), r.path("text.txt"))
+            ok = p.returncode == 0 and r.read("g.out") == TEXT and s.returncode == 0 and b"Good signature" in v.stderr
+            r.case(case, q.returncode == 0 and e.returncode == 0 and ok, q.stderr + e.stderr + p.stderr + s.stderr + v.stderr)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--goose")
@@ -347,6 +474,8 @@ def main():
         setup(r)
         ours_to_gpg(r)
         gpg_to_ours(r)
+        curves_setup(r)
+        curves_both_ways(r)
         print(f"\n{r.passed} passed, {len(r.failed)} failed")
         return 1 if r.failed else 0
 

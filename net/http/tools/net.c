@@ -110,15 +110,33 @@ int64_t net_read(int32_t fd, net_buf buf) {
     return n;
 }
 
-/* All of data, or -1. */
+/* How long net_write waits for a peer that takes nothing (ms): a client
+   that stops reading would otherwise hold its connection's thread for
+   ever. As long as tools/httpd.goose waits for a request (IDLE_MS). */
+#define WRITE_STALL_MS 30000
+
+/* All of data, or -1, also when the peer has taken nothing for
+   WRITE_STALL_MS. The socket is non-blocking while it writes: POLLOUT
+   means room for some of it, and a blocking write waits for room for
+   all. */
 int64_t net_write(int32_t fd, net_slice data) {
+    int fl = fcntl(fd, F_GETFL, 0);
+    if (fl < 0 || fcntl(fd, F_SETFL, fl | O_NONBLOCK) < 0) return -1;
     int64_t off = 0;
     while (off < data.len) {
         ssize_t n = write(fd, data.data + off, (size_t)(data.len - off));
+        if (n > 0) { off += n; continue; }
         if (n < 0 && errno == EINTR) continue;
-        if (n <= 0) return -1;
-        off += n;
+        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            struct pollfd p = { fd, POLLOUT, 0 };
+            int r;
+            do { r = poll(&p, 1, WRITE_STALL_MS); } while (r < 0 && errno == EINTR);
+            if (r > 0) continue;
+        }
+        off = -1;
+        break;
     }
+    fcntl(fd, F_SETFL, fl);
     return off;
 }
 

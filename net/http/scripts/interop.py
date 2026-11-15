@@ -271,6 +271,16 @@ def raw_cases(port):
     check("raw: a head past 64 KiB: 431", out.startswith(b"HTTP/1.1 431 "))
     out = exchange(b"GET / HTTP/1.0\r\n\r\n")
     check("raw: HTTP/1.0 gets Connection: close", out.startswith(b"HTTP/1.1 200 ") and b"Connection: close\r\n" in out)
+    # A directory without its "/": redirected, however long the path, and
+    # the Location escaped.
+    out = exchange(b"GET /sub HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n")
+    check("raw: a directory redirected", out.startswith(b"HTTP/1.1 301 ") and b"\r\nLocation: /sub/\r\n" in out, out[:200])
+    long_path = b"/" + b"./" * 130 + b"sub"
+    out = exchange(b"GET " + long_path + b" HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n")
+    check("raw: a 262-byte directory path redirected", out.startswith(b"HTTP/1.1 301 ")
+          and b"\r\nLocation: " + long_path + b"/\r\n" in out, out[:200])
+    out = exchange(b"GET /a%20b HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n")
+    check("raw: the Location escaped", out.startswith(b"HTTP/1.1 301 ") and b"\r\nLocation: /a%20b/\r\n" in out, out[:200])
 
 
 def concurrency_cases(httpd, www, cert, key, port_re, servers):
@@ -978,6 +988,7 @@ def main():
                        env=env, check=True)
         www = os.path.join(tmp, "root")
         os.makedirs(os.path.join(www, "sub"))
+        os.makedirs(os.path.join(www, "a b"))
         with open(os.path.join(www, "index.html"), "w") as f:
             f.write("hello from goose\n")
         with open(os.path.join(www, "sub", "a.txt"), "w") as f:

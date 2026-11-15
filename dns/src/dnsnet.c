@@ -26,11 +26,13 @@ typedef int socklen_type;
 #  define _DARWIN_C_SOURCE
 #  include <arpa/inet.h>
 #  include <errno.h>
+#  include <fcntl.h>
 #  include <netdb.h>
 #  include <netinet/in.h>
 #  include <poll.h>
 #  include <sys/socket.h>
 #  include <sys/types.h>
+#  include <time.h>
 #  include <unistd.h>
 typedef int sock_t;
 typedef socklen_t socklen_type;
@@ -61,6 +63,9 @@ static void start(void) {
 static int sock_poll(WSAPOLLFD *p, int n, int timeout_ms) { return WSAPoll(p, (ULONG)n, timeout_ms); }
 typedef WSAPOLLFD pollfd_t;
 static void sock_close(sock_t s) { closesocket(s); }
+static void set_nonblocking(sock_t s, int on) { u_long v = on ? 1 : 0; ioctlsocket(s, FIONBIO, &v); }
+static int would_block(void) { return WSAGetLastError() == WSAEWOULDBLOCK; }
+static int64_t now_ms(void) { return (int64_t)GetTickCount64(); }
 #else
 static void start(void) {}
 typedef struct pollfd pollfd_t;
@@ -70,7 +75,39 @@ static int sock_poll(struct pollfd *p, int n, int timeout_ms) {
     return r;
 }
 static void sock_close(sock_t s) { close(s); }
+static void set_nonblocking(sock_t s, int on) {
+    int fl = fcntl(s, F_GETFL, 0);
+    fcntl(s, F_SETFL, on ? (fl | O_NONBLOCK) : (fl & ~O_NONBLOCK));
+}
+static int would_block(void) { return errno == EAGAIN || errno == EWOULDBLOCK; }
+static int64_t now_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
 #endif
+
+/* The sockets made here (UDP ones, listening ones) are non-blocking: a
+   socket poll calls readable may have nothing by the time it is read (a
+   datagram dropped for its checksum, a connection reset before accept),
+   and a blocking recv or accept would then wait for ever, past any
+   timeout. On EWOULDBLOCK each waits again, until its deadline. */
+
+/* Waits for s to be readable until deadline (0: none): > 0 if it is,
+   DNSNET_ETIMEOUT, or DNSNET_EIO. */
+static int wait_readable(sock_t s, int64_t deadline) {
+    pollfd_t p;
+    p.fd = s;
+    p.events = POLLIN;
+    p.revents = 0;
+    int ms = -1;
+    if (deadline) {
+        int64_t l = deadline - now_ms();
+        ms = l < 0 ? 0 : (int)(l > 0x7fffffff ? 0x7fffffff : l);
+    }
+    int r = sock_poll(&p, 1, ms);
+    return r == 0 ? DNSNET_ETIMEOUT : r < 0 ? DNSNET_EIO : r;
+}
 
 static int cstr(char *out, size_t cap, dnsnet_slice s) {
     if (s.len < 0 || (size_t)s.len >= cap) return 0;
@@ -105,6 +142,7 @@ int64_t dnsnet_udp_open(dnsnet_slice host, int32_t port) {
         sock_t s = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
         if (s == BAD_SOCK) continue;
         if (connect(s, ai->ai_addr, (socklen_type)ai->ai_addrlen) != 0) { sock_close(s); continue; }
+        set_nonblocking(s, 1);
         result = (int64_t)s;
         break;
     }
@@ -123,16 +161,14 @@ int64_t dnsnet_send(int64_t fd, dnsnet_slice data) {
    none came within timeout_ms (0: wait for ever). On a connected socket,
    a refused port (ICMP) shows as DNSNET_ECONNECT. */
 int64_t dnsnet_recv(int64_t fd, dnsnet_buf buf, int32_t timeout_ms) {
-    pollfd_t p;
-    p.fd = (sock_t)fd;
-    p.events = POLLIN;
-    p.revents = 0;
-    int r = sock_poll(&p, 1, timeout_ms > 0 ? timeout_ms : -1);
-    if (r == 0) return DNSNET_ETIMEOUT;
-    if (r < 0) return DNSNET_EIO;
-    int64_t n = recv((sock_t)fd, (char *)buf.data, (int)buf.len, 0);
-    if (n < 0) return DNSNET_ECONNECT;
-    return n;
+    int64_t deadline = timeout_ms > 0 ? now_ms() + timeout_ms : 0;
+    for (;;) {
+        int r = wait_readable((sock_t)fd, deadline);
+        if (r < 0) return r;
+        int64_t n = recv((sock_t)fd, (char *)buf.data, (int)buf.len, 0);
+        if (n >= 0) return n;
+        if (!would_block()) return DNSNET_ECONNECT;
+    }
 }
 
 void dnsnet_close(int64_t fd) { sock_close((sock_t)fd); }
@@ -153,6 +189,7 @@ int64_t dnsnet_listen(dnsnet_slice addr, int32_t port, int32_t tcp) {
             sock_close(s);
             continue;
         }
+        set_nonblocking(s, 1);
         result = (int64_t)s;
         break;
     }
@@ -171,13 +208,14 @@ int32_t dnsnet_local_port(int64_t fd) {
 }
 
 /* One datagram on a listening socket, and who sent it: the sender's
-   sockaddr goes to from (its length in from_len[0]). */
+   sockaddr goes to from (its length in from_len[0]); DNSNET_ETIMEOUT if
+   none is there. */
 int64_t dnsnet_recvfrom(int64_t fd, dnsnet_buf buf, dnsnet_buf from, dnsnet_buf from_len) {
     struct sockaddr_storage ss;
     socklen_type len = sizeof ss;
     if (from.len < (int64_t)sizeof ss || from_len.len < 1) return DNSNET_EARG;
     int64_t n = recvfrom((sock_t)fd, (char *)buf.data, (int)buf.len, 0, (struct sockaddr *)&ss, &len);
-    if (n < 0) return DNSNET_EIO;
+    if (n < 0) return would_block() ? DNSNET_ETIMEOUT : DNSNET_EIO;
     memcpy(from.data, &ss, (size_t)len);
     from_len.data[0] = (uint8_t)len;
     return n;
@@ -218,17 +256,20 @@ int64_t dnsnet_addr_text(dnsnet_slice sa, dnsnet_buf out) {
     return (int64_t)n;
 }
 
-/* A connection on a listening TCP socket, or DNSNET_ETIMEOUT. */
+/* A connection on a listening TCP socket, or DNSNET_ETIMEOUT. The
+   connection is blocking, as net's are (some systems pass on the
+   listening socket's non-blocking mode). */
 int64_t dnsnet_accept(int64_t fd, int32_t timeout_ms) {
-    pollfd_t p;
-    p.fd = (sock_t)fd;
-    p.events = POLLIN;
-    p.revents = 0;
-    int r = sock_poll(&p, 1, timeout_ms > 0 ? timeout_ms : -1);
-    if (r == 0) return DNSNET_ETIMEOUT;
-    if (r < 0) return DNSNET_EIO;
-    sock_t c = accept((sock_t)fd, NULL, NULL);
-    if (c == BAD_SOCK) return DNSNET_EIO;
+    int64_t deadline = timeout_ms > 0 ? now_ms() + timeout_ms : 0;
+    sock_t c;
+    for (;;) {
+        int r = wait_readable((sock_t)fd, deadline);
+        if (r < 0) return r;
+        c = accept((sock_t)fd, NULL, NULL);
+        if (c != BAD_SOCK) break;
+        if (!would_block()) return DNSNET_EIO;
+    }
+    set_nonblocking(c, 0);
 #if defined(SO_NOSIGPIPE)
     int one = 1;
     setsockopt(c, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);

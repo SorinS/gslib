@@ -1,8 +1,9 @@
 // Messages made by gslib's jwx for Go's lestrrat-go/jwx to verify and
 // decrypt (scripts/differential: go run . check): every signature
-// algorithm (ML-DSA-44, -65 and -87 too), compact and JSON, and every key
-// management algorithm with every content algorithm, some compressed,
-// some as JSON. One per line,
+// algorithm (Ed448 and ML-DSA-44, -65 and -87 too), compact and JSON, and
+// every key management algorithm with every content algorithm (ECDH-ES on
+// P-256, P-384, P-521, X25519 and X448), some compressed, some as JSON.
+// One per line,
 // tab-separated: kind, algorithm, content encryption ("-"), zip (0 or 1),
 // the private JWK, the payload, the message.
 //
@@ -31,19 +32,20 @@ fn main() {
     }
     let rsa = jwk::generate_rsa(2048);
     let sigs = [jwa::HS256, jwa::HS384, jwa::HS512, jwa::RS256, jwa::RS384, jwa::RS512, jwa::PS256, jwa::PS384,
-                jwa::PS512, jwa::ES256, jwa::ES384, jwa::ES512, jwa::EDDSA, jwa::ML_DSA_44, jwa::ML_DSA_65,
-                jwa::ML_DSA_87];
+                jwa::PS512, jwa::ES256, jwa::ES384, jwa::ES512, jwa::EDDSA, jwa::ED448, jwa::ML_DSA_44,
+                jwa::ML_DSA_65, jwa::ML_DSA_87];
     let algs = [jwa::RSA1_5, jwa::RSA_OAEP, jwa::RSA_OAEP_256, jwa::RSA_OAEP_384, jwa::RSA_OAEP_512,
                 jwa::A128KW, jwa::A192KW, jwa::A256KW, jwa::DIRECT, jwa::ECDH_ES, jwa::ECDH_ES_A128KW,
                 jwa::ECDH_ES_A192KW, jwa::ECDH_ES_A256KW, jwa::A128GCMKW, jwa::A192GCMKW, jwa::A256GCMKW,
                 jwa::PBES2_HS256_A128KW, jwa::PBES2_HS384_A192KW, jwa::PBES2_HS512_A256KW];
     let encs = [jwa::A128CBC_HS256, jwa::A192CBC_HS384, jwa::A256CBC_HS512, jwa::A128GCM, jwa::A192GCM, jwa::A256GCM];
-    let curves = [jwa::CRV_P256, jwa::CRV_P384, jwa::CRV_P521, jwa::CRV_X25519];
+    let curves = [jwa::CRV_P256, jwa::CRV_P384, jwa::CRV_P521, jwa::CRV_X25519, jwa::CRV_X448];
     for r in rounds {
         var i = 0;
         for alg in sigs {
             let key = if jwa::is_hmac(alg) { jwk::generate_oct(64) }
                       else if jwa::kty_of(alg) == jwa::KTY_RSA { rsa }
+                      else if alg == jwa::ED448 { jwk::generate_okp(jwa::CRV_ED448) }
                       else if jwa::is_eddsa(alg) { jwk::generate_okp(jwa::CRV_ED25519) }
                       else if jwa::is_mldsa(alg) { jwk::generate_akp(alg) }
                       else { jwk::generate_ec(jwa::curve_of(alg)) };
@@ -63,11 +65,11 @@ fn main() {
         for alg in algs {
             for enc in encs {
                 n++;
-                let crv = curves[(n + r) % 4];
+                let crv = curves[(n + r) % 5];
                 let key = if jwa::is_rsa_kw(alg) { rsa }
                           else if alg == jwa::DIRECT { jwk::generate_oct(jwa::cek_len(enc)) }
                           else if jwa::is_ecdh(alg) {
-                              if crv == jwa::CRV_X25519 { jwk::generate_okp(crv) } else { jwk::generate_ec(crv) }
+                              if jwa::is_okp(crv) { jwk::generate_okp(crv) } else { jwk::generate_ec(crv) }
                           }
                           else if jwa::is_pbes2(alg) { jwk::from_oct(str("password ", n)) }
                           else { jwk::generate_oct(jwa::kek_len(alg)) };

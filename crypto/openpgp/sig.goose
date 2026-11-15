@@ -1,4 +1,5 @@
-// openpgp.sig: signature packets (RFC 9580 §5.2), versions 4 and 6: their
+// openpgp.sig: signature packets (RFC 9580 §5.2), versions 4 and 6, and
+// LibrePGP's version 5 (what gpg's v5 keys, its Ed448 ones, make): their
 // subpackets, what each type of signature hashes, and making and checking
 // one with a key.
 //
@@ -6,6 +7,13 @@
 //   let err = openpgp::verify_signature(key, s, data);   // data as the type hashes it
 //   var p = openpgp::SigParams { sigtype: openpgp::SIG_BINARY, .. };
 //   let err = openpgp::make_signature(key, p, data, out); // a whole packet
+//
+// A v5 signature is laid out as a v4 one, but it hashes more: over a
+// document (types 0x00 and 0x01) the literal data packet's format, file
+// name (with its length octet) and date follow the hashed area (six zero
+// octets for a detached signature: lit_meta empty; 't', 0 and a zero date
+// for a cleartext one, the literal packet gpg fakes for its text), and its
+// final trailer is 05 FF with an 8-octet length.
 //
 // A signature whose hashed area holds a critical subpacket this package
 // does not know is refused (ERR_UNSUPPORTED), as §5.2.3.7 requires; other
@@ -210,7 +218,7 @@ fn parse_signature(body: const u8[:]) -> Signature, i64 {
     var s = Signature { .. };
     if body.len < 1 { return s, ERR_MALFORMED; }
     s.version = body[0];
-    if s.version != 4 && s.version != 6 { return s, ERR_UNSUPPORTED; }
+    if s.version != 4 && s.version != 5 && s.version != 6 { return s, ERR_UNSUPPORTED; }
     let lw = if s.version == 6 { 4 } else { 2 };
     if body.len < 4 + lw { return s, ERR_MALFORMED; }
     s.sigtype = body[1];
@@ -259,8 +267,10 @@ fn salt_size(hash: i64) -> i64 {
     return 0;
 }
 
-// The trailer a signature hashes after its data.
-fn sig_trailer(s: const Signature&) -> u8[>..] {
+// The trailer a signature hashes after its data. lit_meta: for a v5
+// signature over a document, the literal packet's format, name length,
+// name and date (empty: six zeros, for detached ones).
+fn sig_trailer(s: const Signature&, lit_meta: const u8[:] = "") -> u8[>..] {
     var t: u8[>..] = [];
     t.push(s.version as! u8);
     t.push(s.sigtype as! u8);
@@ -269,16 +279,30 @@ fn sig_trailer(s: const Signature&) -> u8[>..] {
     if s.version == 6 { put32(t, s.hashed.len); } else { put16(t, s.hashed.len); }
     t.append(s.hashed);
     let n = t.len;
+    if s.version == 5 && (s.sigtype == SIG_BINARY || s.sigtype == SIG_TEXT) {
+        if lit_meta.len == 0 { t.append("\x00\x00\x00\x00\x00\x00"); } else { t.append(lit_meta); }
+    }
     t.push(s.version as! u8);
     t.push(0xFF);
-    put32(t, n);
+    if s.version == 5 { put64(t, n); } else { put32(t, n); }
     return t;
 }
 
 // The digest a signature signs over data (its salt, data, trailer).
-fn sig_digest(s: const Signature&, data: const u8[:]) -> u8[>..] {
-    let t = sig_trailer(s);
+fn sig_digest(s: const Signature&, data: const u8[:], lit_meta: const u8[:] = "") -> u8[>..] {
+    let t = sig_trailer(s, lit_meta);
     return digest3(s.hash, s.salt, data, t);
+}
+
+// What a v5 signature hashes of the literal data packet it signs: format,
+// name length, name, date.
+fn literal_meta(format: i64, name: const u8[:], date: i64) -> u8[>..] {
+    var m: u8[>..] = [];
+    m.push(format as! u8);
+    m.push(name.len as! u8);
+    m.append(name);
+    put32(m, date);
+    return m;
 }
 
 // What a key signature hashes of a key: 0x99 and a 2-octet length (v4),
@@ -312,13 +336,15 @@ fn issued_by(s: const Signature&, k: const Key&) -> bool {
 
 // Checks s over data (prepared as its type hashes it) with key k: the
 // algorithms agree, the hash is one this package takes, no critical
-// subpacket is unknown, and the signature verifies.
-fn verify_signature(k: const Key&, s: const Signature&, data: const u8[:]) -> i64 {
+// subpacket is unknown, and the signature verifies. lit_meta as for
+// sig_trailer (v5 signatures only).
+fn verify_signature(k: const Key&, s: const Signature&, data: const u8[:], lit_meta: const u8[:] = "") -> i64 {
     if s.unknown_critical { return ERR_UNSUPPORTED; }
     if s.pk_algo != k.algo && !(is_rsa(s.pk_algo) && is_rsa(k.algo)) { return ERR_BAD_SIGNATURE; }
     if !hash_known(s.hash) || s.hash == HASH_MD5 { return ERR_UNSUPPORTED; }
-    if s.version != k.version && (s.version == 6 || k.version == 6) { return ERR_BAD_SIGNATURE; }
-    let dg = sig_digest(s, data);
+    // v6 keys make v6 signatures, v5 keys v5 ones (as gpg does), v4 keys v4.
+    if s.version != k.version && (s.version >= 5 || k.version >= 5) { return ERR_BAD_SIGNATURE; }
+    let dg = sig_digest(s, data, lit_meta);
     if dg[0] != s.left16[0] || dg[1] != s.left16[1] { return ERR_BAD_SIGNATURE; }
     return verify_digest(k, s.hash, dg, s.mat);
 }
@@ -364,22 +390,28 @@ fn be32_bytes(v: i64) -> u8[4] {
     return [(v >> 24 & 255) as! u8, (v >> 16 & 255) as! u8, (v >> 8 & 255) as! u8, (v & 255) as! u8];
 }
 
-// The hash a key signs with when asked for `hash`: ECDSA on P-384 and
-// P-521 takes one at least as long as the curve (SHA-384, SHA-512), as gpg
-// requires to verify it.
+// The hash a key signs with when asked for `hash`: ECDSA on P-384, P-521
+// and the larger Brainpool curves takes one at least as long as the curve
+// (SHA-384, SHA-512), as gpg requires to verify it; Ed448 takes 512 bits
+// (RFC 9580 §5.2.3.4; gpg uses SHA-512 too).
 fn signing_hash(k: const Key&, hash: i64) -> i64 {
     // RFC 9980 §5.3.1: 256 bits at least for the composite signatures.
     if k.algo == PK_MLDSA65_ED25519 { return if hash_size(hash) >= 32 { hash } else { HASH_SHA256 }; }
+    if k.algo == PK_ED448 || (k.algo == PK_EDDSA && k.curve == CURVE_ED448) {
+        return if hash_size(hash) >= 64 { hash } else { HASH_SHA512 };
+    }
     if k.algo != PK_ECDSA { return hash; }
-    let need = if k.curve == CURVE_P384 { 48 } else if k.curve == CURVE_P521 { 64 } else { 32 };
+    let need = if k.curve == CURVE_P384 || k.curve == CURVE_BP384 { 48 }
+               else if k.curve == CURVE_P521 || k.curve == CURVE_BP512 { 64 } else { 32 };
     if hash_size(hash) >= need { return hash; }
     return if need == 48 { HASH_SHA384 } else if need == 64 { HASH_SHA512 } else { HASH_SHA256 };
 }
 
 // A signature packet by key k over data (prepared as the type hashes it),
 // appended to out. The hash is prm.hash, or a longer one when the key
-// needs it (signing_hash).
-fn make_signature(k: const Key&, prm: SigParams, data: const u8[:], out: u8[>..]&) -> i64 {
+// needs it (signing_hash). A v5 key makes a v5 signature (lit_meta as for
+// sig_trailer), with no issuer key ID: gpg writes only the fingerprint.
+fn make_signature(k: const Key&, prm: SigParams, data: const u8[:], out: u8[>..]&, lit_meta: const u8[:] = "") -> i64 {
     if !can_sign_algo(k.algo) { return ERR_KEY; }
     let hash = signing_hash(k, prm.hash);
     if !hash_ok_for_signing(hash) { return ERR_UNSUPPORTED; }
@@ -413,7 +445,7 @@ fn make_signature(k: const Key&, prm: SigParams, data: const u8[:], out: u8[>..]
     if h.len > s.hashed.cap { return ERR_UNSUPPORTED; }
     s.hashed.append(h);
     if k.version == 6 { s.salt.append(random(salt_size(hash))); }
-    let dg = sig_digest(s, data);
+    let dg = sig_digest(s, data, lit_meta);
     var mat: u8[>..] = [];
     let err = sign_digest(k, hash, dg, mat);
     if err != OK { return err; }

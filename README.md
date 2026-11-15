@@ -8,27 +8,29 @@ later.
 
 | Library | What | |
 |---|---|---|
-| `crypto/bignum` | Integers of any size, constant-time arithmetic, and cryptography: AES, Camellia, ChaCha20, the SHA-1/2/3 and BLAKE2 hashes, HMAC, CMAC, AES Key Wrap (RFC 3394 and 5649, used by jwx), HKDF, PBKDF2, scrypt, Argon2, bcrypt, RSA, DSA, ECDH and ECDSA (P-224 to P-521), X25519, Ed25519, ML-KEM, ML-DSA, SLH-DSA, HPKE, NaCl, the legacy ciphers | [README](crypto/bignum/README.md) |
+| `crypto/bignum` | Integers of any size, constant-time arithmetic, and cryptography: AES, Camellia, ChaCha20, the SHA-1/2/3 and BLAKE2 hashes, HMAC, CMAC, AES Key Wrap (RFC 3394 and 5649, used by jwx), HKDF, PBKDF2, scrypt, Argon2, bcrypt, RSA, DSA, ECDH and ECDSA (P-224 to P-521, brainpoolP256r1/384r1/512r1), X25519, Ed25519, X448, Ed448, ML-KEM, ML-DSA, SLH-DSA, HPKE, NaCl, the legacy ciphers | [README](crypto/bignum/README.md) |
 | `encoding/asn1` | DER and BER reading and writing, PEM | [README](encoding/asn1/README.md) |
-| `crypto/x509` | Certificates: parsing, path building and verification, name constraints, policies, system roots, creating certificates, CSRs and CRLs, OCSP, PKCS #12; post-quantum ML-DSA and SLH-DSA keys and signatures, ML-KEM keys, CMS with ML-DSA signers and ML-KEM recipients | [README](crypto/x509/README.md) |
-| `crypto/tls` | TLS 1.3 and 1.2, client and server, without I/O: resumption, client certificates, ECH, post-quantum key exchange | [README](crypto/tls/README.md) |
+| `crypto/x509` | Certificates: parsing, path building and verification, name constraints, policies, system roots, creating certificates, CSRs and CRLs, OCSP, PKCS #12; brainpool, Ed448 and X448 keys and signatures; post-quantum ML-DSA and SLH-DSA keys and signatures, ML-KEM keys, CMS with ML-DSA, Ed448 and brainpool signers and ML-KEM, X448 and brainpool recipients | [README](crypto/x509/README.md) |
+| `crypto/tls` | TLS 1.3 and 1.2, client and server, without I/O: resumption, client certificates, ECH, post-quantum key exchange, X448, Brainpool and Ed448 | [README](crypto/tls/README.md) |
 | `crypto/ssh` | SSH (RFC 4251-4254) without I/O, client and server, SFTP; goose-ssh, goose-sshd, goose-scp, goose-sftp-server, goose-ssh-keygen | [README](crypto/ssh/README.md) |
 | `net/ldap` | LDAP (RFC 4511): messages, filters, DNs, LDIF, URLs, connections; ldapsearch-style tools | [README](net/ldap/README.md) |
 | `encoding/yaml` | YAML 1.2 | [README](encoding/yaml/README.md) |
 | `compress` | Compression and archives, as Go's compress/* and archive/*, plus xz: DEFLATE, gzip, zlib, LZW, bzip2, xz and LZMA, zip, tar; reading and writing | [README](compress/README.md) |
 | `mime` | MIME, as Go's mime, mime/quotedprintable and mime/multipart, and net/textproto's header sections: media types, RFC 2047 encoded-words, file extensions' types, quoted-printable, multipart bodies and forms | [README](mime/README.md) |
 | `krb5` | Kerberos V5 (RFC 4120) as go-krb5 has it: TGTs and service tickets (password, keytab, cross-realm, referrals, FAST armoring), the acceptor, GSS-API (RFC 4121), SPNEGO and HTTP Negotiate, Microsoft's PAC, keytabs and credential caches; goose-krb5 (kinit, kvno, klist) and goose-gss | [README](krb5/README.md) |
-| `jwx` | JOSE, as Go's lestrrat-go/jwx: JSON Web Keys (and key sets, thumbprints, PEM), Signatures (compact and JSON, every RFC 7518 algorithm, EdDSA and post-quantum ML-DSA (RFC 9964)), Encryption (every key management and content algorithm, zip, several recipients) and Tokens (claims, validation, nested) | [README](jwx/README.md) |
+| `jwx` | JOSE, as Go's lestrrat-go/jwx: JSON Web Keys (and key sets, thumbprints, PEM), Signatures (compact and JSON, every RFC 7518 algorithm, EdDSA on Ed25519 and Ed448 and post-quantum ML-DSA (RFC 9964)), Encryption (every key management and content algorithm, ECDH-ES on X25519 and X448 too, zip, several recipients) and Tokens (claims, validation, nested) | [README](jwx/README.md) |
 | `pkcs11` | PKCS#11 (Cryptoki), as Go's miekg/pkcs11: modules (HSMs, tokens, SoftHSM) loaded at run time, every C_* function, templates, mechanisms and their parameters, all the OASIS constants; and miekg's p11 layer (Module, Slot, Session, Object, keys) | [README](pkcs11/README.md) |
 | `dns` | The DNS, as Go's miekg/dns: messages and the 79 record types it implements, in wire form (with compression) and text, zone files (`$ORIGIN`, `$TTL`, `$INCLUDE`, `$GENERATE`), EDNS0, DNSSEC (signing, verifying, DS, NSEC3, keys), TSIG and SIG(0), dynamic updates, zone transfers, a client and a server; goose-dig and goose-dnsd | [README](dns/README.md) |
-| `crypto/openpgp` | OpenPGP (RFC 9580, RFC 4880 as gpg writes it): keys (Ed25519/Curve25519, RSA, ECDSA/ECDH on NIST curves, v6 read), protected secret keys, signatures (inline, detached, cleartext), encryption to keys and passphrases (SEIPD v1, gpg's OCB packet and SEIPD v2 read), compression, key generation; post-quantum ML-KEM-768+X25519 (gpg 2.5's and RFC 9980's) and ML-DSA-65+Ed25519 (RFC 9980); goose-pgp | [README](crypto/openpgp/README.md) |
+| `crypto/openpgp` | OpenPGP (RFC 9580, RFC 4880 as gpg writes it): keys (Ed25519/Curve25519, Ed448/X448, RSA, ECDSA/ECDH on NIST and Brainpool curves, v6 read), protected secret keys, signatures (inline, detached, cleartext; gpg's v5 ones), encryption to keys and passphrases (SEIPD v1, gpg's OCB packet and SEIPD v2 read), compression, key generation; post-quantum ML-KEM+ECDH (gpg 2.5's Kyber keys, its default ky768_bp256 among them, and RFC 9980's) and ML-DSA-65+Ed25519 (RFC 9980); goose-pgp | [README](crypto/openpgp/README.md) |
 | `mail` | Email, as Go's go-mail for sending: messages built and written as MIME (addresses, text and HTML, attachments, inline parts), an SMTP client (STARTTLS or TLS, AUTH with PLAIN, LOGIN, CRAM-MD5, SCRAM-SHA-1/256, XOAUTH2, SMTPUTF8, DSN), a POP3 client (STLS, APOP, SASL, UIDL, TOP) and an IMAP client (IMAP4rev2 and rev1: mailboxes, FETCH with ENVELOPE and BODYSTRUCTURE, SEARCH, STORE, MOVE, APPEND, IDLE); DKIM signing and verifying (RSA, Ed25519); S/MIME (ML-DSA and ML-KEM too) and PGP/MIME signing and encryption; goose-mail | [README](mail/README.md) |
+| `acme` | ACME (RFC 8555) certificates from Let's Encrypt, an enterprise's own CA (Vault and OpenBao's PKI, step-ca, EJBCA) or a commercial CA with external account binding: accounts, orders, http-01 and dns-01, finalizing, the chain, revoking, key rollover; goose-acme, with http-01 served or from a web root, and dns-01 by RFC 2136 updates | [README](acme/README.md) |
+| `oauth` | OAuth 2.0 and OpenID Connect clients: discovery (RFC 8414), the authorization code flow with PKCE and PAR, client credentials, refresh, the device grant, token exchange, introspection, revocation; client authentication by secret, private_key_jwt and mutual TLS; DPoP and certificate-bound tokens; ID tokens, JWT access tokens (RFC 9068) and DPoP proofs validated against the issuer's JWKS; UserInfo; goose-oauth, with a loopback redirect for logins | [README](oauth/README.md) |
 | `net/http` | HTTP/1.1 and HTTP/2, server and client: a client with Go's policy (redirects, cookies, credentials, proxies, gzip, TLS session resumption, streaming uploads, several responses at once), URLs, cookies, HPACK; goose-http and goose-httpd | [README](net/http/README.md) |
 | `net` | TCP client sockets, as the client half of Go's net: `net::dial` with a deadline, `net::read` and `net::write` with timeouts, `net::readable`, `net::close`; what http, dns, krb5 and the examples connect with (POSIX and Winsock) | [net.goose](net.goose) |
 
-## dns, pkcs11, jwx, mail and openpgp
+## dns, pkcs11, jwx, mail, openpgp, acme and oauth
 
-These five have the most to say beyond their table rows: what each
+These seven have the most to say beyond their table rows: what each
 module does, how it was built and how it was tested. Each README has the
 full API.
 
@@ -129,17 +131,17 @@ them, so modules that write a GCM IV back later are not supported.
 - **`jwx`**: error codes and strict base64url (no padding, no stray bits).
 - **`jwx.jwa`**: every algorithm, key type and curve of RFC 7518, RFC 8037,
   RFC 9864 and RFC 9964, with what each needs.
-- **`jwx.jwk`**: keys and key sets (RSA, EC P-256/384/521, OKP Ed25519 and
-  X25519, oct, AKP ML-DSA-44/65/87), checked for consistency; RFC 7638 thumbprints; generation.
+- **`jwx.jwk`**: keys and key sets (RSA, EC P-256/384/521, OKP Ed25519,
+  Ed448, X25519 and X448, oct, AKP ML-DSA-44/65/87), checked for consistency; RFC 7638 thumbprints; generation.
 - **`jwx.pem`**: keys from and to PEM and DER: PKCS #8, SEC 1, PKCS #1,
   SubjectPublicKeyInfo, and certificates (with `x5t` and `x5t#S256`);
   ML-DSA keys as RFC 9881 has them.
 - **`jwx.jws`**: signatures, compact and JSON (general and flattened),
-  detached and unencoded (RFC 7797) payloads; HS, RS, PS, ES, EdDSA and
-  ML-DSA.
+  detached and unencoded (RFC 7797) payloads; HS, RS, PS, ES, EdDSA
+  (Ed25519 and Ed448, and RFC 9864's `Ed25519` and `Ed448`) and ML-DSA.
 - **`jwx.jwe`**: encryption, compact and JSON, several recipients,
   additional authenticated data, `zip`; RSA1_5, RSA-OAEP(-256/384/512),
-  A*KW, dir, ECDH-ES(+A*KW) on the NIST curves and X25519, A*GCMKW, PBES2;
+  A*KW, dir, ECDH-ES(+A*KW) on the NIST curves, X25519 and X448, A*GCMKW, PBES2;
   A*CBC-HS* and A*GCM.
 - **`jwx.jwt`**: claims, signed, encrypted and nested tokens, validation
   of exp, nbf, iat, iss, sub, aud, jti, max age and required claims.
@@ -156,15 +158,17 @@ Departures from jwx: keys keep only the members RFC 7517 and RFC 7518
 define (no private members, no `x5c`), as Goose's fixed-size structs
 cannot hold them; and a JWE header parameter may appear in two headers
 only with the same value (Go's jwx v3 repeats `alg`, which RFC 7516 §7.2.1
-forbids). Not supported: Ed448, X448, ES256K, multi-prime RSA keys,
-HashML-DSA, ML-DSA contexts, expanded ML-DSA private keys in JWKs.
+forbids). Not supported: Brainpool (no JOSE identifiers), ES256K,
+multi-prime RSA keys, HashML-DSA, ML-DSA contexts, expanded ML-DSA private
+keys in JWKs.
 
 Tested against RFC 7520's examples (the JOSE cookbook), with 10
 ciphertexts and 8 encrypted keys remade byte for byte; RFC 7515, 7517,
-7518 Appendix C, 7519, 7638, 7797, 8037 and 9964 (its ML-DSA signatures
-remade byte for byte); keys made by OpenSSL, ML-DSA too; 174 messages made
-by Go's jwx v4; and a differential both ways with Go's jwx v4.6.0
-(`make differential-jwx`).
+7518 Appendix C, 7519, 7638, 7797, 8037 (A.7's X448 example among them)
+and 9964 (its ML-DSA signatures remade byte for byte); keys made by
+OpenSSL, ML-DSA too; 176 messages made by Go's jwx v4, Ed448 and X448
+among them; and a differential both ways with Go's jwx v4.6.0 and its
+Ed448 and X448 modules (`make differential-jwx`).
 
 **Post-quantum JOSE.** jwx signs and verifies with ML-DSA-44, ML-DSA-65 and
 ML-DSA-87 as RFC 9964 defines them for JOSE. Keys are the new `AKP` type
@@ -258,6 +262,85 @@ in mail.pgp encrypts to either kind with no API change. The two cannot meet:
 gpg 2.5 gives RFC 9980's algorithm numbers to its own Dilithium and does not
 read v6 keys.
 
+OpenPGP also has the newer curves now, both ways with gpg: Brainpool ECDSA
+and ECDH keys on brainpoolP256r1, P384r1 and P512r1; Ed448 and cv448, which
+gpg makes as v5 keys signing LibrePGP's v5 signatures, so those are read
+and written too; and gpg's default post-quantum key, brainpoolP384r1 with a
+ky768_bp256 subkey (ML-KEM-768 with brainpoolP256r1), along with its
+ky1024_bp384 and ky1024_cv448 kinds. goose-pgp's `genkey --type pqc` now
+makes gpg's default. RFC 9580's own Ed448 and X448 algorithms (on v6 keys)
+are read and written as well; gpg 2.5 does not know them.
+
+### acme: certificates
+
+`acme` gets certificates by ACME (RFC 8555), from Let's Encrypt or from a
+CA run in-house: the PKI engine of Vault or OpenBao, step-ca, EJBCA. It
+registers accounts (with external account binding, which commercial CAs
+and Vault ask for), orders certificates for DNS names, wildcards and IP
+addresses, proves them by http-01 or dns-01, finalizes with a CSR from
+x509, downloads the chain, revokes, and rolls the account key over. Every
+request is a JWS made by jwx and goes over gslib's HTTP client; a nonce
+the server turns down is replaced and the request sent again. `obtain`
+does it all in one call, with a block that publishes each challenge.
+
+goose-acme is the tool: one command for a certificate, the names proved by
+http-01 served on a thread of its own or written into a web root, or by
+dns-01 through RFC 2136 updates signed with TSIG (gslib's dns), which
+BIND, Knot, PowerDNS and Windows DNS take. Keys are written 0600 and
+nothing secret is printed.
+
+Tested without a server against RFC 7638's thumbprint and RFC 8555's
+examples, and live (`make interop-acme`) against Pebble, Let's Encrypt's
+test server, in strict mode with a fifth of the nonces refused (http-01
+both ways, dns-01 for a wildcard and its apex, revoking, rollover,
+deactivating, external account binding), and against OpenBao's PKI engine
+(dns-01, revoking, external account binding from its new-eab endpoint),
+with goose-dnsd as both servers' DNS; every chain verified by openssl.
+
+### oauth: OAuth 2.0 and OpenID Connect
+
+`oauth` is a client of OAuth 2.0 authorization servers and OpenID
+Providers (Keycloak, Entra ID, Okta, Auth0, node-oidc-provider and the
+rest). It reads the server's metadata by OpenID Connect discovery or RFC
+8414, and gets tokens by every grant a client uses now: the authorization
+code with PKCE (S256), sent directly or as a pushed authorization request
+(RFC 9126); client credentials; refresh; the device grant (RFC 8628),
+polling with slow_down honoured; token exchange (RFC 8693) and JWT bearer
+assertions. It introspects (RFC 7662) and revokes (RFC 7009). The client
+authenticates by client_secret_basic or _post, by a JWT signed with its
+key (private_key_jwt) or the secret (client_secret_jwt), or by its TLS
+certificate (RFC 8705, through the mtls_endpoint_aliases). A DPoP key
+(RFC 9449) makes every token request and resource request carry a proof,
+and a server's demand for a nonce is answered; the callback of a login
+is checked for state and for the issuer (RFC 9207). Refusals keep the
+server's error and error_description, as acme keeps problem documents.
+
+`oauth.oidc` checks tokens against the issuer's keys, fetched from its
+jwks_uri and fetched again, at most once a minute, for a kid it does not
+know: ID tokens as OpenID Connect Core §3.1.3.7 says (iss, aud and azp,
+exp and iat with a leeway, the nonce, auth_time against max_age, at_hash
+and c_hash, an algorithm the client allows and never "none"), JWT access
+tokens as a resource server does (RFC 9068: typ at+jwt, audience, scope),
+DPoP proofs, and the binding of a token to a DPoP key or a client
+certificate (cnf). It reads UserInfo, JSON or signed.
+
+goose-oauth is the tool: a token by client credentials, by the device
+grant, or by a login in the browser that comes back to a loopback
+listener of its own (RFC 8252); refresh, exchange, introspect, revoke,
+UserInfo, and validating an ID token or access token. It prints the
+access token alone on stdout, everything else on stderr, and never a
+secret, key or refresh token; secrets come from a file or the
+environment, not the command line.
+
+Tested without a server against RFC 7636's PKCE example, RFC 9449's DPoP
+proofs, OpenID Connect's at_hash and c_hash examples and ID tokens signed
+in the test with each fault the validation looks for, and live (`make
+interop-oauth`) against node-oidc-provider, an OpenID Certified server:
+every grant and every client authentication above, PAR, DPoP with the
+server asking for nonces, certificate-bound and JWT access tokens,
+introspection, revocation, UserInfo signed and not, with the logins and
+the device's pages driven by the test.
+
 ## Post-quantum cryptography
 
 The NIST post-quantum standards are in crypto/bignum, and the protocols
@@ -276,9 +359,10 @@ use them:
   (KEMRecipientInfo, RFC 9629), checked against `openssl cms` both ways.
 - **JOSE**: ML-DSA in JWS, JWK and JWT (RFC 9964), checked against Go's jwx
   v4 both ways.
-- **OpenPGP and PGP/MIME**: gpg 2.5's ML-KEM-768+X25519 keys, both ways
-  with gpg, and RFC 9980's ML-KEM-768+X25519 and ML-DSA-65+Ed25519, against
-  the RFC's vectors; KMAC (SP 800-185) in crypto/bignum for them.
+- **OpenPGP and PGP/MIME**: gpg 2.5's Kyber keys (ML-KEM-768+X25519, and
+  its default ML-KEM-768+brainpoolP256r1), both ways with gpg, and RFC
+  9980's ML-KEM-768+X25519 and ML-DSA-65+Ed25519, against the RFC's
+  vectors; KMAC (SP 800-185) in crypto/bignum for them.
 
 **Stateless hash-based signatures.** crypto/bignum has SLH-DSA (FIPS 205)
 in all twelve parameter sets (SHA2 and SHAKE at 128, 192 and 256 bits,
@@ -296,6 +380,47 @@ Examples: `examples/bignum/mlkem_demo.goose`, `mldsa_demo.goose` and
 `examples/mail/smime_pq.goose` and `pgp_pq.goose`;
 `examples/openpgp/pqc.goose`; `examples/jwx/mldsa_tokens.goose`;
 `examples/tls/post_quantum.goose`.
+
+## Elliptic curves
+
+crypto/bignum's ECDH and ECDSA run on the NIST curves P-224 to P-521 and
+on the Brainpool curves brainpoolP256r1, P384r1 and P512r1 (RFC 5639; RFC
+7027 and RFC 8734 name them for TLS), signing the Brainpool ones with
+SHA-256, SHA-384 and SHA-512. All seven share one constant-time
+implementation, adding points with Renes, Costello and Batina's complete
+formulas (the a = −3 form for NIST's, the general one for Brainpool's).
+The Brainpool curves pass RFC 7027's and RFC 6932's ECDH examples,
+Wycheproof's ECDH and ECDSA tests for those three curves, and signatures
+from openssl and Python's `cryptography` and `ecdsa`. Example:
+`examples/bignum/brainpool.goose`.
+
+Besides Curve25519 (X25519, Ed25519), crypto/bignum has Curve448: X448
+key exchange (RFC 7748) and Ed448 signatures (RFC 8032), with contexts and
+Ed448ph, in constant time on sixteen 28-bit limbs. They pass all of the
+RFCs' vectors (X448's million-step chain among them), Wycheproof's X448
+and Ed448 tests, and keys, secrets and signatures from openssl. The API
+mirrors Ed25519's (`ed448_sign(seed, msg, ctx)`, `x448_shared(sk,
+peer)`), so x509, TLS, OpenPGP and JOSE can take them up the same way.
+Example: `examples/bignum/x448_ed448.goose`. jwx has: Ed448 JWS and JWT
+(`EdDSA` and RFC 9864's `Ed448`) and X448 ECDH-ES on RFC 8037's OKP keys,
+agreeing both ways with Go's jwx v4 (Brainpool has no JOSE identifiers, so
+jwx leaves it out). crypto/x509 takes all five: brainpool keys under
+id-ecPublicKey and Ed448 and X448 under RFC 8410's OIDs, in certificates,
+CSRs, CRLs, OCSP, PKCS #8 and PKCS #12, and in CMS (brainpool ECDSA and
+ECDH, Ed448 signers by RFC 8419, X448 recipients by RFC 8418; mail.smime
+signs with brainpool keys and encrypts to brainpool and X448
+certificates), checked against openssl both ways; its example is
+`examples/x509/new_curves.goose`. OpenPGP uses them as gpg does: Brainpool
+ECDSA and ECDH keys, gpg's v5 Ed448 and cv448 keys, and gpg's default
+post-quantum key (brainpoolP384r1 with ML-KEM-768+brainpoolP256r1), all
+checked against gpg 2.5 both ways; and RFC 9580's native Ed448 and X448 on
+v6 keys, which gpg 2.5 does not know. Example:
+`examples/openpgp/new_curves.goose`. crypto/tls has the X448 and RFC
+8734's Brainpool groups (named last by default, with no share) and Ed448
+and Brainpool certificates in TLS 1.3, and X448, RFC 7027's Brainpool
+groups and Ed448 in TLS 1.2, checked against OpenSSL 4.1; example:
+`examples/tls/new_curves.goose`, and jwx's PEM reads and writes Ed448
+and X448 keys as OKP JWKs.
 
 ## Using it
 
@@ -357,6 +482,8 @@ compress.goose, compress/             compress, laid out the same way at the top
 net.goose, net/src/                   net's sockets and their C (net/ is also http's and ldap's group)
 mime.goose, mime/                     mime, the same
 mail.goose, mail/                     mail, the same
+acme.goose, acme/                     acme, the same
+oauth.goose, oauth/                   oauth, the same
 examples/<lib>/                       each library's examples (excluded too)
 scripts/run_all.py            every library's unit tests
 Makefile                      the programs, checks and tests
@@ -405,7 +532,8 @@ make            # the targets, with what each does
 make build      # the programs into ../bin (BIN=dir for another): goose-http, goose-httpd,
                 # goose-ssh, goose-sshd, goose-scp, goose-sftp-server, goose-ssh-keygen,
                 # goose-ldapsearch, goose-ldapadd, goose-ldapmodify and the other ldap tools,
-                # goose-krb5, goose-gss, goose-dig, goose-dnsd, goose-mail, goose-pgp
+                # goose-krb5, goose-gss, goose-dig, goose-dnsd, goose-mail, goose-pgp, goose-acme,
+                # goose-oauth
 make check      # type-check every tool and example
 ```
 
@@ -418,7 +546,7 @@ The compiler is `GOOSE`, else `goose` on the PATH, else
 make test                 # every library's unit tests (make test-http: one library's)
 make test-native          # also built with the C compiler
 make interop              # live: OpenSSL, Go, OpenSSH, OpenLDAP, curl, nghttp2, h2spec, pkcs11-tool, dig, miekg/dns,
-                          # mailpit, dovecot, dkimpy, gpg
+                          # mailpit, dovecot, dkimpy, gpg, Pebble, OpenBao, node-oidc-provider
 make differential         # against Go (net/http, net/url, hpack, compress, mime, jwx, miekg/dns), zlib, openssl
 make test-all             # check, test, interop and differential
 python3 scripts/run_all.py [--native] [--only http,tls]   # what make test runs
@@ -428,7 +556,7 @@ Each library's README lists its differentials (against Go, Python's zlib
 and hashlib, OpenSSL, Go's lestrrat-go/jwx and miekg/dns), its interop
 runs (curl, Go's net/http and crypto/tls, OpenSSL, OpenSSH, OpenLDAP,
 nghttp2, h2spec, OpenSC's pkcs11-tool, dig, miekg/dns, mailpit, dovecot,
-dkimpy, gpg), and what is not
+dkimpy, gpg, Pebble, OpenBao, node-oidc-provider), and what is not
 done yet. Every server they start
 listens on 127.0.0.1.
 
@@ -447,3 +575,8 @@ needs dkimpy (`pip install dkimpy pynacl`, or `DKIMPY_PYTHON` naming a
 python with them), S/MIME's openssl 3 or later, PGP/MIME's and
 openpgp's gpg (`brew install gnupg`). Each is skipped when its tool is
 missing.
+
+oauth's interop runs node-oidc-provider (node and npm; `npm ci` installs
+it into `oauth/scripts/op` from the committed lock file on the first run)
+and needs openssl for its test CA; it is skipped without node. Keycloak,
+in Docker or Podman, is skipped unless a daemon is already running.

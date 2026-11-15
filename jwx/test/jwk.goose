@@ -63,7 +63,9 @@ fn main() {
         tv::check(str("refused ", t), e != jwx::OK);
     }
     let x448, e5 = jwk::parse("{\"kty\":\"OKP\",\"crv\":\"X448\",\"x\":\"AQAB\"}");
-    tv::check_int("X448 unsupported", e5, jwx::ERR_UNSUPPORTED);
+    tv::check_int("X448 key of 3 bytes refused", e5, jwx::ERR_KEY);
+    let k1, e6 = jwk::parse("{\"kty\":\"EC\",\"crv\":\"secp256k1\",\"x\":\"AQAB\",\"y\":\"AQAB\"}");
+    tv::check_int("secp256k1 unsupported", e6, jwx::ERR_UNSUPPORTED);
 
     // New keys: valid, and the same after JSON both ways.
     var made: jwk::Key[>..] = [];
@@ -72,6 +74,8 @@ fn main() {
     made.push(jwk::generate_ec(jwa::CRV_P521));
     made.push(jwk::generate_okp(jwa::CRV_ED25519));
     made.push(jwk::generate_okp(jwa::CRV_X25519));
+    made.push(jwk::generate_okp(jwa::CRV_ED448));
+    made.push(jwk::generate_okp(jwa::CRV_X448));
     made.push(jwk::generate_oct(32));
     made.push(jwk::generate_rsa(2048));
     for &k in made {
@@ -95,7 +99,7 @@ fn main() {
     tv::check("lookup by kid", f && f.crv == jwa::CRV_ED25519);
     // Keys of a type this package does not do are passed over.
     var set2: jwk::Key[>..] = [];
-    let mixed = str("{\"keys\":[{\"kty\":\"OKP\",\"crv\":\"Ed448\",\"x\":\"AQAB\"},", ED_KEY, "]}");
+    let mixed = str("{\"keys\":[{\"kty\":\"OKP\",\"crv\":\"Ed1174\",\"x\":\"AQAB\"},", ED_KEY, "]}");
     tv::check_int("unsupported key skipped", jwk::parse_set(mixed, set2), jwx::OK);
     tv::check_int("one key left", set2.len, 1);
 

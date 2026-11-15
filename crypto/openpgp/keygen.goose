@@ -2,11 +2,25 @@
 // primary (EdDSALegacy) that certifies and signs, with a Curve25519 ECDH
 // subkey (SHA-256, AES-128 key wrap) that encrypts, one user ID and its
 // positive certification, and the subkey's binding; or RSA, a primary
-// and an encryption subkey of the same size. Post-quantum:
+// and an encryption subkey of the same size. Other curves:
 //
-//   generate_pqc_key      gpg 2.5's: the same Ed25519 primary with a v5
-//                         Kyber subkey, ML-KEM-768+X25519 (LibrePGP,
-//                         "ky768_cv25519"), which gpg imports and encrypts to
+//   generate_brainpool_key  gpg's brainpoolP256r1/P384r1/P512r1: a v4 ECDSA
+//                           primary with an ECDH subkey on the same curve
+//                           (KDF SHA-256/AES-128, SHA-384/AES-256,
+//                           SHA-512/AES-256, as gpg picks them)
+//   generate_ed448_key      gpg's ed448: a v5 Ed448 primary (EdDSALegacy,
+//                           v5 signatures) with a v5 cv448 ECDH subkey
+//                           (SHA-512, AES-256); gpg makes 448 keys v5 only
+//   generate_ed448_v6_key   RFC 9580's: a v6 Ed448 (28) primary with a v6
+//                           X448 (26) subkey (gpg 2.5 reads neither)
+//
+// Post-quantum:
+//
+//   generate_pqc_bp_key   gpg 2.5's default ("pqc"): a v4 brainpoolP384r1
+//                         ECDSA primary with a v5 Kyber subkey,
+//                         ML-KEM-768+brainpoolP256r1 ("ky768_bp256")
+//   generate_pqc_key      gpg 2.5's ed25519 + ky768_cv25519: the Ed25519
+//                         primary with a v5 Kyber subkey, ML-KEM-768+X25519
 //   generate_rfc9980_key  RFC 9980's: a v6 ML-DSA-65+Ed25519 primary with
 //                         a v6 ML-KEM-768+X25519 subkey (gpg 2.5 reads
 //                         neither)
@@ -25,6 +39,9 @@ import std;
 import crypto.bignum;
 import crypto.bignum.ed25519;
 import crypto.bignum.x25519;
+import crypto.bignum.x448;
+import crypto.bignum.ed448;
+import crypto.bignum.ec;
 import crypto.bignum.rsa;
 import crypto.bignum.mlkem;
 import crypto.bignum.mldsa;
@@ -68,21 +85,45 @@ fn x25519_secret(k: Key&) {
     k.point.append(bignum::x25519_base(s));
 }
 
-// gpg's Kyber subkey: v5, algo 8, X25519 under RFC 8410's OID (as gpg
-// writes it) with ML-KEM-768. Its secret is a fresh seed d || z.
-fn kyber_key(created: i64) -> Key {
+// A clamped X448 secret (RFC 7748) and its public key, into k.
+fn x448_secret(k: Key&) {
+    var s = random(56);
+    s[0] &= 252;
+    s[55] |= 128;
+    k.scalar.append(s);
+    k.point.append(bignum::x448_base(s));
+}
+
+// A secret scalar and its point 04 || x || y on a Weierstrass curve, into k.
+fn weierstrass_secret(k: Key&, curve: i64) {
+    let c = weierstrass_curve(curve);
+    let sk, pk = bignum::ec_keypair(c);
+    k.scalar.append(sk);
+    k.point.append(pk);
+}
+
+// gpg's Kyber subkey: v5, algo 8, the ECC half (X25519 under RFC 8410's
+// OID, as gpg writes it, or brainpoolP256r1) with ML-KEM-768. Its secret is
+// a fresh seed d || z.
+fn kyber_key(created: i64, curve: i64 = CURVE_X25519) -> Key {
     var k = new_key(PK_KYBER, created, true);
     k.version = 5;
-    k.curve = CURVE_X25519;
-    x25519_secret(k);
+    k.curve = curve;
+    var pt: u8[>..] = [];
+    var oid = OID_X25519_RFC8410;
+    if curve == CURVE_X25519 {
+        x25519_secret(k);
+        pt.push(0x40);
+    } else {
+        weierstrass_secret(k, curve);
+        oid = oid_of_curve(curve);
+    }
+    pt.append(k.point);
     k.pq_sec.append(random(MLKEM_SEED_LEN));
     let ek, dk = bignum::mlkem_keys_from_seed(3, k.pq_sec);
     var m: u8[>..] = [];
-    m.push(OID_X25519_RFC8410.len as! u8);
-    m.append(OID_X25519_RFC8410);
-    var pt: u8[>..] = [];
-    pt.push(0x40);
-    pt.append(k.point);
+    m.push(oid.len as! u8);
+    m.append(oid);
     put_mpi(m, pt);
     put32(m, ek.len);
     k.pq_at = 10 + m.len;
@@ -140,6 +181,100 @@ fn ed25519_key(created: i64) -> Key {
     pt.push(0x40);
     pt.append(pub);
     put_mpi(m, pt);
+    finish_key(k, m);
+    return k;
+}
+
+// An ECDSA primary on a Weierstrass curve (v4).
+fn ecdsa_key(created: i64, curve: i64) -> Key {
+    var k = new_key(PK_ECDSA, created, false);
+    k.curve = curve;
+    weierstrass_secret(k, curve);
+    let oid = oid_of_curve(curve);
+    var m: u8[>..] = [];
+    m.push(oid.len as! u8);
+    m.append(oid);
+    put_mpi(m, k.point);
+    finish_key(k, m);
+    return k;
+}
+
+// An ECDH subkey on a Weierstrass curve (v4), with the KDF gpg picks for
+// its size (ecdh.c's kek_params_table): SHA-256 and AES-128 up to 256
+// bits, SHA-384 and AES-256 to 384, SHA-512 and AES-256 above.
+fn ecdh_key(created: i64, curve: i64) -> Key {
+    var k = new_key(PK_ECDH, created, true);
+    k.curve = curve;
+    let n = curve_size(curve);
+    k.kdf_hash = if n <= 32 { HASH_SHA256 } else if n <= 48 { HASH_SHA384 } else { HASH_SHA512 };
+    k.kdf_cipher = if n <= 32 { CIPHER_AES128 } else { CIPHER_AES256 };
+    weierstrass_secret(k, curve);
+    let oid = oid_of_curve(curve);
+    var m: u8[>..] = [];
+    m.push(oid.len as! u8);
+    m.append(oid);
+    put_mpi(m, k.point);
+    m.append("\x03\x01");
+    m.push(k.kdf_hash as! u8);
+    m.push(k.kdf_cipher as! u8);
+    finish_key(k, m);
+    return k;
+}
+
+// gpg's ed448 primary: v5, EdDSALegacy under Ed448's OID, the native 57
+// octets of the public key as an SOS (no prefix).
+fn ed448_legacy_key(created: i64) -> Key {
+    var k = new_key(PK_EDDSA, created, false);
+    k.version = 5;
+    k.curve = CURVE_ED448;
+    let seed = random(57);
+    k.scalar.append(seed);
+    k.point.append(bignum::ed448_public(seed));
+    var m: u8[>..] = [];
+    m.push(OID_ED448.len as! u8);
+    m.append(OID_ED448);
+    put_sos(m, k.point);
+    finish_key(k, m);
+    return k;
+}
+
+// gpg's cv448 subkey: v5 ECDH under X448's OID (1.3.101.111), the native
+// 56 octets, KDF SHA-512 and AES-256.
+fn cv448_key(created: i64) -> Key {
+    var k = new_key(PK_ECDH, created, true);
+    k.version = 5;
+    k.curve = CURVE_X448;
+    k.kdf_hash = HASH_SHA512;
+    k.kdf_cipher = CIPHER_AES256;
+    x448_secret(k);
+    var m: u8[>..] = [];
+    m.push(OID_X448_RFC8410.len as! u8);
+    m.append(OID_X448_RFC8410);
+    put_sos(m, k.point);
+    m.append("\x03\x01\x0a\x09");
+    finish_key(k, m);
+    return k;
+}
+
+// RFC 9580's Ed448 (28) primary and X448 (26) subkey: native octets.
+fn ed448_native_key(created: i64, version: i64) -> Key {
+    var k = new_key(PK_ED448, created, false);
+    k.version = version;
+    let seed = random(57);
+    k.scalar.append(seed);
+    k.point.append(bignum::ed448_public(seed));
+    var m: u8[>..] = [];
+    m.append(k.point);
+    finish_key(k, m);
+    return k;
+}
+
+fn x448_native_key(created: i64, version: i64) -> Key {
+    var k = new_key(PK_X448, created, true);
+    k.version = version;
+    x448_secret(k);
+    var m: u8[>..] = [];
+    m.append(k.point);
     finish_key(k, m);
     return k;
 }
@@ -284,6 +419,55 @@ fn generate_rsa_key(kr: Keyring&, uid: const u8[:], bits: i64 = 3072, created: i
     let t = if created > 0 { created } else { now() };
     let primary = rsa_key(bits, t, false);
     let sub = rsa_key(bits, t, true);
+    return add_generated(kr, primary, sub, uid, t);
+}
+
+// gpg's Brainpool key, as `gpg --quick-gen-key UID brainpoolP384r1` then
+// `--quick-add-key FPR brainpoolP384r1 encr` make it: a v4 ECDSA primary
+// that certifies and signs with an ECDH subkey on the same curve. bits:
+// 256, 384 or 512.
+fn generate_brainpool_key(kr: Keyring&, uid: const u8[:], bits: i64 = 384, created: i64 = 0) -> i64 {
+    if uid.len == 0 || uid.len > 1024 { return ERR_KEY; }
+    let curve = if bits == 256 { CURVE_BP256 } else if bits == 384 { CURVE_BP384 } else if bits == 512 { CURVE_BP512 }
+                else { CURVE_NONE };
+    if curve == CURVE_NONE { return ERR_KEY; }
+    let t = if created > 0 { created } else { now() };
+    let primary = ecdsa_key(t, curve);
+    let sub = ecdh_key(t, curve);
+    return add_generated(kr, primary, sub, uid, t);
+}
+
+// gpg's Ed448 key, as `gpg --quick-gen-key UID ed448` then `--quick-add-key
+// FPR cv448 encr` make it: v5 keys (gpg makes the 448 curves v5 only), an
+// EdDSALegacy Ed448 primary whose signatures are v5, with a cv448 ECDH
+// subkey.
+fn generate_ed448_key(kr: Keyring&, uid: const u8[:], created: i64 = 0) -> i64 {
+    if uid.len == 0 || uid.len > 1024 { return ERR_KEY; }
+    let t = if created > 0 { created } else { now() };
+    let primary = ed448_legacy_key(t);
+    let sub = cv448_key(t);
+    return add_generated(kr, primary, sub, uid, t);
+}
+
+// RFC 9580's Ed448 and X448: a v6 Ed448 (28) primary with a v6 X448 (26)
+// subkey (HKDF-SHA512 and AES-256 key wrap). gpg 2.5 reads neither.
+fn generate_ed448_v6_key(kr: Keyring&, uid: const u8[:], created: i64 = 0) -> i64 {
+    if uid.len == 0 || uid.len > 1024 { return ERR_KEY; }
+    let t = if created > 0 { created } else { now() };
+    let primary = ed448_native_key(t, 6);
+    let sub = x448_native_key(t, 6);
+    return add_generated(kr, primary, sub, uid, t);
+}
+
+// gpg 2.5's default post-quantum key, as `gpg --quick-gen-key UID pqc`
+// makes it: a v4 brainpoolP384r1 ECDSA primary that certifies and signs,
+// with a v5 Kyber subkey (LibrePGP's ML-KEM-768+brainpoolP256r1,
+// "ky768_bp256") that encrypts.
+fn generate_pqc_bp_key(kr: Keyring&, uid: const u8[:], created: i64 = 0) -> i64 {
+    if uid.len == 0 || uid.len > 1024 { return ERR_KEY; }
+    let t = if created > 0 { created } else { now() };
+    let primary = ecdsa_key(t, CURVE_BP384);
+    let sub = kyber_key(t, CURVE_BP256);
     return add_generated(kr, primary, sub, uid, t);
 }
 

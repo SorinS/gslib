@@ -5,7 +5,8 @@
 //
 //   RFC 9980 (algo 35)     KEK = SHA3-256(mlkemSS || ecdhSS || ecdhCT ||
 //                          ecdhPK || algo || "OpenPGPCompositeKDFv1" || 21)
-//   LibrePGP (algo 8, gpg) eccSS = SHA3-256(ecdh || ecdhCT || ecdhPK);
+//   LibrePGP (algo 8, gpg) eccSS = SHA3-256(ecdh || ecdhCT || ecdhPK)
+//                          (SHA3-512 past 256-bit curves);
 //                          KEK = KMAC256("OpenPGPCompositeKeyDerivation
 //                          Function", 00000001 || eccSS || ecdhCT ||
 //                          mlkemSS || mlkemCT || cipher || v5 fingerprint,
@@ -22,6 +23,10 @@
 //      (q 40||X25519 public) (d big-endian secret)))
 //    (private-key (kyber768 (p ek) (s dk) (seed d||z))))
 //
+// (on the other curves: (curve X448) with q and d native, or (curve
+// brainpoolP256r1) with q = 04 || x || y and d big-endian; kyber1024 for
+// ML-KEM-1024);
+//
 // with a passphrase, either part may be a protected-private-key whose
 // (protected openpgp-s2k3-ocb-aes ((sha1 salt count) nonce) data) is
 // AES-128-OCB under an iterated SHA-1 S2K, the rest of its algorithm list
@@ -37,13 +42,14 @@ import crypto.bignum.kmac;
 import crypto.openpgp;
 import crypto.openpgp.ocb;
 
-let MLKEM768_EK_LEN: i64 = 1184;
-let MLKEM768_DK_LEN: i64 = 2400;
-let MLKEM768_CT_LEN: i64 = 1088;
-let MLKEM_SEED_LEN:  i64 = 64;
-let MLDSA65_PK_LEN:  i64 = 1952;
-let MLDSA65_SIG_LEN: i64 = 3309;
-let MLDSA_SEED_LEN:  i64 = 32;
+let MLKEM768_EK_LEN:  i64 = 1184;
+let MLKEM768_DK_LEN:  i64 = 2400;
+let MLKEM768_CT_LEN:  i64 = 1088;
+let MLKEM1024_EK_LEN: i64 = 1568;
+let MLKEM_SEED_LEN:   i64 = 64;
+let MLDSA65_PK_LEN:   i64 = 1952;
+let MLDSA65_SIG_LEN:  i64 = 3309;
+let MLDSA_SEED_LEN:   i64 = 32;
 
 let IETF_KEM_DOMAIN:      const u8[:] = "OpenPGPCompositeKDFv1";
 let LIBREPGP_KMAC_KEY:    const u8[:] = "OpenPGPCompositeKeyDerivationFunction";
@@ -69,11 +75,13 @@ fn ietf_kek(mlkem_ss: const u8[:], ecdh_ss: const u8[:], ecdh_ct: const u8[:], e
 }
 
 // gpg's KEK for a Kyber subkey (common/kem.c: gnupg_ecc_kem_simple_kdf,
-// then gnupg_kem_combiner): ecdh is X25519's shared secret, fpr the
-// subkey's v5 fingerprint, cipher the session key's algorithm.
+// then gnupg_kem_combiner): ecdh is the ECC half's shared value (X25519's
+// or X448's output, or a Weierstrass curve's whole point), fpr the
+// subkey's v5 fingerprint, cipher the session key's algorithm. eccSS is
+// SHA3-256 for the 256-bit curves and SHA3-512 for the others (ecc_bits).
 fn librepgp_kek(ecdh: const u8[:], ecdh_ct: const u8[:], ecdh_pk: const u8[:], mlkem_ss: const u8[:],
-                mlkem_ct: const u8[:], cipher: i64, fpr: const u8[:]) -> u8[>..] {
-    var s = bignum::sha3_init(256);
+                mlkem_ct: const u8[:], cipher: i64, fpr: const u8[:], ecc_bits: i64 = 256) -> u8[>..] {
+    var s = bignum::sha3_init(ecc_bits);
     bignum::sha3_update(s, ecdh);
     bignum::sha3_update(s, ecdh_ct);
     bignum::sha3_update(s, ecdh_pk);

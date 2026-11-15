@@ -9,16 +9,17 @@ Algorithms, Keys, Signatures, Encryption and Tokens.
 | `jwx` | `jwx::` | error codes and messages, base64url (no padding, strict) | 7515 §2 |
 | `jwx.jwa` | `jwa::` | algorithm, key type and curve identifiers, their names, what each needs | 7518, 8037, 9864, 9964 |
 | `jwx.jwk` | `jwk::` | keys and key sets: parsing, writing, validation, thumbprints, generation | 7517, 7638, 8037, 9964 |
-| `jwx.pem` | `jwk::` | keys from and to PEM and DER: private keys, public keys, certificates | 5280, 5208, 5915, 9881 |
+| `jwx.pem` | `jwk::` | keys from and to PEM and DER: private keys, public keys, certificates | 5280, 5208, 5915, 8410, 9881 |
 | `jwx.jws` | `jws::` | signatures, compact and JSON (general and flattened), detached and unencoded payloads | 7515, 7797, 9964 |
 | `jwx.jwe` | `jwe::` | encryption, compact and JSON, every key management and content algorithm of RFC 7518, `zip`, several recipients, AAD | 7516, 7518 |
 | `jwx.jwt` | `jwt::` | claims, signed, encrypted and nested tokens, validation | 7519 |
 
 Algorithms: HS256/384/512, RS256/384/512, PS256/384/512, ES256/384/512,
-EdDSA (and `Ed25519`), ML-DSA-44/65/87 (post-quantum, with `AKP` keys),
+EdDSA on Ed25519 and Ed448 (and RFC 9864's `Ed25519` and `Ed448`),
+ML-DSA-44/65/87 (post-quantum, with `AKP` keys),
 `none` by name only; RSA1_5, RSA-OAEP,
 RSA-OAEP-256/384/512, A128/192/256KW, dir, ECDH-ES and ECDH-ES+A128/192/256KW
-(P-256, P-384, P-521, X25519), A128/192/256GCMKW, PBES2-HS256+A128KW,
+(P-256, P-384, P-521, X25519, X448), A128/192/256GCMKW, PBES2-HS256+A128KW,
 PBES2-HS384+A192KW, PBES2-HS512+A256KW; A128/192/256CBC-HS256/384/512,
 A128/192/256GCM; `zip: DEF`. The cryptography is crypto/bignum's,
 constant time where it handles secrets; AES Key Wrap (RFC 3394, 5649) was
@@ -40,7 +41,8 @@ crypto/bignum's ML-DSA (`bignum.mldsa`), hedged when signing.
 ```goose
 let key = jwk::generate_akp(jwa::ML_DSA_65);    // or jwk::akp_from_seed(alg, seed)
 let token, e = jwt::sign(claims, jwa::ML_DSA_65, key);
-let r = jwt::parse(token, jwa::ML_DSA_65, jwk::public_key(key), got, validator);
+let pub = jwk::public_key(key);
+let r = jwt::parse(token, jwa::ML_DSA_65, pub, got, validator);
 ```
 
 An AKP key fits only the algorithm its `alg` names: an ML-DSA-44 key
@@ -48,13 +50,47 @@ neither signs nor verifies ML-DSA-65, EdDSA or anything else, and no other
 key type does ML-DSA. A key whose `priv` does not give its `pub`, or whose
 `pub` is the wrong length for its `alg`, is refused as RFC 9964 §7.3 and
 §7.4 ask. RFC 9964 defines AKP keys for signatures only, so they are no
-JWE key (`ERR_KEY`), and an `epk` must be an EC or X25519 key. In a key
+JWE key (`ERR_KEY`), and an `epk` must be an EC, X25519 or X448 key. In a key
 set, an AKP key of an algorithm this package does not know (SLH-DSA, say)
 is passed over as RFC 7517 §5 asks. PEM files carry ML-DSA keys as RFC
 9881 has them; OpenSSL's seed-and-expanded PKCS #8 reads, and keys are
 written seed-only, as OpenSSL writes with `ml-dsa.output_formats=seed-only`.
 Go's lestrrat-go/jwx does ML-DSA from v4 with Go 1.27, and the two agree
 both ways (see Tests).
+
+## Ed448 and X448
+
+RFC 8037's other two curves are OKP keys like Ed25519's and X25519's,
+with longer members: `{"kty":"OKP","crv":"Ed448","x":"...","d":"..."}`
+with a 57-byte public key and a 57-byte seed, `{"kty":"OKP","crv":"X448",
+...}` with 56 bytes each; the thumbprint is over `crv`, `kty` and `x`.
+Ed448 signs (114-byte signatures, RFC 8032's pure Ed448 with the empty
+context) under RFC 8037's `EdDSA`, which names no curve, so the key
+decides, and under RFC 9864's fully specified `Ed448`, which takes an
+Ed448 key only; `Ed25519` takes an Ed25519 key only. X448 does ECDH-ES
+and ECDH-ES+A128/192/256KW, its 56-byte Z through the Concat KDF as
+X25519's, with the ephemeral key in `epk`; a peer key giving the all-zero
+Z (RFC 7748 §6.2) is refused. The curves are crypto/bignum's
+(`bignum.ed448`, `bignum.x448`), constant time on secrets.
+
+```goose
+let signer = jwk::generate_okp(jwa::CRV_ED448);   // or jwk::okp_from_private(crv, d)
+let token, e = jwt::sign(claims, jwa::ED448, signer);
+let service = jwk::generate_okp(jwa::CRV_X448);
+let service_pub = jwk::public_key(service);
+let msg, e2 = jwe::encrypt(secret, jwa::ECDH_ES_A256KW, jwa::A256GCM, service_pub);
+```
+
+Go's lestrrat-go/jwx v4 has both in extension modules
+(`github.com/jwx-go/ed448/v4` and `github.com/jwx-go/x448/v4`, on
+cloudflare/circl), and the two agree both ways (see Tests). It signs
+Ed448 only under `Ed448`: an `EdDSA` token with an Ed448 key, which RFC
+8037 allows and this package makes and verifies, Go's jwx neither makes
+nor verifies, so `Ed448` is the name to use between the two.
+
+Brainpool curves (crypto/bignum has brainpoolP256r1, P384r1 and P512r1)
+have no JOSE identifiers: IANA's JOSE registries name no Brainpool curve
+or algorithm, and Go's jwx v4 has none either, so they are not here.
 
 ## Using it
 
@@ -111,11 +147,13 @@ ML-DSA they are.
   own `alg` fit the algorithm), `strong_enough(k, alg)` (RFC 7518's
   minimum sizes: HMAC keys as long as the hash, RSA 2048 bits).
 - `thumbprint(k, hash = 256)`, `thumbprint_b64(k)`: RFC 7638.
-- `generate_rsa(bits)`, `generate_ec(crv)`, `generate_okp(crv)`,
-  `generate_akp(alg)` (ML-DSA), `generate_oct(len)`, `from_oct(bytes)`,
-  `akp_from_seed(alg, seed)`.
+- `generate_rsa(bits)`, `generate_ec(crv)`, `generate_okp(crv)` (Ed25519,
+  Ed448, X25519, X448), `generate_akp(alg)` (ML-DSA), `generate_oct(len)`,
+  `from_oct(bytes)`, `akp_from_seed(alg, seed)`, `okp_from_private(crv, d)`
+  and `okp_public(crv, d)`.
 - jwx.pem: `from_pem(text)` (a private key in PKCS #8, SEC 1 or PKCS #1, a
-  public key, or a certificate's; ML-DSA keys as AKP JWKs), `from_spki(der)`, `from_cert(cert)`
+  public key, or a certificate's; Ed448 and X448 keys as OKP JWKs, ML-DSA
+  keys as AKP JWKs, brainpool keys `ERR_UNSUPPORTED`), `from_spki(der)`, `from_cert(cert)`
   (with the certificate's `x5t` and `x5t#S256`), `from_private(x509key)`,
   `to_pem(k, public = false)`, `marshal_spki(k)`, `to_private(k)`.
 
@@ -126,7 +164,8 @@ ML-DSA they are.
   `jws::Header` (`alg`, `kid`, `typ`, `cty`, `jku`, `jwk`, `x5u`, `x5t`,
   `x5t256`, `b64`, `crit`) and members of the caller's own (`extra`, JSON
   without braces). `sign_json(payload, signers, flattened = false)`: one
-  signature per `jws::Signer` (key, protected header, unprotected members).
+  signature per `jws::Signer` (key, protected header, the protected header's own
+  members in `extra`, as ACME's nonce and url, unprotected members).
 - `verify(message, alg, key)`: the payload of a compact or JSON message
   that alg with key verifies (any one signature of several will do).
   `verify_detached(message, payload, alg, key)`. `verify_set(message,
@@ -202,9 +241,11 @@ constant time.
 
 **Checks on what arrives.** JSON objects with a member twice are refused,
 as are base64url with padding or stray bits, `crit` names this package
-does not understand (only `b64` is), `b64: false` without `crit`, an
-ephemeral ECDH key off its curve (checked when the header is read, so no
-invalid-curve point reaches the key agreement), PBES2 salts under 8 bytes.
+does not understand (only `b64` is), `crit` or JWE header names holding a
+NUL, `b64: false` without `crit`, an ephemeral ECDH key off its curve
+(checked when the header is read, so no invalid-curve point reaches the
+key agreement), PBES2 salts under 8 bytes. An `aud` string is kept whole,
+NUL or empty, and matched whole.
 
 **Limits.** As jwx v4: PBES2 counts outside 1000 to 1000000 are refused
 when decrypting (`ERR_LIMIT`; `min_p2c` and `max_p2c` move the bounds, and
@@ -226,6 +267,7 @@ In gslib's `examples/jwx/`, run from gslib's top as `goose examples/jwx/<name>.g
 - `encrypt_decrypt.goose`: JWE with RSA-OAEP, ECDH-ES, AES key wrap, dir and PBES2, zip, several recipients.
 - `jwt_tokens.goose`: a JWT issued, then verified against the issuer's JWKS and its claims validated.
 - `nested_jwt.goose`: a JWT signed then encrypted, and opened, verified and validated in one call.
+- `ed448_x448.goose`: an Ed448 issuer key, its JWK and thumbprint, a JWT signed under `Ed448` and under `EdDSA`, the wrong alg and an Ed25519 key refused; a JWE to an X448 key by ECDH-ES+A256KW and ECDH-ES, and another X448 key refused.
 - `mldsa_tokens.goose`: post-quantum JWTs: an ML-DSA-65 AKP key, its public JWK, thumbprint and PEM, RFC 9964's example key's kid, a JWT signed and verified through a JWKS, and a changed token, the wrong algorithm and the wrong key refused.
 
 ## Tests
@@ -241,13 +283,15 @@ at -O0, -O2 and `--debug`:
 | jwe | RFC 7520 §5 in every serialization, decrypted, and remade byte for byte: 10 ciphertexts, and 8 encrypted keys (A*KW, A*GCMKW, PBES2, ECDH-ES from the example's ephemeral key); every key management algorithm with every content algorithm; three recipients; PBES2 and inflate limits; invalid-curve points |
 | ecdh | RFC 7518 Appendix C: Z from both sides, the Concat KDF with apu and apv, the message; apu or apv changed in an unprotected header refused |
 | jwt | RFC 7519 §3.1's token; exp, nbf, iat, iss, sub, aud, jti, max_age and required claims at their edges and with skew; nested and encrypted tokens |
-| pem | OpenSSL's RSA, P-256, P-384, P-521, Ed25519 and ML-DSA-44/65/87 keys (scripts/gen_pem.sh): private, public and certificate give one key, x5t is OpenSSL's fingerprint, PEM written as OpenSSL writes it (ML-DSA's private key as its seed-only form) |
+| pem | OpenSSL's RSA, P-256, P-384, P-521, Ed25519, Ed448 and ML-DSA-44/65/87 keys (scripts/gen_pem.sh): private, public and certificate give one key, x5t is OpenSSL's fingerprint, PEM written as OpenSSL writes it (ML-DSA's private key as its seed-only form); OpenSSL's X448 key and public key likewise, and its brainpoolP256r1 key, public key and certificate refused |
 | mldsa | RFC 9964 Appendix A.1 (test/vectors/rfc9964): the three keys' kids as thumbprints, the signatures remade byte for byte (they are FIPS 204's deterministic variant) and verified; inconsistent AKP keys refused; every ML-DSA signing and verifying, compact and JSON, and in a JWT; alg and key-type confusion both ways; AKP keys refused for JWE |
-| go_jwx | 174 messages made by Go's lestrrat-go/jwx v4: every algorithm pair, ML-DSA too, compact and JSON, compressed or not |
+| okp448 | RFC 8037 A.7 (ECDH-ES with X448): the keys, Z from both sides, the appendix's header's message; Ed448: a JWS made by Go's jwx with RFC 8032's key remade byte for byte, its thumbprint as Go's; `EdDSA`, `Ed25519` and `Ed448` against Ed25519, Ed448 and X448 keys both ways; Ed448 and X448 JWKs of the wrong lengths or inconsistent refused; X448 with every ECDH-ES algorithm and content algorithm, low-order peers and an Ed448 `epk` refused |
+| go_jwx | 176 messages made by Go's lestrrat-go/jwx v4: every algorithm pair, Ed448, X448 and ML-DSA too, compact and JSON, compressed or not |
 
 `python3 scripts/differential.py -n N` (`make differential-jwx`, needs Go)
 (Go 1.27 or later, for crypto/mldsa) runs fresh keys both ways: Go's jwx
-v4.6.0 makes N rounds of messages that
+v4.6.0, with its Ed448 and X448 extension modules (jwx-go/ed448 and
+jwx-go/x448 v4.0.5), makes N rounds of messages that
 test/go_jwx.goose verifies and decrypts, and tools/tokens.goose makes as
 many for Go's jwx to verify and decrypt.
 
@@ -270,8 +314,9 @@ commit. `test/vectors/rfc9964/SOURCE` says where the ML-DSA ones are from.
 
 ## Not supported
 
-Ed448 and X448, ES256K (no secp256k1 in bignum), the `oth` member of
-multi-prime RSA keys, RSA private keys without their primes, and HMAC keys
+Brainpool curves (no JOSE identifiers), Ed448ph and Ed448 contexts
+(RFC 8037 has neither), ES256K (no secp256k1 in bignum), the `oth` member
+of multi-prime RSA keys, RSA private keys without their primes, and HMAC keys
 longer than `MAX_OCT`. Of ML-DSA: HashML-DSA (RFC 9964 §7.2 leaves it
 out), contexts (RFC 9964's is always empty), expanded private keys in
 JWKs (RFC 9964 §4 allows the seed only; a PKCS #8 key with no seed is

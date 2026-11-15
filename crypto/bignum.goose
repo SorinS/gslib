@@ -18,7 +18,8 @@
 // - `bignum.ct`: masks, selects, swaps, comparisons, fixed-width add and
 //   subtract;
 // - `bignum.mont`: Montgomery arithmetic, reduction, `mont_modexp`;
-// - `bignum.x25519`, and `bignum.ed25519` signing;
+// - `bignum.x25519` and `bignum.x448`, and `bignum.ed25519` and
+//   `bignum.ed448` signing;
 // - `bignum.ec`: ECDH and ECDSA signing on the NIST curves;
 // - `bignum.rsa`: key generation, key loading, the private-key operation
 //   (CRT, blinded) and encryption; `bignum.dsa` signing and `bignum.ffdh`,

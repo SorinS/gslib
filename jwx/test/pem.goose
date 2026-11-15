@@ -5,7 +5,9 @@
 // does, a private key signs what its PEM public key verifies, and every
 // key written to PEM reads back the same. ML-DSA keys (RFC 9881) become
 // AKP JWKs (RFC 9964), from OpenSSL's seed-and-expanded PKCS #8 and its
-// seed-only one, which is also what this package writes.
+// seed-only one, which is also what this package writes. Ed448 and X448
+// keys (RFC 8410) become OKP JWKs (RFC 8037), X448's without a
+// certificate; brainpool keys, which JOSE has no curve for, are refused.
 import std;
 import os;
 import gslib from "../..";
@@ -36,9 +38,9 @@ fn hex(b: const u8[:]) -> u8[>..] {
 }
 
 fn main() {
-    let names = ["rsa", "p256", "p384", "p521", "ed25519", "mldsa44", "mldsa65", "mldsa87"];
+    let names = ["rsa", "p256", "p384", "p521", "ed25519", "mldsa44", "mldsa65", "mldsa87", "ed448"];
     let algs = [jwa::RS256, jwa::ES256, jwa::ES384, jwa::ES512, jwa::EDDSA, jwa::ML_DSA_44, jwa::ML_DSA_65,
-                jwa::ML_DSA_87];
+                jwa::ML_DSA_87, jwa::EDDSA];
     for i in names.len {
         let n = names[i];
         let priv = key(str(n, ".key"));
@@ -66,6 +68,40 @@ fn main() {
         tv::check(str(n, " public PEM round trip"), e2 == jwx::OK && eb2 == jwx::OK
                   && jwk::marshal(back2) == jwk::marshal(pub));
         tv::check_eq(str(n, " public PEM is OpenSSL's"), p2, load(str(n, ".pub")));
+    }
+    let ed = key("ed448.key");
+    tv::check("Ed448 key is OKP Ed448", ed.kty == jwa::KTY_OKP && ed.crv == jwa::CRV_ED448 && ed.d.len == 57 &&
+              ed.x.len == 57);
+    let ed_pem, eep = jwk::to_pem(ed);
+    tv::check_eq("Ed448 private PEM is OpenSSL's", ed_pem, load("ed448.key"));
+    // X448: no certificate; the private and public keys agree, and both go
+    // back to PEM as OpenSSL wrote them.
+    let xp = key("x448.key");
+    let xq = key("x448.pub");
+    tv::check("X448 key is OKP X448", xp.kty == jwa::KTY_OKP && xp.crv == jwa::CRV_X448 && xp.private && xp.d.len == 56 &&
+              !xq.private && xq.x.len == 56);
+    tv::check("X448 public key is the private key's", jwk::thumbprint(xq) == jwk::thumbprint(xp));
+    tv::check_int("X448 valid", jwk::validate(xp), jwx::OK);
+    let xp_pem, exp = jwk::to_pem(xp);
+    tv::check_eq("X448 private PEM is OpenSSL's", xp_pem, load("x448.key"));
+    let xq_pem, exq = jwk::to_pem(xp, true);
+    tv::check_eq("X448 public PEM is OpenSSL's", xq_pem, load("x448.pub"));
+    let xb, exb = jwk::from_pem(xp_pem);
+    tv::check("X448 private PEM round trip", exp == jwx::OK && exb == jwx::OK && jwk::marshal(xb) == jwk::marshal(xp));
+    // A generated pair, both curves, through PEM.
+    let g448 = jwk::generate_okp(jwa::CRV_ED448);
+    let gp, egp = jwk::to_pem(g448);
+    let gb, egb = jwk::from_pem(gp);
+    tv::check("generated Ed448 through PEM", egp == jwx::OK && egb == jwx::OK && jwk::marshal(gb) == jwk::marshal(g448));
+    let gx = jwk::generate_okp(jwa::CRV_X448);
+    let gxp, egx = jwk::to_pem(gx, true);
+    let gxb, egxb = jwk::from_pem(gxp);
+    tv::check("generated X448 public through PEM", egx == jwx::OK && egxb == jwx::OK && !gxb.private &&
+              gxb.x == gx.x && gxb.crv == jwa::CRV_X448);
+    // brainpoolP256r1: no JOSE curve, so none of its forms reads.
+    for f in ["bp256.key", "bp256.pub", "bp256.crt"] {
+        let kb, eb = jwk::from_pem(load(f));
+        tv::check_int(str(f, " refused"), eb, jwx::ERR_UNSUPPORTED);
     }
     let rsa1 = key("rsa-pkcs1.key");
     let rsa8 = key("rsa.key");

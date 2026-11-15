@@ -14,6 +14,12 @@ and decrypt each other's messages.
     SHA-256 one), AES-128/256-CBC (EnvelopedData) and AES-128/256-GCM
     (AuthEnvelopedData), several recipients, recipients by key identifier;
   - sign-then-encrypt both ways;
+  - brainpool and Ed448/X448 (RFC 5639, RFC 8410): signing by
+    brainpoolP256r1, P384r1 and P512r1 both ways, Ed448 signatures
+    without signed attributes from openssl (its cms cannot sign Ed448
+    with them, nor read RFC 8419's id-shake256-len, so ours do not go to
+    it), encryption to brainpool certificates both ways and to an X448
+    one here and back (openssl's cms has no X448 key agreement);
   - post-quantum, when openssl has ML-DSA and ML-KEM (3.5 or later):
     signing by ML-DSA-44, -65 and -87 (RFC 9882; openssl's SHAKE256
     digest and its SHA-512 one), encryption to ML-KEM-512, -768 and -1024
@@ -69,6 +75,16 @@ PQ_PEOPLE = [  # name, address, ML-DSA set (signing certificate), ML-KEM set (en
     ("frank", "frank@example.com", "ML-DSA-65", "ML-KEM-768"),
     ("grace", "grace@example.org", "ML-DSA-44", "ML-KEM-512"),
     ("heidi", "heidi@example.com", "ML-DSA-87", "ML-KEM-1024"),
+]
+CURVE_PEOPLE = [  # name, address, genpkey options, key usage
+    ("ivan", "ivan@example.com", ["-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:brainpoolP256r1"],
+     "digitalSignature,keyAgreement"),
+    ("judy", "judy@example.org", ["-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:brainpoolP384r1"],
+     "digitalSignature,keyAgreement"),
+    ("ken", "ken@example.com", ["-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:brainpoolP512r1"],
+     "digitalSignature,keyAgreement"),
+    ("lena", "lena@example.org", ["-algorithm", "ED448"], "digitalSignature"),
+    ("max", "max@example.com", ["-algorithm", "X448"], "keyAgreement"),   # -force_pubkey: X448 signs no request
 ]
 ENTITY = (b"Content-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: 7bit\r\n\r\n"
           b"Hello from OpenSSL.\r\nA second line, and a third:\r\n\r\n-- \r\nAlice\r\n")
@@ -548,7 +564,136 @@ def run_interop(d):
                         f("theirs.eml"), f("out.eml"))
         got = open(f("out.eml"), "rb").read() if os.path.exists(f("out.eml")) else b""
         report(name, rc == 0 and "encrypted" in text and "signer ok" in text and got.endswith(ENTITY), text)
+    run_curves_interop(d)
     run_pq_interop(d)
+
+
+def run_curves_interop(d):
+    """Brainpool, Ed448 and X448: CURVE_PEOPLE issued by run_interop's intermediate."""
+    f = lambda n: os.path.join(d, n)
+    for i, (name, addr, kopts, ku) in enumerate(CURVE_PEOPLE):
+        ossl("genpkey", *kopts, "-out", f(name + ".key"))
+        with open(f(name + ".ext"), "w") as fh:
+            fh.write(f"basicConstraints=CA:FALSE\nkeyUsage=critical,{ku}\nextendedKeyUsage=emailProtection\n"
+                     f"subjectAltName=email:{addr}\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid\n")
+        subj = f"/O=Example Test/CN={name.capitalize()} (test)"
+        common = ["-CA", f("inter.pem"), "-CAkey", f("inter.key"), "-set_serial", str(0x4000 + i), "-days", "36500",
+                  "-extfile", f(name + ".ext"), "-out", f(name + ".pem")]
+        if name == "max":
+            ossl("pkey", "-in", f(name + ".key"), "-pubout", "-out", f(name + ".pub"))
+            ossl("x509", "-new", "-force_pubkey", f(name + ".pub"), "-subj", subj, *common)
+        else:
+            ossl("req", "-new", "-key", f(name + ".key"), "-subj", subj, "-out", f(name + ".csr"))
+            ossl("x509", "-req", "-in", f(name + ".csr"), *common)
+        with open(f(name + "-chain.pem"), "w") as fh:
+            fh.write(open(f(name + ".pem")).read() + open(f("inter.pem")).read())
+    addr = dict((p[0], p[1]) for p in CURVE_PEOPLE)
+    body = b"Hello from OpenSSL."
+    signers = [("brainpoolP256r1", "ivan", [], []), ("brainpoolP384r1", "judy", ["--hash", "384"], ["-md", "sha384"]),
+               ("brainpoolP512r1", "ken", ["--hash", "512", "--keyid"], ["-md", "sha512", "-keyid"])]
+
+    # Ours, checked by openssl.
+    for label, who, opts, _ in signers:
+        for opaque in (False, True):
+            name = f"sign {label}{' opaque' if opaque else ''}: ours -> openssl"
+            if not wanted(name):
+                continue
+            rc, text = tool("sign", *opts, *(["--opaque"] if opaque else []), f(who + "-chain.pem"), f(who + ".key"),
+                            f("msg.eml"), f("ours.eml"))
+            if rc != 0:
+                report(name, False, text)
+                continue
+            p = ossl("cms", "-verify", "-in", f("ours.eml"), "-CAfile", f("root.pem"), "-purpose", "smimesign", check=False)
+            report(name, p.returncode == 0 and crlf(p.stdout) == ENTITY, p.stderr.decode())
+            if not opaque:
+                data = open(f("ours.eml"), "rb").read()
+                i = data.find(b"Hello from")
+                with open(f("bad.eml"), "wb") as fh:
+                    fh.write(data[:i] + b"J" + data[i + 1:])
+                p = ossl("cms", "-verify", "-in", f("bad.eml"), "-CAfile", f("root.pem"), check=False)
+                report(name + ", changed: refused", p.returncode != 0)
+    name = "sign ed448: ours refused (no micalg for SHAKE256)"
+    if wanted(name):
+        rc, text = tool("sign", f("lena-chain.pem"), f("lena.key"), f("msg.eml"), f("ours.eml"))
+        report(name, rc != 0, text)
+
+    # Theirs, checked by ours.
+    theirs = [(label, who, oopts) for label, who, _, oopts in signers] + [("ed448 no attributes", "lena", ["-noattr"])]
+    for label, who, oopts in theirs:
+        # Pure Ed448 takes the whole content: openssl signs it neither detached nor streamed.
+        modes = [(" opaque", ["-nodetach"])] if who == "lena" else [("", []), (" opaque", ["-nodetach"]), (" BER", ["-stream"])]
+        for mode, extra in modes:
+            name = f"sign {label}{mode}: openssl -> ours"
+            if not wanted(name):
+                continue
+            ossl("cms", "-sign", "-in", f("entity.txt"), "-signer", f(who + ".pem"), "-inkey", f(who + ".key"),
+                 "-certfile", f("inter.pem"), "-from", addr[who], "-subject", "Interop", *oopts, *extra,
+                 "-out", f("theirs.eml"))
+            rc, text = tool("verify", "--roots", f("root.pem"), "--now", NOW, f("theirs.eml"), f("out.eml"))
+            got = open(f("out.eml"), "rb").read() if os.path.exists(f("out.eml")) else b""
+            report(name, rc == 0 and "signer ok" in text and body in got, text)
+            if os.path.exists(f("out.eml")):
+                os.remove(f("out.eml"))
+    name = "sign brainpoolP256r1: openssl -> ours, changed: refused"
+    if wanted(name):
+        ossl("cms", "-sign", "-in", f("entity.txt"), "-signer", f("ivan.pem"), "-inkey", f("ivan.key"),
+             "-from", addr["ivan"], "-out", f("theirs.eml"))
+        data = open(f("theirs.eml"), "rb").read()
+        i = data.find(b"Hello from")
+        open(f("theirs.eml"), "wb").write(data[:i] + b"J" + data[i + 1:])
+        rc, text = tool("verify", f("theirs.eml"))
+        report(name, rc != 0 and "signature does not verify" in text, text)
+
+    # Encryption, ours -> openssl (the brainpool recipients) and ours -> ours (X448).
+    encs = [("brainpool", [], ["ivan", "judy", "ken"]),
+            ("brainpool aes128-gcm keyid", ["--cipher", "aes128-gcm", "--keyid"], ["judy"]),
+            ("brainpool and x448 with rsa", [], ["ken", "max", "alice"])]
+    for label, opts, rcpts in encs:
+        name = f"encrypt {label}: ours -> openssl"
+        if not wanted(name):
+            continue
+        rc, text = tool("encrypt", *opts, f("msg.eml"), f("ours.eml"), *[f(r + ".pem") for r in rcpts])
+        if rc != 0:
+            report(name, False, text)
+            continue
+        for r in rcpts:
+            if r == "max":
+                rc2, text2 = tool("decrypt", f("max.pem"), f("max.key"), f("ours.eml"), f("out.eml"))
+                got = open(f("out.eml"), "rb").read() if os.path.exists(f("out.eml")) else b""
+                report(f"{name} (max, x448: ours)", rc2 == 0 and got.endswith(ENTITY), text2)
+                continue
+            p = ossl("cms", "-decrypt", "-in", f("ours.eml"), "-recip", f(r + ".pem"), "-inkey", f(r + ".key"),
+                     check=False)
+            report(f"{name} ({r})", p.returncode == 0 and crlf(p.stdout) == ENTITY, p.stderr.decode())
+
+    # Encryption, openssl -> ours.
+    hdr = ["-from", "Ivan <ivan@example.com>", "-to", "judy@example.org", "-subject", "Interop"]
+    theirs = [("brainpoolP256r1", [f("ivan.pem")], "ivan"),
+              ("brainpoolP384r1 sha384 kdf", ["-recip", f("judy.pem"), "-keyopt", "ecdh_kdf_md:sha384"], "judy"),
+              ("brainpoolP512r1 aes-128-gcm keyid", ["-aes-128-gcm", "-keyid", f("ken.pem")], "ken"),
+              ("brainpool with rsa, BER", ["-stream", f("alice.pem"), f("ivan.pem"), f("judy.pem")], "judy")]
+    for label, args, who in theirs:
+        name = f"encrypt {label}: openssl -> ours"
+        if not wanted(name):
+            continue
+        ossl("cms", "-encrypt", "-in", f("entity.txt"), *hdr, "-out", f("theirs.eml"), *args)
+        rc, text = tool("decrypt", f(who + ".pem"), f(who + ".key"), f("theirs.eml"), f("out.eml"))
+        got = open(f("out.eml"), "rb").read() if os.path.exists(f("out.eml")) else b""
+        report(name, rc == 0 and "encrypted" in text and got.endswith(ENTITY), text)
+        if os.path.exists(f("out.eml")):
+            os.remove(f("out.eml"))
+
+    name = "sign-encrypt brainpool: ours -> openssl"
+    if wanted(name):
+        rc, text = tool("sign-encrypt", "--hash", "384", f("judy-chain.pem"), f("judy.key"), f("msg.eml"), f("ours.eml"),
+                        f("ivan.pem"), f("judy.pem"))
+        ok = rc == 0
+        if ok:
+            p = ossl("cms", "-decrypt", "-in", f("ours.eml"), "-recip", f("ivan.pem"), "-inkey", f("ivan.key"), check=False)
+            q = ossl("cms", "-verify", "-CAfile", f("root.pem"), input=p.stdout, check=False)
+            ok = p.returncode == 0 and q.returncode == 0 and crlf(q.stdout) == ENTITY
+            text = p.stderr.decode() + q.stderr.decode()
+        report(name, ok, text)
 
 
 def run_pq_interop(d):

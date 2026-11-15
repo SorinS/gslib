@@ -1,6 +1,6 @@
 // Messages made by Go's lestrrat-go/jwx v4 (test/vectors/go_jwx.txt, from
-// scripts/differential: go run . gen): every signature algorithm (ML-DSA
-// with AKP keys too), compact and JSON, and every key management
+// scripts/differential: go run . gen): every signature algorithm (Ed448,
+// and ML-DSA with AKP keys, too), compact and JSON, and every key management
 // algorithm with every content algorithm, some compressed, some as JSON,
 // each verified or decrypted here with its key, and refused with a byte
 // of the signature or tag changed. tools/tokens.goose and `go run . check` go the other way.

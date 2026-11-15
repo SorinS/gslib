@@ -28,7 +28,12 @@ ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 HASHES = {"SHA-1": 160, "SHA-224": 224, "SHA-256": 256, "SHA-384": 384, "SHA-512": 512,
           "SHA-512/224": 5224, "SHA-512/256": 5256, "SHA3-224": 3224, "SHA3-256": 3256,
           "SHA3-384": 3384, "SHA3-512": 3512}
-CURVES = {"secp224r1": 224, "secp256r1": 256, "secp384r1": 384, "secp521r1": 521}
+# Curve ids for the goose side; the Brainpool curves' are 2000 + bits.
+CURVES = {"secp224r1": 224, "secp256r1": 256, "secp384r1": 384, "secp521r1": 521,
+          "brainpoolP256r1": 2256, "brainpoolP384r1": 2384, "brainpoolP512r1": 2512}
+CURVE_OIDS = {"secp224r1": "2b81040021", "secp256r1": "2a8648ce3d030107", "secp384r1": "2b81040022",
+              "secp521r1": "2b81040023", "brainpoolP256r1": "2b2403030208010107",
+              "brainpoolP384r1": "2b240303020801010b", "brainpoolP512r1": "2b240303020801010d"}
 MLKEM = {"ML-KEM-512": 2, "ML-KEM-768": 3, "ML-KEM-1024": 4}
 
 
@@ -85,6 +90,46 @@ def rsa_private(k):
     else:
         p, q = primes_of(n, e, d)
     return [hexint(n), hexint(e), hexint(d), hexint(p), hexint(q)]
+
+
+def der_tlv(b, at):
+    """Tag, start and end of the DER element at b[at:], or None unless its
+    length is in the shortest form and within b."""
+    if at + 2 > len(b):
+        return None
+    tag, ln, start = b[at], b[at + 1], at + 2
+    if ln >= 0x80:
+        nb = ln & 0x7f
+        if nb == 0 or nb > 2 or start + nb > len(b) or b[start] == 0:
+            return None
+        ln = int.from_bytes(b[start:start + nb], "big")
+        start += nb
+        if ln < 0x80 or (nb == 2 and ln < 0x100):
+            return None
+    if start + ln > len(b):
+        return None
+    return tag, start, start + ln
+
+
+def spki_point(der_hex, curve):
+    """The point in an EC SubjectPublicKeyInfo naming `curve`, or "-" for
+    anything else: SEQUENCE { SEQUENCE { id-ecPublicKey, curve OID },
+    BIT STRING (no unused bits) }, strictly DER, nothing after."""
+    b = bytes.fromhex(der_hex)
+    outer = der_tlv(b, 0)
+    if not outer or outer[0] != 0x30 or outer[2] != len(b):
+        return "-"
+    alg = der_tlv(b, outer[1])
+    if not alg or alg[0] != 0x30:
+        return "-"
+    oid = CURVE_OIDS[curve]
+    want = "06072a8648ce3d0201" + "06" + format(len(oid) // 2, "02x") + oid
+    if b[alg[1]:alg[2]].hex() != want:
+        return "-"
+    bits = der_tlv(b, alg[2])
+    if not bits or bits[0] != 3 or bits[2] != outer[2] or bits[2] - bits[1] < 2 or b[bits[1]] != 0:
+        return "-"
+    return b[bits[1] + 1:bits[2]].hex()
 
 
 def convert(name, d):
@@ -157,7 +202,7 @@ def group_rows(name, d, g):
         if g["curve"] not in CURVES:
             raise Unsupported(f"curve {g['curve']}")
         c = str(CURVES[g["curve"]])
-        size = (CURVES[g["curve"]] + 7) // 8
+        size = (CURVES[g["curve"]] % 1000 + 7) // 8
         # Wycheproof's private keys are integers (a leading 00 at times);
         # ecdh_shared takes them as wide as the curve.
         def ecdh(t):
@@ -166,6 +211,19 @@ def group_rows(name, d, g):
                 raise Unsupported("ECDH private key wider than the curve")
             return ["ecdh", c, t["public"], v.to_bytes(size, "big").hex(), t["shared"]]
         return ecdh
+    if typ == "EcdhTest" and g.get("encoding") == "asn":
+        # Public keys as SubjectPublicKeyInfo; their point may be compressed.
+        if g["curve"] not in CURVES:
+            raise Unsupported(f"curve {g['curve']}")
+        c = str(CURVES[g["curve"]])
+        size = (CURVES[g["curve"]] % 1000 + 7) // 8
+        def ecdh_asn(t):
+            v = int(t["private"] or "0", 16)
+            if v.bit_length() > 8 * size:
+                raise Unsupported("ECDH private key wider than the curve")
+            return ["ecdh_asn", c, spki_point(t["public"], g["curve"]), v.to_bytes(size, "big").hex(),
+                    t["shared"]]
+        return ecdh_asn
     if typ in ("EcdsaVerify", "EcdsaP1363Verify"):
         if g["publicKey"]["curve"] not in CURVES:
             raise Unsupported(f"curve {g['publicKey']['curve']}")
@@ -175,14 +233,16 @@ def group_rows(name, d, g):
         enc = "der" if typ == "EcdsaVerify" else "p1363"
         return lambda t: ["ecdsa", c, hid, pk, t["msg"], t["sig"], enc]
     if typ == "EddsaVerify":
-        if g["publicKey"]["curve"] != "edwards25519":
+        kind = {"edwards25519": "ed25519", "edwards448": "ed448"}.get(g["publicKey"]["curve"])
+        if not kind:
             raise Unsupported(f"EdDSA on {g['publicKey']['curve']}")
         pk = g["publicKey"]["pk"]
-        return lambda t: ["ed25519", pk, t["msg"], t["sig"]]
+        return lambda t: [kind, pk, t["msg"], t["sig"]]
     if typ == "XdhComp":
-        if g["curve"] != "curve25519":
+        kind = {"curve25519": "x25519", "curve448": "x448"}.get(g["curve"])
+        if not kind:
             raise Unsupported(f"XDH on {g['curve']}")
-        return lambda t: ["x25519", t["public"], t["private"], t["shared"]]
+        return lambda t: [kind, t["public"], t["private"], t["shared"]]
     if typ == "RsassaPkcs1Verify":
         hid = str(hash_id(g["sha"]))
         n, e = g["publicKey"]["modulus"], g["publicKey"]["publicExponent"]
@@ -245,7 +305,8 @@ WANTED = ("aes_gcm_test", "chacha20_poly1305_test", "xchacha20_poly1305_test", "
           "camellia_cbc_pkcs5_test", "aes_cmac_test", "camellia_cmac_test",
           "aes_xts_test", "hmac_", "hkdf_", "pbkdf2_", "ecdh_secp224r1_ecpoint", "ecdh_secp256r1_ecpoint",
           "ecdh_secp384r1_ecpoint", "ecdh_secp521r1_ecpoint", "ecdsa_secp224r1_", "ecdsa_secp256r1_",
-          "ecdsa_secp384r1_", "ecdsa_secp521r1_", "ed25519_test", "x25519_test", "rsa_signature_", "rsa_pss_",
+          "ecdsa_secp384r1_", "ecdsa_secp521r1_", "ecdh_brainpoolP256r1_test", "ecdh_brainpoolP384r1_test",
+          "ecdh_brainpoolP512r1_test", "ecdsa_brainpoolP256r1_", "ecdsa_brainpoolP384r1_", "ecdsa_brainpoolP512r1_", "ed25519_test", "x25519_test", "ed448_test", "x448_test", "rsa_signature_", "rsa_pss_",
           "rsa_pkcs1_", "rsa_oaep_", "dsa_", "mlkem_", "mldsa_", "primality_test")
 
 
@@ -272,7 +333,7 @@ def main():
         names = [n for n in names if n in args.files]
     else:
         names = [n for n in names if any((n + "_test").startswith(w) or w in n + "_test" for w in WANTED)
-                 and not n.startswith("rsa_three_primes") and "_brainpool" not in n]
+                 and not n.startswith("rsa_three_primes")]
     if args.list:
         print("\n".join(names))
         return

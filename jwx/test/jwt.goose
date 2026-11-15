@@ -2,12 +2,14 @@
 // HMAC key) verified and its claims read; validation of exp, nbf, iat,
 // iss, sub, aud, jti, max_age and required claims, at their edges and with
 // skew; claims of the caller's own; signed, encrypted and nested tokens
-// round-tripped; "aud" as a string and as an array; fractional dates.
+// round-tripped; "aud" as a string and as an array, audiences holding a
+// NUL kept whole in signed tokens; fractional dates.
 import std;
 import gslib from "../..";
 import gslib.jwx;
 import gslib.jwx.jwa;
 import gslib.jwx.jwk;
+import gslib.jwx.jws;
 import gslib.jwx.jwt;
 import tv;
 
@@ -142,6 +144,77 @@ fn forms() {
     tv::check_eq("aud flattened", jwt::marshal(one, true), "{\"aud\":\"api\"}");
 }
 
+fn audience_of(want: const u8[:]) -> jwt::Validator {
+    var v = jwt::Validator { .. };
+    v.audience.append(want);
+    return v;
+}
+
+// Audiences holding a NUL, in tokens signed with HMAC and with ECDSA, as a
+// string and in an array: each is one audience, the very string, so a
+// validator for "api" refuses "other\0api", "\0api" and "api\0".
+fn nul_audiences() {
+    var keys: jwk::Key[>..] = [];
+    keys.push(jwk::generate_oct(32));
+    keys.push(jwk::generate_ec(jwa::CRV_P256));
+    let algs = [jwa::HS256, jwa::ES256];
+    for i in 2 {
+        let alg = algs[i];
+        let pub = jwk::public_key(keys[i]);
+        let name = jwa::name(alg);
+        fn signed(payload: const u8[:]) -> u8[>..] {
+            var h = jws::Header { .. };
+            h.alg = alg;
+            h.typ.append("JWT");
+            let t, e = jws::sign_with(payload, keys[i], h);
+            tv::check_int(str(name, " signed ", payload), e, jwx::OK);
+            return t;
+        }
+        let auds = ["other\0api", "\0api", "api\0"];
+        let texts = ["other\\u0000api", "\\u0000api", "api\\u0000"];
+        for j in 3 {
+            for form in 2 {
+                let payload = if form == 0 { str("{\"aud\":\"", texts[j], "\"}") }
+                              else { str("{\"aud\":[\"x\",\"", texts[j], "\"]}") };
+                let t = signed(payload);
+                var c = jwt::new_claims();
+                tv::check_int(str(name, " NUL audience not api ", payload), jwt::parse(t, alg, pub, c, audience_of("api")),
+                              jwx::ERR_AUDIENCE);
+                var c2 = jwt::new_claims();
+                tv::check_int(str(name, " NUL audience itself ", payload),
+                              jwt::parse(t, alg, pub, c2, audience_of(auds[j])), jwx::OK);
+                let got = jwt::audiences(c2);
+                tv::check(str(name, " NUL audience kept whole ", payload),
+                          got.len == form + 1 && got[form] == auds[j]);
+                var c3 = jwt::new_claims();
+                tv::check_int(str(name, " NUL audience not other ", payload),
+                              jwt::parse(t, alg, pub, c3, audience_of("other")), jwx::ERR_AUDIENCE);
+            }
+        }
+        // Ordinary audiences still work, an empty one is kept.
+        let t = signed("{\"aud\":\"api\"}");
+        var c = jwt::new_claims();
+        tv::check_int(str(name, " aud string api"), jwt::parse(t, alg, pub, c, audience_of("api")), jwx::OK);
+        let t2 = signed("{\"aud\":[\"web\",\"\",\"api\"]}");
+        var c2 = jwt::new_claims();
+        tv::check_int(str(name, " aud array api"), jwt::parse(t2, alg, pub, c2, audience_of("api")), jwx::OK);
+        let got = jwt::audiences(c2);
+        tv::check(str(name, " three audiences"), got.len == 3 && got[0] == "web" && got[1] == "" && got[2] == "api");
+        var c3 = jwt::new_claims();
+        tv::check_int(str(name, " aud array other"), jwt::parse(t2, alg, pub, c3, audience_of("mobile")), jwx::ERR_AUDIENCE);
+    }
+
+    // add_audience keeps a NUL too, and marshal writes it escaped.
+    var c = jwt::new_claims();
+    jwt::add_audience(c, "other\0api");
+    jwt::add_audience(c, "");
+    tv::check_eq("NUL audience written", jwt::marshal(c), "{\"aud\":[\"other\\u0000api\",\"\"]}");
+    let t, e = jwt::sign(c, jwa::HS256, keys[0]);
+    var got = jwt::new_claims();
+    tv::check_int("NUL audience round trip", jwt::parse(t, jwa::HS256, keys[0], got, audience_of("api")), jwx::ERR_AUDIENCE);
+    tv::check_eq("NUL audience read back", jwt::marshal(got), jwt::marshal(c));
+}
+
 fn tokens() {
     var c = jwt::new_claims();
     c.sub.append("carol");
@@ -186,6 +259,7 @@ fn main() {
     rfc();
     validation();
     forms();
+    nul_audiences();
     tokens();
     tv::done("jwt");
 }

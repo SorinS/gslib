@@ -1,10 +1,12 @@
 // jwx.pem: JWKs from and to PEM and DER, through crypto/x509: private keys
 // (PKCS #8, SEC 1, PKCS #1), public keys (SubjectPublicKeyInfo) and
 // certificates, as jwx's jwk.ParseKey(..., WithPEM(true)) and
-// jwk.FromRaw read them. RSA, EC (P-256, P-384, P-521), Ed25519 and
-// ML-DSA (RFC 9881's keys as RFC 9964's AKP JWKs; a PKCS #8 key must hold
-// its seed); other key types are ERR_UNSUPPORTED. A separate module so
-// that jwk alone does not bring in x509.
+// jwk.FromRaw read them. RSA, EC (P-256, P-384, P-521), Ed25519, Ed448
+// and X448 (RFC 8410's keys as RFC 8037's OKP JWKs) and ML-DSA (RFC 9881's
+// keys as RFC 9964's AKP JWKs; a PKCS #8 key must hold its seed); other
+// key types, the brainpool curves among them (JOSE names none), are
+// ERR_UNSUPPORTED. A separate module so that jwk alone does not bring in
+// x509.
 
 namespace jwk;
 
@@ -51,6 +53,12 @@ fn from_private(pk: const x509::PrivateKey&) -> Key, i64 {
         k.x.append(bignum::ed25519_public(pk.seed));
         return k, jwx::OK;
     }
+    if pk.kind == x509::KEY_ED448 || pk.kind == x509::KEY_X448 {
+        let crv = if pk.kind == x509::KEY_ED448 { jwa::CRV_ED448 } else { jwa::CRV_X448 };
+        if pk.key448.len != jwa::crv_len(crv) { return k, jwx::ERR_KEY; }
+        let k2 = okp_from_private(crv, pk.key448);
+        return k2, jwx::OK;
+    }
     if x509::is_mldsa(pk.kind) {
         let k2 = akp_from_seed(jwa::mldsa_alg(x509::mldsa_set(pk.kind)), pk.seed);
         return k2, jwx::OK;
@@ -87,6 +95,14 @@ fn from_spki_tlv(der: const u8[:], t: asn1::Tlv) -> Key, i64 {
         if kb.len != 32 { return k, jwx::ERR_KEY; }
         k.kty = jwa::KTY_OKP;
         k.crv = jwa::CRV_ED25519;
+        k.x.append(kb);
+        return k, jwx::OK;
+    }
+    if kind == x509::KEY_ED448 || kind == x509::KEY_X448 {
+        let crv = if kind == x509::KEY_ED448 { jwa::CRV_ED448 } else { jwa::CRV_X448 };
+        if kb.len != jwa::crv_len(crv) { return k, jwx::ERR_KEY; }
+        k.kty = jwa::KTY_OKP;
+        k.crv = crv;
         k.x.append(kb);
         return k, jwx::OK;
     }
@@ -167,6 +183,12 @@ fn to_private(k: const Key&) -> x509::PrivateKey, i64 {
     } else if k.kty == jwa::KTY_OKP && k.crv == jwa::CRV_ED25519 {
         pk.kind = x509::KEY_ED25519;
         for i in 32 { pk.seed[i] = k.d[i]; }
+    } else if k.kty == jwa::KTY_OKP && (k.crv == jwa::CRV_ED448 || k.crv == jwa::CRV_X448) {
+        // The Ed448 seed (57 bytes) or X448 private key (56), as PKCS #8
+        // holds them (RFC 8410).
+        if k.d.len != jwa::crv_len(k.crv) { return pk, jwx::ERR_KEY; }
+        pk.kind = if k.crv == jwa::CRV_ED448 { x509::KEY_ED448 } else { x509::KEY_X448 };
+        pk.key448.append(k.d);
     } else if k.kty == jwa::KTY_EC {
         pk.kind = kind_of_crv(k.crv);
         pk.ec_sk.append(k.d);
@@ -198,6 +220,10 @@ fn marshal_spki(k: const Key&) -> u8[>..], i64 {
         key.append(ec_point(k));
     } else if k.kty == jwa::KTY_OKP && k.crv == jwa::CRV_ED25519 {
         asn1::put_oid(alg, "1.3.101.112");
+        key.append(k.x);
+    } else if k.kty == jwa::KTY_OKP && (k.crv == jwa::CRV_ED448 || k.crv == jwa::CRV_X448) {
+        // id-Ed448 and id-X448, no parameters (RFC 8410 §3).
+        asn1::put_oid(alg, if k.crv == jwa::CRV_ED448 { "1.3.101.113" } else { "1.3.101.111" });
         key.append(k.x);
     } else if k.kty == jwa::KTY_AKP && jwa::is_mldsa(k.alg) {
         // No parameters (RFC 9881 §2).

@@ -22,7 +22,9 @@ let FILES = ["ed.pub", "ed.sec", "prot.sec", "rsa.pub", "enc_ed.gpg", "enc_rsa.a
              "sym.gpg", "sym_aes128_zlib.asc", "sig_inline.gpg", "sig_inline_rsa.asc", "det.sig", "det_rsa.asc",
              "clear.asc", "rfc9580_a3_cert.asc", "rfc9580_a4_secret.asc", "rfc9580_a7_inline.asc", "rfc9580_a6_cleartext.asc",
              "pqc.sec", "pqc_prot.sec", "enc_pqc.gpg", "enc_pqc_signed.gpg", "rfc9980_a1_cert.asc", "rfc9980_a1_msg.asc",
-             "rfc9980_a2_msg_seipd1.asc", "rfc9980_a3_sig.asc"];
+             "rfc9980_a2_msg_seipd1.asc", "rfc9980_a3_sig.asc", "bp384.sec", "ed448.sec", "ed448_prot.sec",
+             "pqcbp_prot.sec", "ky1024cv.sec", "enc_bp256.gpg", "enc_ed448.gpg", "enc_pqcbp.gpg", "enc_ky1024bp.gpg",
+             "enc_curves_signed.gpg", "sig_ed448.gpg", "det_bp512.sig", "dett_ed448.asc", "clear_ed448.asc"];
 
 var calls = 0;
 
@@ -51,7 +53,9 @@ fn main() {
     var kr = openpgp::Keyring { .. };
     let ek = openpgp::add_keys(kr, tv::read(str(V, "ed.sec")));
     // Post-quantum: gpg's Kyber key, RFC 9980's A.1 and A.2 keys and A.3's ML-DSA certificate.
-    for f in ["pqc.sec", "rfc9980_a1_secret.asc", "rfc9980_a2_secret.asc", "rfc9980_a3_cert.asc"] {
+    // The newer curves: Brainpool, gpg's Ed448 and its Brainpool and X448 Kyber keys.
+    for f in ["pqc.sec", "rfc9980_a1_secret.asc", "rfc9980_a2_secret.asc", "rfc9980_a3_cert.asc", "bp256.sec",
+              "bp512.sec", "ed448.sec", "pqcbp.sec", "ky1024cv.sec", "ky1024bp.sec"] {
         let ep = openpgp::add_keys(kr, tv::read(str(V, f)));
     }
     var pass = tv::read(str(V, "passphrase.txt"));

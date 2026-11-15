@@ -3,7 +3,9 @@
 
 gpg makes two test keys (Ed25519 + Curve25519, and RSA-3072) in a
 throwaway GNUPGHOME, and for the interop a post-quantum one (Carol:
-Ed25519 with gpg's ky768_cv25519 subkey, LibrePGP's ML-KEM-768+X25519).
+Ed25519 with gpg's ky768_cv25519 subkey, LibrePGP's ML-KEM-768+X25519),
+gpg's default post-quantum key (Dave: brainpoolP384r1 with ky768_bp256)
+and an Ed448 one (Erin: gpg's v5 Ed448 with cv448, v5 signatures).
 Then:
 
   ours -> gpg   mail.pgp signs a message (multipart/signed): gpg verifies
@@ -11,12 +13,14 @@ Then:
                 mail.pgp encrypts one (multipart/encrypted), signed and
                 not: gpg decrypts the second body part to the entity,
                 and checks the signature inside; the same to Carol's
-                post-quantum key
+                and Dave's post-quantum keys and Erin's Ed448 key, Dave
+                and Erin signing too (micalg pgp-sha384, pgp-sha512)
   gpg -> ours   gpg signs an entity and encrypts one (signed in the same
                 message, RFC 3156 §6.2, and a multipart/signed inside the
                 encryption, §6.1); the messages are put together here as a
                 mail client would, and mail.pgp opens them to the entity;
-                gpg encrypts one to Carol's post-quantum key
+                gpg encrypts one to Carol's post-quantum key, and signs and
+                encrypts with Dave's and Erin's
 
 The goose side is test/pgp/pgpmime.goose, built into the temp directory.
 
@@ -65,35 +69,47 @@ def make_keys(g):
 
 
 def make_pqc_key(g):
-    """Carol: Ed25519 with a ky768_cv25519 subkey (gpg's own "pqc" default
-    is Brainpool, which mail.pgp's openpgp does not do)."""
+    """Carol: Ed25519 with a ky768_cv25519 subkey; Dave: gpg's own "pqc"
+    default (brainpoolP384r1 with ky768_bp256); Erin: Ed448 with cv448."""
     g.gpg("--passphrase", "", "--pinentry-mode", "loopback", "--quick-gen-key",
           "Carol <carol@example.com>", "ed25519", "cert,sign", "never")
     fpr = [l.split(":")[9] for l in g.gpg("--with-colons", "--fingerprint", "--list-keys", "carol@example.com")
            .stdout.decode().splitlines() if l.startswith("fpr:")][0]
     g.gpg("--passphrase", "", "--pinentry-mode", "loopback", "--quick-add-key", fpr, "ky768_cv25519", "encr", "never")
+    g.gpg("--passphrase", "", "--pinentry-mode", "loopback", "--quick-gen-key",
+          "Dave <dave@example.com>", "pqc", "default", "never")
+    g.gpg("--passphrase", "", "--pinentry-mode", "loopback", "--quick-gen-key",
+          "Erin <erin@example.com>", "ed448", "cert,sign", "never")
+    fpr = [l.split(":")[9] for l in g.gpg("--with-colons", "--fingerprint", "--list-keys", "erin@example.com")
+           .stdout.decode().splitlines() if l.startswith("fpr:")][0]
+    g.gpg("--passphrase", "", "--pinentry-mode", "loopback", "--quick-add-key", fpr, "cv448", "encr", "never")
 
 
-def gpg_signed(g, d):
+# The hash each signer's key signs with here and in gpg (micalg pgp-<hash>).
+MICALG = {"alice": "sha256", "bob": "sha256", "carol": "sha256", "dave": "sha384", "erin": "sha512"}
+
+
+def gpg_signed(g, d, signer="alice"):
     """A multipart/signed message put together around gpg's signature."""
     ent = os.path.join(d, "entity")
     with open(ent, "wb") as f:
         f.write(ENTITY)
-    sig = g.gpg("--trust-model", "always", "-u", "alice@example.com", "--digest-algo", "SHA256",
+    h = MICALG[signer]
+    sig = g.gpg("--trust-model", "always", "-u", signer + "@example.com", "--digest-algo", h.upper(),
                 "-a", "-b", "-o", "-", ent).stdout.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
     b = b"gpg-signed-boundary"
-    return (OUTER + b'Content-Type: multipart/signed; boundary="' + b + b'"; micalg=pgp-sha256;\r\n'
+    return (OUTER + b'Content-Type: multipart/signed; boundary="' + b + b'"; micalg=pgp-' + h.encode() + b';\r\n'
             b' protocol="application/pgp-signature"\r\n\r\n--' + b + b"\r\n" + ENTITY + b"\r\n--" + b +
             b"\r\nContent-Type: application/pgp-signature; name=\"signature.asc\"\r\n\r\n" + sig +
             b"\r\n--" + b + b"--\r\n")
 
 
-def gpg_encrypted(g, d, entity, sign, rcpts=("bob", "alice")):
+def gpg_encrypted(g, d, entity, sign, rcpts=("bob", "alice"), signer="alice"):
     """A multipart/encrypted message around gpg's encryption of entity."""
     ent = os.path.join(d, "entity2")
     with open(ent, "wb") as f:
         f.write(entity)
-    extra = ["-u", "alice@example.com", "-s"] if sign else []
+    extra = ["-u", signer + "@example.com", "-s"] if sign else []
     to = [a for r in rcpts for a in ("-r", r + "@example.com")]
     enc = g.gpg("--trust-model", "always", *to, *extra,
                 "-a", "-e", "-o", "-", ent).stdout.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
@@ -200,7 +216,7 @@ def main():
 
         # Ours -> gpg.
         write("plain.eml", OUTER + ENTITY)
-        for signer in ("alice", "bob"):
+        for signer in ("alice", "bob", "dave", "erin"):
             name = f"gpg verifies our multipart/signed by {signer}"
             q = subprocess.run([tool, "sign", keys, signer + "@example.com", path("plain.eml"), path("s.eml")], capture_output=True)
             ok = q.returncode == 0
@@ -212,12 +228,16 @@ def main():
                 write("s.asc", ps[1].split(b"\r\n\r\n", 1)[1])
                 v = g.gpg("--trust-model", "always", "--verify", path("s.asc"), path("s.part"), check=False)
                 ok = (v.returncode == 0 and b"Good signature" in v.stderr and ps[0] == ENTITY
-                      and msg.startswith(OUTER[:-len(b"MIME-Version: 1.0\r\n")]) and b"micalg=pgp-sha256" in msg)
+                      and msg.startswith(OUTER[:-len(b"MIME-Version: 1.0\r\n")])
+                      and b"micalg=pgp-" + MICALG[signer].encode() in msg)
                 detail = v.stderr
             case(name, ok, detail)
+        kinds = {"carol": " (Kyber)", "dave": " (Kyber, Brainpool)", "erin": " (Ed448)"}
+        subkey = {"carol": b"ky768_cv25519", "dave": b"ky768_bp256", "erin": b"cv448"}
         for rcpt, signer in (("bob", "-"), ("alice", "-"), ("bob", "alice"), ("alice", "bob"), ("carol", "-"),
-                             ("carol", "alice")):
-            name = (f"gpg decrypts our multipart/encrypted to {rcpt}" + (" (Kyber)" if rcpt == "carol" else "")
+                             ("carol", "alice"), ("dave", "-"), ("dave", "dave"), ("erin", "-"), ("erin", "erin"),
+                             ("alice", "dave"), ("alice", "erin")):
+            name = (f"gpg decrypts our multipart/encrypted to {rcpt}" + kinds.get(rcpt, "")
                     + ("" if signer == "-" else f", signed by {signer}"))
             signer_arg = signer if signer == "-" else signer + "@example.com"
             q = subprocess.run([tool, "encrypt", keys, rcpt + "@example.com", signer_arg, path("plain.eml"), path("e.eml")],
@@ -230,7 +250,7 @@ def main():
                 v = g.gpg("--trust-model", "always", "-o", path("e.out"), "--decrypt", path("e.asc"), check=False)
                 ok = (v.returncode == 0 and read("e.out") == ENTITY and ps[0].endswith(b"Version: 1\r\n")
                       and (signer == "-" or b"Good signature" in v.stderr)
-                      and (rcpt != "carol" or b"ky768_cv25519" in v.stderr))
+                      and (rcpt not in subkey or subkey[rcpt] in v.stderr))
                 detail = v.stderr
             case(name, ok, detail)
 
@@ -244,7 +264,13 @@ def main():
                                      ("we open gpg's multipart/encrypted to carol (Kyber)",
                                       gpg_encrypted(g, d, ENTITY, False, ("carol",)), True, False),
                                      ("we open gpg's signed and encrypted to carol (Kyber)",
-                                      gpg_encrypted(g, d, ENTITY, True, ("carol",)), True, True)):
+                                      gpg_encrypted(g, d, ENTITY, True, ("carol",)), True, True),
+                                     ("we open gpg's multipart/signed by dave (Brainpool)", gpg_signed(g, d, "dave"), False, True),
+                                     ("we open gpg's multipart/signed by erin (Ed448, v5)", gpg_signed(g, d, "erin"), False, True),
+                                     ("we open gpg's signed and encrypted to dave (Kyber, Brainpool), by dave",
+                                      gpg_encrypted(g, d, ENTITY, True, ("dave",), "dave"), True, True),
+                                     ("we open gpg's signed and encrypted to erin (Ed448), by erin",
+                                      gpg_encrypted(g, d, ENTITY, True, ("erin",), "erin"), True, True)):
             write("g.eml", data)
             q = subprocess.run([tool, "open", keys, path("g.eml"), path("g.out")], capture_output=True)
             ok = (q.returncode == 0 and read("g.out") == ENTITY and (b"encrypted" in q.stdout) == enc

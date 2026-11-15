@@ -1,0 +1,9 @@
+{
+  "name": "goose-oauth-interop-op",
+  "private": true,
+  "description": "node-oidc-provider for gslib's oauth interop tests (scripts/interop.py)",
+  "type": "module",
+  "dependencies": {
+    "oidc-provider": "9.15.0"
+  }
+}

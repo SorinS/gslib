@@ -79,6 +79,7 @@ static int sock_poll(sock_t s, short events, int timeout_ms) {
 static void set_nonblocking(sock_t s, int on) { u_long v = on ? 1 : 0; ioctlsocket(s, FIONBIO, &v); }
 static void sock_close(sock_t s) { closesocket(s); }
 static int in_progress(void) { return WSAGetLastError() == WSAEWOULDBLOCK; }
+static int would_block(void) { return WSAGetLastError() == WSAEWOULDBLOCK; }
 #else
 static void start(void) {}
 static int sock_poll(sock_t s, short events, int timeout_ms) {
@@ -93,6 +94,22 @@ static void set_nonblocking(sock_t s, int on) {
 }
 static void sock_close(sock_t s) { close(s); }
 static int in_progress(void) { return errno == EINPROGRESS; }
+static int would_block(void) { return errno == EAGAIN || errno == EWOULDBLOCK; }
+#endif
+
+/* A connected socket stays blocking, but read and write must never block
+   in recv or send: POLLOUT promises room for some of a write, not all of
+   it (a peer that stops reading would hold send for ever, past any
+   timeout), and a POLLIN can be spurious. So write makes the socket
+   non-blocking while it runs (macOS ignores MSG_DONTWAIT in send), and
+   read passes MSG_DONTWAIT, or on Windows, which has no such flag, does
+   as write does. */
+#if defined(_WIN32) || !defined(MSG_DONTWAIT)
+#  define RECV_FLAGS 0
+#  define RECV_NONBLOCKING(s, on) set_nonblocking(s, on)
+#else
+#  define RECV_FLAGS MSG_DONTWAIT
+#  define RECV_NONBLOCKING(s, on) ((void)0)
 #endif
 
 /* The time left before a deadline (ms), for poll: -1 for none. */
@@ -158,32 +175,36 @@ int64_t gsnet_dial(gsnet_slice host, int32_t port, int32_t timeout_ms) {
    GSNET_ETIMEOUT if nothing came within timeout_ms (0: wait for ever). */
 int64_t gsnet_read(int64_t fd, gsnet_buf buf, int32_t timeout_ms) {
     sock_t s = (sock_t)fd;
-    if (timeout_ms > 0) {
-        int r = sock_poll(s, POLLIN, timeout_ms);
-        if (r == 0) return GSNET_ETIMEOUT;
-        if (r < 0) return GSNET_EIO;
-    }
-    int64_t n;
+    int64_t deadline = timeout_ms > 0 ? now_ms() + timeout_ms : 0;
     size_t want = buf.len > (1 << 30) ? (size_t)1 << 30 : (size_t)buf.len;
+    int64_t n;
+    RECV_NONBLOCKING(s, 1);
+    for (;;) {
 #if defined(_WIN32)
-    n = recv(s, (char *)buf.data, (int)want, 0);
+        n = recv(s, (char *)buf.data, (int)want, RECV_FLAGS);
 #else
-    do { n = recv(s, buf.data, want, 0); } while (n < 0 && errno == EINTR);
+        do { n = recv(s, buf.data, want, RECV_FLAGS); } while (n < 0 && errno == EINTR);
 #endif
-    return n < 0 ? GSNET_EIO : n;
+        if (n >= 0) break;
+        if (!would_block()) { n = GSNET_EIO; break; }
+        int r = sock_poll(s, POLLIN, left(deadline));
+        if (r == 0) { n = GSNET_ETIMEOUT; break; }
+        if (r < 0) { n = GSNET_EIO; break; }
+    }
+    RECV_NONBLOCKING(s, 0);
+    return n;
 }
 
 /* All of data, or an error; GSNET_ETIMEOUT if the peer takes nothing
-   for timeout_ms (0: wait for ever). */
+   for timeout_ms (0: wait for ever). The timeout counts from the last
+   progress, not from the call: a peer that keeps taking some is waited
+   for. */
 int64_t gsnet_write(int64_t fd, gsnet_slice data, int32_t timeout_ms) {
     sock_t s = (sock_t)fd;
-    int64_t off = 0;
-    while (off < data.len) {
-        if (timeout_ms > 0) {
-            int r = sock_poll(s, POLLOUT, timeout_ms);
-            if (r == 0) return GSNET_ETIMEOUT;
-            if (r < 0) return GSNET_EIO;
-        }
+    int64_t off = 0, result = 0;
+    set_nonblocking(s, 1);
+    for (;;) {
+        if (off >= data.len) { result = off; break; }
         int64_t want = data.len - off;
         if (want > (1 << 30)) want = 1 << 30;
         int64_t n;
@@ -194,10 +215,14 @@ int64_t gsnet_write(int64_t fd, gsnet_slice data, int32_t timeout_ms) {
 #else
         do { n = send(s, data.data + off, (size_t)want, 0); } while (n < 0 && errno == EINTR);
 #endif
-        if (n <= 0) return GSNET_EIO;
-        off += n;
+        if (n > 0) { off += n; continue; }
+        if (n == 0 || !would_block()) { result = GSNET_EIO; break; }
+        int r = sock_poll(s, POLLOUT, timeout_ms > 0 ? timeout_ms : -1);
+        if (r == 0) { result = GSNET_ETIMEOUT; break; }
+        if (r < 0) { result = GSNET_EIO; break; }
     }
-    return off;
+    set_nonblocking(s, 0);
+    return result;
 }
 
 /* Whether something has come on an idle connection: 1 (bytes, its end,

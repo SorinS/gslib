@@ -283,6 +283,41 @@ fn refusals() {
     let v2, ev2 = jws::verify(t2, jwa::HS256, key);
     tv::check_int("crit without its parameter", ev2, jwx::ERR_MALFORMED);
 
+    // crit names holding a NUL, signed with HMAC and with ECDSA: malformed,
+    // never read as "b64" (or nothing) and so understood.
+    var keys: jwk::Key[>..] = [];
+    keys.push(key);
+    keys.push(jwk::generate_ec(jwa::CRV_P256));
+    let algs = [jwa::HS256, jwa::ES256];
+    for i in 2 {
+        let name = jwa::name(algs[i]);
+        let pubk = jwk::public_key(keys[i]);
+        var hn = jws::Header { .. };
+        hn.alg = algs[i];
+        let ok_t, eok = jws::sign_with(payload, keys[i], hn, "\"crit\":[\"b64\"],\"b64\":true");
+        let ok_p, eokv = jws::verify(ok_t, algs[i], pubk);
+        tv::check(str(name, " crit b64 understood"), eok == jwx::OK && eokv == jwx::OK && ok_p == payload);
+        for extra in ["\"crit\":[\"b64\\u0000\"],\"b64\\u0000\":true", "\"crit\":[\"\\u0000b64\"],\"\\u0000b64\":true",
+                      "\"crit\":[\"b6\\u00004\"],\"b6\\u00004\":true", "\"crit\":[\"\\u0000\"],\"\\u0000\":1",
+                      "\"crit\":[\"b64\",\"b64\\u0000\"],\"b64\":true,\"b64\\u0000\":true"] {
+            let tn, etn = jws::sign_with(payload, keys[i], hn, extra);
+            let pn, en = jws::verify(tn, algs[i], pubk);
+            tv::check(str(name, " NUL crit refused ", extra), etn == jwx::OK && en == jwx::ERR_MALFORMED && pn.len == 0);
+        }
+    }
+
+    // The header {"alg":"HS256","crit":["b64\u0000"],"b64\u0000":true}
+    // exactly, refused when parsed too.
+    var hr = jws::Header { .. };
+    hr.alg = jwa::HS256;
+    let tr, etr = jws::sign_with(payload, key, hr, "\"crit\":[\"b64\\u0000\"],\"b64\\u0000\":true");
+    let hb, okb = jwx::b64_decode(tr[..find(tr, ".")]);
+    tv::check_eq("NUL crit header", hb, "{\"alg\":\"HS256\",\"crit\":[\"b64\\u0000\"],\"b64\\u0000\":true}");
+    var mr = jws::Message { .. };
+    tv::check_int("NUL crit header parsed", jws::parse(mr, tr), jwx::ERR_MALFORMED);
+    let pr, er = jws::verify(tr, jwa::HS256, key);
+    tv::check_int("NUL crit header verified", er, jwx::ERR_MALFORMED);
+
     // A caller's own header parameters, read back.
     var h3 = jws::Header { .. };
     h3.alg = jwa::HS256;

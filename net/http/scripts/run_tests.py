@@ -4,7 +4,8 @@
 Every test/*.goose runs under the in-process JIT at -O0 and -O2 and with
 --debug (overflow, range and bounds checks); a test passes when it exits 0
 and, if test/expected/<name>.txt exists, prints exactly that. The examples
-run once. --native also builds and runs the tests with the C compiler.
+run once, and net/scripts/net_check.py tests net/src/net.c. --native
+also builds and runs the tests with the C compiler.
 
     python3 scripts/run_tests.py [--goose PATH] [--native] [--update] [-k NAME]
 
@@ -101,6 +102,17 @@ def main():
         cmd = [goose, "check", e] if ex_args is None else [goose, e, "--", *ex_args]
         rc, out, err = run(cmd, ex_dir)
         check(f"examples/http/{e}", rc, out, err, None)
+
+    # net/src/net.c, the sockets beneath http.client, on its own against
+    # servers on 127.0.0.1 (net/scripts/net_check.py; it has a watchdog).
+    if not args.k or args.k in "net_check":
+        try:
+            p = subprocess.run([sys.executable, os.path.join(ROOT, "..", "scripts", "net_check.py")],
+                               capture_output=True, text=True, timeout=120)
+            rc, out, err = p.returncode, p.stdout, p.stderr
+        except subprocess.TimeoutExpired:
+            rc, out, err = 1, "", "net_check.py still running after 120 s"
+        check("net/scripts/net_check.py", rc, out, err, None)
 
     print(f"\n{passed} passed, {len(failed)} failed")
     sys.exit(1 if failed else 0)

@@ -5,20 +5,26 @@
 // session key.
 //
 //   RSA (1, 2, 3)          PKCS #1 v1.5 signatures and encryption
-//   EdDSALegacy (22)       Ed25519 under its legacy OID, as gpg writes it
-//   Ed25519 (27)           RFC 9580's own
-//   ECDH (18)              Curve25519 (legacy OID) and P-256/384/521: the
-//                          RFC 6637 KDF and AES key wrap
+//   EdDSALegacy (22)       Ed25519 under its legacy OID, as gpg writes it,
+//                          and Ed448 (OID 1.3.101.113, gpg's v5 keys)
+//   Ed25519 (27), Ed448 (28)  RFC 9580's own
+//   ECDH (18)              Curve25519 (legacy OID), X448 (1.3.101.111, gpg's
+//                          cv448), P-256/384/521 and brainpoolP256r1/
+//                          P384r1/P512r1: the RFC 6637 KDF and AES key wrap
 //   X25519 (25)            RFC 9580's: HKDF-SHA256 and AES-128 key wrap
-//   ECDSA (19)             P-256, P-384, P-521
+//   X448 (26)              RFC 9580's: HKDF-SHA512 and AES-256 key wrap
+//   ECDSA (19)             P-256, P-384, P-521, brainpoolP256r1/P384r1/P512r1
 //   ML-KEM-768+X25519 (35) RFC 9980's composite KEM (v4 and v6 keys)
 //   ML-DSA-65+Ed25519 (30) RFC 9980's composite signature (v6 keys)
-//   Kyber (8)              LibrePGP's ML-KEM-768+X25519, on gpg's v5
-//                          subkeys ("ky768_cv25519"); see openpgp.pqc
+//   Kyber (8)              LibrePGP's ML-KEM-768 or -1024 with X25519, X448
+//                          or a Weierstrass curve, on gpg's v5 subkeys
+//                          ("ky768_cv25519", "ky768_bp256", ...); see
+//                          openpgp.pqc
 //
-// DSA, ElGamal, the 448 curves, ML-KEM-1024+X448, ML-DSA-87+Ed448,
-// SLH-DSA and gpg's Brainpool Kyber keys parse (their keys list and
-// fingerprint) but fail with ERR_UNSUPPORTED when used.
+// The 448 curves' keys are native octets (no 0x40 prefix, X448's secret
+// little-endian), as gpg writes them. DSA, ElGamal, ML-KEM-1024+X448,
+// ML-DSA-87+Ed448 and SLH-DSA parse (their keys list and fingerprint) but
+// fail with ERR_UNSUPPORTED when used.
 //
 // A Key is fixed-size, so a keyring can hold an array of them: its numbers
 // are in bounded arrays sized for RSA-8192, its public key packet for
@@ -34,6 +40,8 @@ import crypto.bignum.rsa;
 import crypto.bignum.ec;
 import crypto.bignum.ed25519;
 import crypto.bignum.x25519;
+import crypto.bignum.x448;
+import crypto.bignum.ed448;
 import crypto.bignum.keywrap;
 import crypto.bignum.hmac;
 import crypto.bignum.sha1;
@@ -63,7 +71,7 @@ struct Key {
     // Public material.
     curve:    i64        = CURVE_NONE,
     n:        u8[..1024] = [], e: u8[..8] = [],  // RSA
-    point:    u8[..133]  = [],       // EC: 32 bytes for the 25519 keys (no 0x40), else 04 || x || y
+    point:    u8[..133]  = [],       // EC: 32 bytes for the 25519 keys (no 0x40), 56/57 for 448, else 04 || x || y
     kdf_hash: i64        = 0, kdf_cipher: i64 = 0, // ECDH
     pq_at:    i64        = 0, pq_len: i64 = 0,     // the ML-KEM or ML-DSA public key, in body
     // Secret material.
@@ -71,10 +79,10 @@ struct Key {
     locked:     bool       = false,  // protected by a passphrase and not yet unlocked
     stub:       bool       = false,  // gpg's gnu-dummy: no secret here at all
     sexp:       bool       = false,  // gpg's mode 1003: the secret is the agent's S-expression
-    sec_raw:    u8[..4608] = [],     // what followed the public part in the secret packet
+    sec_raw:    u8[..6144] = [],     // what followed the public part in the secret packet (gpg's ky1024: 4.9K)
     d:          u8[..1024] = [], p: u8[..512] = [], q: u8[..512] = [], u: u8[..512] = [], // RSA
-    scalar:     u8[..66]   = [],     // EC: the seed (EdDSA), little-endian scalar (X25519), or big-endian scalar
-    pq_sec:     u8[..2400] = [],     // the ML-KEM seed d || z (or gpg's expanded key), the ML-DSA seed
+    scalar:     u8[..66]   = [],     // EC: the seed (EdDSA), little-endian scalar (X25519, X448), or big-endian scalar
+    pq_sec:     u8[..3168] = [],     // the ML-KEM seed d || z (or gpg's expanded key), the ML-DSA seed
     // Set by the keyring.
     primary:   i64  = -1,            // the index of this key's primary in the keyring
     flags:     u32  = 0,
@@ -116,7 +124,7 @@ fn pq_pub(k: const Key&) -> const u8[:] { k.body[k.pq_at..k.pq_at + k.pq_len] }
 // gpg's name of a Kyber key: ky768_cv25519, ky768_bp256, ky1024_bp384...
 fn kyber_name(k: const Key&) -> u8[>..] {
     var out: u8[>..] = [];
-    out.append(if k.pq_len == 1568 { "ky1024_" } else { "ky768_" });
+    out.append(if k.pq_len == MLKEM1024_EK_LEN { "ky1024_" } else { "ky768_" });
     let at = if k.version == 4 { 6 } else { 10 };
     if at >= k.body.len { return out; }
     let ol: i64 = k.body[at];
@@ -139,6 +147,11 @@ fn curve_name(c: i64) -> const u8[:] {
     if c == CURVE_P256 { return "nistp256"; }
     if c == CURVE_P384 { return "nistp384"; }
     if c == CURVE_P521 { return "nistp521"; }
+    if c == CURVE_BP256 { return "brainpoolP256r1"; }
+    if c == CURVE_BP384 { return "brainpoolP384r1"; }
+    if c == CURVE_BP512 { return "brainpoolP512r1"; }
+    if c == CURVE_ED448 { return "ed448"; }
+    if c == CURVE_X448 { return "cv448"; }
     return "";
 }
 
@@ -147,6 +160,8 @@ fn key_type_name(k: const Key&) -> u8[>..] {
     if is_rsa(k.algo) { return str("rsa", rsa_key_bits(k)); }
     if k.algo == PK_ED25519 { return str("ed25519"); }
     if k.algo == PK_X25519 { return str("cv25519"); }
+    if k.algo == PK_ED448 { return str("ed448"); }
+    if k.algo == PK_X448 { return str("cv448"); }
     if k.algo == PK_KYBER { return kyber_name(k); }
     if k.algo == PK_MLKEM768_X25519 { return str("mlkem768_x25519"); }
     if k.algo == PK_MLKEM1024_X448 { return str("mlkem1024_x448"); }
@@ -164,17 +179,19 @@ fn rsa_key_bits(k: const Key&) -> i64 {
 
 fn can_sign_algo(algo: i64) -> bool {
     algo == PK_RSA || algo == PK_RSA_S || algo == PK_EDDSA || algo == PK_ED25519 || algo == PK_ECDSA
-        || algo == PK_MLDSA65_ED25519
+        || algo == PK_ED448 || algo == PK_MLDSA65_ED25519
 }
 
 fn can_encrypt_algo(algo: i64) -> bool {
-    algo == PK_RSA || algo == PK_RSA_E || algo == PK_ECDH || algo == PK_X25519 || algo == PK_KYBER
-        || algo == PK_MLKEM768_X25519
+    algo == PK_RSA || algo == PK_RSA_E || algo == PK_ECDH || algo == PK_X25519 || algo == PK_X448
+        || algo == PK_KYBER || algo == PK_MLKEM768_X25519
 }
 
 // Whether a session key wrapped for this algorithm goes without the
 // 2-octet checksum (and, in a v3 PKESK, with its cipher in the clear).
-fn session_no_checksum(algo: i64) -> bool { algo == PK_X25519 || algo == PK_KYBER || algo == PK_MLKEM768_X25519 }
+fn session_no_checksum(algo: i64) -> bool {
+    algo == PK_X25519 || algo == PK_X448 || algo == PK_KYBER || algo == PK_MLKEM768_X25519
+}
 
 // --- Parsing --------------------------------------------------------------------
 
@@ -185,6 +202,28 @@ fn take_mpi<A>(body: const u8[:], at: i64, dst: A&) -> i64, bool {
     dst.clear();
     dst.append(body[s..e]);
     return next, true;
+}
+
+// The octets of a 448 key's point or secret, or of an ECC value of a Kyber
+// key (curve: X25519, X448 or a Weierstrass curve), as an MPI or SOS
+// holds them: a 0x40 prefix dropped for the Montgomery curves, leading
+// zeros an MPI dropped put back; false when it is not that long.
+fn ecc_octets(curve: i64, v: const u8[:], secret: bool = false) -> u8[>..], bool {
+    var out: u8[>..] = [];
+    var n = if curve == CURVE_X25519 || curve == CURVE_ED25519 { 32 } else { curve_size(curve) };
+    if is_weierstrass(curve) && !secret {
+        // A point: 04 || x || y, whole.
+        n = 1 + 2 * n;
+        if v.len != n || v[0] != 4 { return out, false; }
+        out.append(v);
+        return out, true;
+    }
+    var w = v;
+    if !secret && w.len == n + 1 && w[0] == 0x40 { w = v[1..]; }
+    if is_weierstrass(curve) || secret { w = strip_zeros(w); }
+    if w.len > n { return out, false; }
+    pad_left(out, w, n);
+    return out, true;
 }
 
 // The algorithm-specific public fields at body[at..end]; the position after them.
@@ -218,6 +257,11 @@ fn parse_public_material(k: Key&, body: const u8[:], at: i64) -> i64, i64 {
         if k.curve == CURVE_ED25519 || k.curve == CURVE_X25519 {
             if pt.len != 33 || pt[0] != 0x40 { return p, ERR_MALFORMED; }
             k.point.append(pt[1..]);
+        } else if k.curve == CURVE_ED448 || k.curve == CURVE_X448 {
+            // gpg's: the native 57 (Ed448) or 56 (X448) octets, no prefix.
+            let v, okv = ecc_octets(k.curve, pt);
+            if !okv { return p, ERR_MALFORMED; }
+            k.point.append(v);
         } else if k.curve != CURVE_NONE {
             if pt.len > k.point.cap { return p, ERR_MALFORMED; }
             k.point.append(pt);
@@ -228,10 +272,11 @@ fn parse_public_material(k: Key&, body: const u8[:], at: i64) -> i64, i64 {
             k.kdf_cipher = body[p + 3];
             p += 4;
         }
-        // An EdDSALegacy key on another curve, or ECDH on Ed25519's, is not one.
-        if k.algo == PK_EDDSA && k.curve != CURVE_ED25519 && k.curve != CURVE_NONE { k.curve = CURVE_NONE; }
-        if k.algo == PK_ECDH && k.curve == CURVE_ED25519 { k.curve = CURVE_NONE; }
-        if k.algo == PK_ECDSA && !is_nist(k.curve) { k.curve = CURVE_NONE; }
+        // An EdDSALegacy key on another curve, or ECDH on an Edwards curve, is not one.
+        let edwards = k.curve == CURVE_ED25519 || k.curve == CURVE_ED448;
+        if k.algo == PK_EDDSA && !edwards { k.curve = CURVE_NONE; }
+        if k.algo == PK_ECDH && edwards { k.curve = CURVE_NONE; }
+        if k.algo == PK_ECDSA && !is_weierstrass(k.curve) { k.curve = CURVE_NONE; }
         return p, OK;
     }
     if k.algo == PK_X25519 || k.algo == PK_ED25519 {
@@ -242,6 +287,7 @@ fn parse_public_material(k: Key&, body: const u8[:], at: i64) -> i64, i64 {
     if k.algo == PK_X448 || k.algo == PK_ED448 {
         let n = if k.algo == PK_X448 { 56 } else { 57 };
         if p + n > body.len { return p, ERR_MALFORMED; }
+        k.point.append(body[p..p + n]);
         return p + n, OK;
     }
     if k.algo == PK_KYBER { return parse_kyber_public(k, body, p); }
@@ -265,15 +311,17 @@ fn parse_public_material(k: Key&, body: const u8[:], at: i64) -> i64, i64 {
 }
 
 // gpg's Kyber key: the ECC part's OID and point (as ECDH has them), then
-// the ML-KEM key with a 4-octet length. Only X25519 with ML-KEM-768 is
-// usable here; the Brainpool and X448 variants keep CURVE_NONE.
+// the ML-KEM key with a 4-octet length. ML-KEM-768 or -1024 with X25519,
+// X448 or a Weierstrass curve is usable here (gpg makes ky768_cv25519,
+// ky768_bp256, ky1024_bp384 and ky1024_cv448); others keep CURVE_NONE.
 fn parse_kyber_public(k: Key&, body: const u8[:], at: i64) -> i64, i64 {
     var p = at;
     if p >= body.len { return p, ERR_MALFORMED; }
     let ol: i64 = body[p];
     if ol == 0 || ol == 255 || p + 1 + ol > body.len { return p, ERR_MALFORMED; }
     let oid = body[p + 1..p + 1 + ol];
-    let x25519 = oid == OID_X25519_RFC8410 || oid == OID_X25519;
+    var curve = curve_of_oid(oid);
+    if oid == OID_X25519_RFC8410 { curve = CURVE_X25519; }
     p += 1 + ol;
     let s, e, next, ok = read_mpi(body, p);
     if !ok { return p, ERR_MALFORMED; }
@@ -285,15 +333,19 @@ fn parse_kyber_public(k: Key&, body: const u8[:], at: i64) -> i64, i64 {
     k.pq_at = p + 4;
     k.pq_len = n;
     p += 4 + n;
-    if x25519 && n == MLKEM768_EK_LEN {
-        // gpg takes the point with its 0x40 or without.
-        if pt.len == 33 && pt[0] == 0x40 { k.point.append(pt[1..]); }
-        else if pt.len == 32 { k.point.append(pt); }
-        else { return p, ERR_MALFORMED; }
-        k.curve = CURVE_X25519;
+    let usable = curve == CURVE_X25519 || curve == CURVE_X448 || is_weierstrass(curve);
+    if usable && (n == MLKEM768_EK_LEN || n == MLKEM1024_EK_LEN) {
+        // gpg takes X25519's point with its 0x40 or without.
+        let v, okv = ecc_octets(curve, pt);
+        if !okv { return p, ERR_MALFORMED; }
+        k.point.append(v);
+        k.curve = curve;
     }
     return p, OK;
 }
+
+// ML-KEM's k (3 or 4) for a key's ML-KEM part.
+fn mlkem_level(k: const Key&) -> i64 { if k.pq_len == MLKEM1024_EK_LEN { 4 } else { 3 } }
 
 // The fingerprint and key ID of k.body.
 fn set_fingerprint(k: Key&) {
@@ -434,31 +486,43 @@ fn read_gnu1003(k: Key&, pass: const u8[:]) -> i64 {
         let ecc_at, ecc_end = sexp_find(part, "ecc");
         if ecc_at >= 0 {
             let q, okq = sexp_value(part, "q");
-            if !okq || q.len != 33 || q[0] != 0x40 || q[1..] != k.point[..] { return ERR_KEY; }
+            if !okq { return ERR_MALFORMED; }
+            let qv, okv = ecc_octets(k.curve, q);
+            if !okv || qv[..] != k.point[..] { return ERR_KEY; }
             let d, okd = sexp_value(clear, "d");
-            let v = strip_zeros(d);
-            if !okd || v.len > 32 { return ERR_MALFORMED; }
-            var full: u8[>..] = [];
-            pad_left(full, v, 32);
-            // As in an OpenPGP packet: big-endian, X25519 takes it reversed.
-            scalar = reversed(full);
+            if !okd { return ERR_MALFORMED; }
+            let dv, okdv = ecc_octets(k.curve, d, true);
+            if !okdv { return ERR_MALFORMED; }
+            // As in an OpenPGP packet: Curve25519's big-endian, X25519 takes
+            // it reversed; X448's native; a Weierstrass curve's big-endian.
+            scalar.clear();
+            if k.curve == CURVE_X25519 { scalar.append(reversed(dv)); } else { scalar.append(dv); }
             continue;
         }
-        let ky_at, ky_end = sexp_find(part, "kyber768");
+        let ky_at, ky_end = sexp_find(part, if mlkem_level(k) == 4 { "kyber1024" } else { "kyber768" });
         if ky_at < 0 { return ERR_UNSUPPORTED; }
         let sd, oks = sexp_value(clear, "seed");
         if oks && sd.len == MLKEM_SEED_LEN { seed.append(sd); continue; }
         let dk, okk = sexp_value(clear, "s");
-        if !okk || dk.len != MLKEM768_DK_LEN { return ERR_MALFORMED; }
+        if !okk || dk.len != bignum::mlkem_dk_len(mlkem_level(k)) { return ERR_MALFORMED; }
         seed.append(dk);
     }
-    if scalar.len != 32 || seed.len == 0 { return ERR_MALFORMED; }
+    if k.curve == CURVE_NONE || scalar.len == 0 || seed.len == 0 { return ERR_MALFORMED; }
     k.scalar.clear();
     k.scalar.append(scalar);
     k.pq_sec.clear();
     k.pq_sec.append(seed);
     k.locked = false;
     return check_secret(k);
+}
+
+// gpg-agent's name of a curve, as its S-expressions give it.
+fn agent_curve_name(c: i64) -> const u8[:] {
+    if c == CURVE_X448 { return "X448"; }
+    if c == CURVE_P256 { return "NIST P-256"; }
+    if c == CURVE_P384 { return "NIST P-384"; }
+    if c == CURVE_P521 { return "NIST P-521"; }
+    return curve_name(c);
 }
 
 // gpg's mode 1003 S-expression of an unlocked Kyber key: both parts
@@ -468,15 +532,26 @@ fn put_gnu1003(out: u8[>..]&, k: const Key&, pass: const u8[:], count: i64) -> i
     var pub: u8[>..] = [];
     var sec: u8[>..] = [];
     var q:   u8[>..] = [];
-    q.push(0x40);
-    q.append(k.point);
-    pub.append("(5:curve10:Curve25519)(5:flags9:djb-tweak)");
-    put_pair(pub, "q", q);
-    put_pair(sec, "d", reversed(k.scalar));
+    let lv = mlkem_level(k);
+    let alg = if lv == 4 { "kyber1024" } else { "kyber768" };
+    if k.curve == CURVE_X25519 {
+        q.push(0x40);
+        q.append(k.point);
+        pub.append("(5:curve10:Curve25519)(5:flags9:djb-tweak)");
+        put_pair(pub, "q", q);
+        put_pair(sec, "d", reversed(k.scalar));
+    } else {
+        pub.push('(');
+        put_atom(pub, "curve");
+        put_atom(pub, agent_curve_name(k.curve));
+        pub.push(')');
+        put_pair(pub, "q", k.point);
+        put_pair(sec, "d", k.scalar);
+    }
     var ek: u8[>..] = [];
     var dk: u8[>..] = [];
     if k.pq_sec.len == MLKEM_SEED_LEN {
-        let e1, d1 = bignum::mlkem_keys_from_seed(3, k.pq_sec);
+        let e1, d1 = bignum::mlkem_keys_from_seed(lv, k.pq_sec);
         ek.append(e1);
         dk.append(d1);
     } else {
@@ -493,7 +568,8 @@ fn put_gnu1003(out: u8[>..]&, k: const Key&, pass: const u8[:], count: i64) -> i
         out.append("(11:private-key(3:ecc");
         out.append(pub);
         out.append(sec);
-        out.append("))(11:private-key(8:kyber768");
+        out.append("))(11:private-key(");
+        put_atom(out, alg);
         out.append(kpub);
         out.append(ksec);
         out.append(")))");
@@ -501,7 +577,7 @@ fn put_gnu1003(out: u8[>..]&, k: const Key&, pass: const u8[:], count: i64) -> i
     }
     let e2 = agent_protect(out, "ecc", pub, sec, pass, count);
     if e2 != OK { return e2; }
-    let e3 = agent_protect(out, "kyber768", kpub, ksec, pass, count);
+    let e3 = agent_protect(out, alg, kpub, ksec, pass, count);
     if e3 != OK { return e3; }
     out.push(')');
     return OK;
@@ -521,34 +597,33 @@ fn read_secret_material(k: Key&, data: const u8[:], checksum: bool) -> i64 {
     } else if k.algo == PK_EDDSA || k.algo == PK_ECDSA || k.algo == PK_ECDH {
         let s, e, next, ok = read_mpi(data, p);
         if !ok { return ERR_MALFORMED; }
-        let v = strip_zeros(data[s..e]);
-        let size = if k.curve == CURVE_ED25519 || k.curve == CURVE_X25519 { 32 } else { curve_size(k.curve) };
-        if v.len > size || k.curve == CURVE_NONE { return ERR_MALFORMED; }
-        var full: u8[>..] = [];
-        pad_left(full, v, size);
+        if k.curve == CURVE_NONE { return ERR_MALFORMED; }
+        // Big-endian, as an MPI is, but for the 448 curves' native octets.
+        let full, okv = ecc_octets(k.curve, data[s..e], true);
+        if !okv { return ERR_MALFORMED; }
         k.scalar.clear();
         // Curve25519's secret is stored big-endian: X25519 takes it the other way round.
         if k.curve == CURVE_X25519 { k.scalar.append(reversed(full)); } else { k.scalar.append(full); }
         p = next;
-    } else if k.algo == PK_X25519 || k.algo == PK_ED25519 {
-        if data.len < 32 { return ERR_MALFORMED; }
+    } else if k.algo == PK_X25519 || k.algo == PK_ED25519 || k.algo == PK_X448 || k.algo == PK_ED448 {
+        let n = if k.algo == PK_X448 { 56 } else if k.algo == PK_ED448 { 57 } else { 32 };
+        if data.len < n { return ERR_MALFORMED; }
         k.scalar.clear();
-        k.scalar.append(data[..32]);
-        p = 32;
+        k.scalar.append(data[..n]);
+        p = n;
     } else if k.algo == PK_KYBER {
         // As gpg's parse-packet.c reads it: the ECC secret (SOS), then the
         // ML-KEM secret with a 4-octet length (the seed, or expanded).
-        if k.curve != CURVE_X25519 { return ERR_UNSUPPORTED; }
+        if k.curve == CURVE_NONE { return ERR_UNSUPPORTED; }
         let s, e, next, ok = read_mpi(data, 0);
         if !ok || next + 4 > data.len { return ERR_MALFORMED; }
-        let v = strip_zeros(data[s..e]);
-        if v.len > 32 { return ERR_MALFORMED; }
-        var full: u8[>..] = [];
-        pad_left(full, v, 32);
+        let full, okv = ecc_octets(k.curve, data[s..e], true);
+        if !okv { return ERR_MALFORMED; }
         k.scalar.clear();
-        k.scalar.append(reversed(full));
+        if k.curve == CURVE_X25519 { k.scalar.append(reversed(full)); } else { k.scalar.append(full); }
         let n = be32(data, next);
-        if (n != MLKEM_SEED_LEN && n != MLKEM768_DK_LEN) || n > data.len - next - 4 { return ERR_MALFORMED; }
+        let dkn = bignum::mlkem_dk_len(mlkem_level(k));
+        if (n != MLKEM_SEED_LEN && n != dkn) || n > data.len - next - 4 { return ERR_MALFORMED; }
         k.pq_sec.clear();
         k.pq_sec.append(data[next + 4..next + 4 + n]);
         p = next + 4 + n;
@@ -583,22 +658,28 @@ fn check_secret(k: const Key&) -> i64 {
         let key, ok = bignum::rsa_key_from_bytes(k.n, k.e, k.d, k.p, k.q);
         return if ok { OK } else { ERR_KEY };
     }
+    if k.algo == PK_ED448 || (k.algo == PK_EDDSA && k.curve == CURVE_ED448) {
+        if k.scalar.len != 57 { return ERR_KEY; }
+        let pub = bignum::ed448_public(k.scalar);
+        return if pub[..] == k.point[..] { OK } else { ERR_KEY };
+    }
     if k.algo == PK_EDDSA || k.algo == PK_ED25519 {
         let pub = bignum::ed25519_public(k.scalar);
         return if pub[..] == k.point[..] { OK } else { ERR_KEY };
     }
     if k.algo == PK_KYBER || k.algo == PK_MLKEM768_X25519 {
-        if k.scalar.len != 32 || k.point.len != 32 { return ERR_KEY; }
-        let pub = bignum::x25519_base(k.scalar);
-        if pub[..] != k.point[..] { return ERR_KEY; }
+        if k.algo == PK_MLKEM768_X25519 && (k.scalar.len != 32 || k.point.len != 32) { return ERR_KEY; }
+        if k.algo == PK_MLKEM768_X25519 && bignum::x25519_base(k.scalar)[..] != k.point[..] { return ERR_KEY; }
+        if k.algo == PK_KYBER && !ecc_secret_matches(k) { return ERR_KEY; }
         let ek = pq_pub(k);
+        let lv = mlkem_level(k);
         if k.pq_sec.len == MLKEM_SEED_LEN {
-            let ek2, dk = bignum::mlkem_keys_from_seed(3, k.pq_sec);
+            let ek2, dk = bignum::mlkem_keys_from_seed(lv, k.pq_sec);
             return if ek2[..] == ek { OK } else { ERR_KEY };
         }
         // gpg's expanded key: dk' || ek || H(ek) || z.
-        if k.pq_sec.len != MLKEM768_DK_LEN { return ERR_KEY; }
-        return if k.pq_sec[1152..1152 + MLKEM768_EK_LEN] == ek { OK } else { ERR_KEY };
+        if k.pq_sec.len != bignum::mlkem_dk_len(lv) { return ERR_KEY; }
+        return if k.pq_sec[384 * lv..384 * lv + ek.len] == ek { OK } else { ERR_KEY };
     }
     if k.algo == PK_MLDSA65_ED25519 {
         if k.scalar.len != 32 || k.pq_sec.len != MLDSA_SEED_LEN { return ERR_KEY; }
@@ -607,18 +688,27 @@ fn check_secret(k: const Key&) -> i64 {
         let pk = bignum::mldsa_public_key(65, k.pq_sec);
         return if pk[..] == pq_pub(k) { OK } else { ERR_KEY };
     }
-    if k.curve == CURVE_X25519 || k.algo == PK_X25519 {
-        let pub = bignum::x25519_base(k.scalar);
-        return if pub[..] == k.point[..] { OK } else { ERR_KEY };
+    if k.algo == PK_X25519 {
+        return if bignum::x25519_base(k.scalar)[..] == k.point[..] { OK } else { ERR_KEY };
     }
-    if is_nist(k.curve) {
-        let c = nist_curve(k.curve);
-        let sk, ok = bignum::ec_scalar(c, k.scalar);
-        if !ok { return ERR_KEY; }
-        let pub = bignum::ec_public_key(c, k.scalar);
-        return if pub == k.point[..] { OK } else { ERR_KEY };
+    if k.algo == PK_X448 {
+        return if k.scalar.len == 56 && bignum::x448_base(k.scalar)[..] == k.point[..] { OK } else { ERR_KEY };
+    }
+    if k.curve == CURVE_X25519 || k.curve == CURVE_X448 || is_weierstrass(k.curve) {
+        return if ecc_secret_matches(k) { OK } else { ERR_KEY };
     }
     return ERR_UNSUPPORTED;
+}
+
+// Whether k.scalar gives k.point on k.curve (X25519, X448 or Weierstrass).
+fn ecc_secret_matches(k: const Key&) -> bool {
+    if k.curve == CURVE_X25519 { return k.scalar.len == 32 && bignum::x25519_base(k.scalar)[..] == k.point[..]; }
+    if k.curve == CURVE_X448 { return k.scalar.len == 56 && bignum::x448_base(k.scalar)[..] == k.point[..]; }
+    if !is_weierstrass(k.curve) { return false; }
+    let c = weierstrass_curve(k.curve);
+    let sk, ok = bignum::ec_scalar(c, k.scalar);
+    if !ok { return false; }
+    return bignum::ec_public_key(c, k.scalar)[..] == k.point[..];
 }
 
 // Decrypts a locked secret with a passphrase. ERR_PASSPHRASE when the
@@ -693,17 +783,22 @@ fn put_secret_material(out: u8[>..]&, k: const Key&) {
         put_mpi(out, k.p);
         put_mpi(out, k.q);
         put_mpi(out, k.u);
-    } else if k.algo == PK_X25519 || k.algo == PK_ED25519 {
+    } else if k.algo == PK_X25519 || k.algo == PK_ED25519 || k.algo == PK_X448 || k.algo == PK_ED448 {
         out.append(k.scalar);
     } else if k.algo == PK_MLKEM768_X25519 || k.algo == PK_MLDSA65_ED25519 {
         out.append(k.scalar);
         out.append(k.pq_sec);
     } else if k.algo == PK_KYBER {
-        put_sos(out, reversed(k.scalar));
+        var es: u8[>..] = [];
+        if k.curve == CURVE_X25519 { es = reversed(k.scalar); } else { es.append(k.scalar); }
+        put_sos(out, es);
         put32(out, k.pq_sec.len);
         out.append(k.pq_sec);
     } else if k.curve == CURVE_X25519 {
         put_mpi(out, reversed(k.scalar));
+    } else if k.curve == CURVE_ED448 || k.curve == CURVE_X448 {
+        // gpg's: the native octets, every one.
+        put_sos(out, k.scalar);
     } else {
         put_mpi(out, k.scalar);
     }
@@ -840,6 +935,13 @@ fn verify_digest(k: const Key&, hash: i64, dg: const u8[:], sig: const u8[:]) ->
         return if bignum::rsa_verify_pkcs1_digest(pub, dg, full, bits) { OK } else { ERR_BAD_SIGNATURE };
     }
     if k.algo == PK_EDDSA {
+        if k.curve == CURVE_ED448 {
+            // gpg's: R and S (57 octets each) as MPIs; Ed448 (no context)
+            // over the digest.
+            let rs, n, ok = two_mpis(sig, 57);
+            if !ok || n != sig.len { return ERR_MALFORMED; }
+            return if bignum::ed448_verify(k.point, dg, rs) { OK } else { ERR_BAD_SIGNATURE };
+        }
         if k.curve != CURVE_ED25519 { return ERR_UNSUPPORTED; }
         let rs, n, ok = two_mpis(sig, 32);
         if !ok || n != sig.len { return ERR_MALFORMED; }
@@ -849,9 +951,15 @@ fn verify_digest(k: const Key&, hash: i64, dg: const u8[:], sig: const u8[:]) ->
         if sig.len != 64 { return ERR_MALFORMED; }
         return if bignum::ed25519_verify(k.point, dg, sig) { OK } else { ERR_BAD_SIGNATURE };
     }
+    if k.algo == PK_ED448 {
+        // RFC 9580 §5.2.3.4: a hash of 512 bits at least.
+        if hash_size(hash) < 64 { return ERR_UNSUPPORTED; }
+        if sig.len != 114 { return ERR_MALFORMED; }
+        return if bignum::ed448_verify(k.point, dg, sig) { OK } else { ERR_BAD_SIGNATURE };
+    }
     if k.algo == PK_ECDSA {
-        if !is_nist(k.curve) { return ERR_UNSUPPORTED; }
-        let c = nist_curve(k.curve);
+        if !is_weierstrass(k.curve) { return ERR_UNSUPPORTED; }
+        let c = weierstrass_curve(k.curve);
         let rs, n, ok = two_mpis(sig, curve_size(k.curve));
         if !ok || n != sig.len { return ERR_MALFORMED; }
         return if bignum::ecdsa_verify_digest(c, k.point, dg, rs) { OK } else { ERR_BAD_SIGNATURE };
@@ -881,6 +989,14 @@ fn sign_digest(k: const Key&, hash: i64, dg: const u8[:], out: u8[>..]&) -> i64 
         put_mpi(out, s);
         return OK;
     }
+    if k.algo == PK_ED448 || (k.algo == PK_EDDSA && k.curve == CURVE_ED448) {
+        if k.algo == PK_ED448 && hash_size(hash) < 64 { return ERR_UNSUPPORTED; }
+        let s = bignum::ed448_sign(k.scalar, dg);
+        if k.algo == PK_ED448 { out.append(s); return OK; }
+        put_sos(out, s[..57]);
+        put_sos(out, s[57..]);
+        return OK;
+    }
     if k.algo == PK_EDDSA || k.algo == PK_ED25519 {
         if k.algo == PK_EDDSA && k.curve != CURVE_ED25519 { return ERR_UNSUPPORTED; }
         let s = bignum::ed25519_sign(k.scalar, dg);
@@ -890,8 +1006,8 @@ fn sign_digest(k: const Key&, hash: i64, dg: const u8[:], out: u8[>..]&) -> i64 
         return OK;
     }
     if k.algo == PK_ECDSA {
-        if !is_nist(k.curve) { return ERR_UNSUPPORTED; }
-        let c = nist_curve(k.curve);
+        if !is_weierstrass(k.curve) { return ERR_UNSUPPORTED; }
+        let c = weierstrass_curve(k.curve);
         let bits = hash_bits(hash);
         if bits <= 0 { return ERR_UNSUPPORTED; }
         let s = bignum::ecdsa_sign_digest(c, k.scalar, dg, bits);
@@ -941,10 +1057,74 @@ fn x25519_kek(eph: const u8[:], pub: const u8[:], shared: const u8[:]) -> u8[>..
     return bignum::hkdf(256, "", ikm, "OpenPGP X25519", 16);
 }
 
-// ML-KEM-768 decapsulation with k's secret: the seed, or gpg's expanded key.
-fn mlkem768_decaps(k: const Key&, ct: const u8[:]) -> u8[>..], bool {
-    if k.pq_sec.len == MLKEM_SEED_LEN { return bignum::mlkem_decaps(3, k.pq_sec, ct); }
-    return bignum::mlkem_decaps_dk(3, k.pq_sec, ct);
+// RFC 9580 §5.1.7's X448: HKDF-SHA512 of ephemeral || recipient || shared.
+fn x448_kek(eph: const u8[:], pub: const u8[:], shared: const u8[:]) -> u8[>..] {
+    var ikm: u8[>..] = [];
+    ikm.append(eph);
+    ikm.append(pub);
+    ikm.append(shared);
+    return bignum::hkdf(512, "", ikm, "OpenPGP X448", 32);
+}
+
+// ML-KEM decapsulation with k's secret: the seed, or gpg's expanded key.
+fn mlkem_decaps_key(k: const Key&, ct: const u8[:]) -> u8[>..], bool {
+    if k.pq_sec.len == MLKEM_SEED_LEN { return bignum::mlkem_decaps(mlkem_level(k), k.pq_sec, ct); }
+    return bignum::mlkem_decaps_dk(mlkem_level(k), k.pq_sec, ct);
+}
+
+// The ECC half of a Kyber key as a KEM, as libgcrypt's raw ECC KEMs do it:
+// the shared value of secret sk and public peer on curve (X25519's or
+// X448's output; on a Weierstrass curve the whole point sk * peer, 04 || x
+// || y, not its x alone as ECDH takes it).
+fn kem_ecc_shared(curve: i64, sk: const u8[:], peer: const u8[:]) -> u8[>..], bool {
+    var out: u8[>..] = [];
+    if curve == CURVE_X25519 {
+        let sh, ok = bignum::x25519_shared(sk, peer);
+        out.append(sh);
+        return out, ok;
+    }
+    if curve == CURVE_X448 {
+        let sh, ok = bignum::x448_shared(sk, peer);
+        out.append(sh);
+        return out, ok;
+    }
+    if !is_weierstrass(curve) { return out, false; }
+    let c = weierstrass_curve(curve);
+    let q, okq = bignum::ec_decode(c, peer);
+    let d, okd = bignum::ec_scalar(c, sk);
+    if !okq || !okd { return out, false; }
+    let pt = bignum::ec_mul(c, d[..], q);
+    let x, y, ok = bignum::ec_affine(c, pt);
+    if !ok { return out, false; }
+    out.append(bignum::ec_encode(c, pt));
+    return out, true;
+}
+
+// A fresh ECC key pair on a Kyber key's curve: secret, public.
+fn kem_ecc_keypair(curve: i64) -> u8[>..], u8[>..] {
+    var sk: u8[>..] = [];
+    var pk: u8[>..] = [];
+    if curve == CURVE_X25519 {
+        let s, p = bignum::x25519_keypair();
+        sk.append(s);
+        pk.append(p);
+    } else if curve == CURVE_X448 {
+        let s, p = bignum::x448_keypair();
+        sk.append(s);
+        pk.append(p);
+    } else {
+        let c = weierstrass_curve(curve);
+        let s, p = bignum::ec_keypair(c);
+        sk.append(s);
+        pk.append(p);
+    }
+    return sk, pk;
+}
+
+// eccSS's SHA3 for a Kyber key's curve: 256 for the 256-bit ones, else 512.
+fn kem_ecc_bits(curve: i64) -> i64 {
+    if curve == CURVE_X25519 || curve == CURVE_P256 || curve == CURVE_BP256 { return 256; }
+    return 512;
 }
 
 // The session key a PKESK for this key holds: mat is the algorithm's
@@ -983,8 +1163,15 @@ fn decrypt_session(k: const Key&, mat: const u8[:], out: u8[>..]&, v6: bool = fa
             let sh, ok = bignum::x25519_shared(k.scalar, eph[1..]);
             if !ok { return ERR_DECRYPT; }
             z.append(sh);
-        } else if is_nist(k.curve) {
-            let c = nist_curve(k.curve);
+        } else if k.curve == CURVE_X448 {
+            // gpg's cv448: the native 56 octets, no prefix.
+            let ev, okv = ecc_octets(CURVE_X448, eph);
+            if !okv { return ERR_MALFORMED; }
+            let sh, ok = bignum::x448_shared(k.scalar, ev);
+            if !ok { return ERR_DECRYPT; }
+            z.append(sh);
+        } else if is_weierstrass(k.curve) {
+            let c = weierstrass_curve(k.curve);
             let sh, ok = bignum::ecdh_shared(c, k.scalar, eph);
             if !ok { return ERR_DECRYPT; }
             z.append(sh);
@@ -1019,6 +1206,21 @@ fn decrypt_session(k: const Key&, mat: const u8[:], out: u8[>..]&, v6: bool = fa
         out.append(m);
         return OK;
     }
+    if k.algo == PK_X448 {
+        let c = if v6 { 0 } else { 1 };
+        if mat.len < 57 + c + 16 { return ERR_MALFORMED; }
+        let eph = mat[..56];
+        let n: i64 = mat[56];
+        if 57 + n != mat.len { return ERR_MALFORMED; }
+        let sh, ok = bignum::x448_shared(k.scalar, eph);
+        if !ok { return ERR_DECRYPT; }
+        let kek = x448_kek(eph, k.point, sh);
+        let m, oku = bignum::aes_key_unwrap(kek, mat[57 + c..]);
+        if !oku { return ERR_DECRYPT; }
+        if !v6 { out.push(mat[57]); }
+        out.append(m);
+        return OK;
+    }
     if k.algo == PK_MLKEM768_X25519 {
         // ecdhCT (32) || mlkemCT || size || (v3: cipher) || wrapped key.
         let c = if v6 { 0 } else { 1 };
@@ -1032,7 +1234,7 @@ fn decrypt_session(k: const Key&, mat: const u8[:], out: u8[>..]&, v6: bool = fa
         let ct = mat[32..at];
         let sh, ok = bignum::x25519_shared(k.scalar, eph);
         if !ok { return ERR_DECRYPT; }
-        let ss, okd = mlkem768_decaps(k, ct);
+        let ss, okd = mlkem_decaps_key(k, ct);
         if !okd { return ERR_DECRYPT; }
         let kek = ietf_kek(ss, sh, eph, k.point, k.algo);
         let m, oku = bignum::aes_key_unwrap(kek, mat[at + 1 + c..]);
@@ -1044,23 +1246,24 @@ fn decrypt_session(k: const Key&, mat: const u8[:], out: u8[>..]&, v6: bool = fa
     if k.algo == PK_KYBER {
         // gpg's: SOS(ecdhCT), mlkemCT with a 4-octet length, the cipher,
         // then the wrapped key with its 1-octet length. v3 only.
-        if v6 || k.curve != CURVE_X25519 { return ERR_UNSUPPORTED; }
+        if v6 || k.curve == CURVE_NONE { return ERR_UNSUPPORTED; }
         let s, e, next, okm = read_mpi(mat, 0);
-        if !okm || e - s > 32 || next + 4 > mat.len { return ERR_MALFORMED; }
-        var eph: u8[>..] = [];
-        pad_left(eph, mat[s..e], 32);
-        if be32(mat, next) != MLKEM768_CT_LEN { return ERR_MALFORMED; }
-        let at = next + 4 + MLKEM768_CT_LEN;
+        if !okm || next + 4 > mat.len { return ERR_MALFORMED; }
+        let eph, oke = ecc_octets(k.curve, mat[s..e]);
+        if !oke { return ERR_MALFORMED; }
+        let ctn = bignum::mlkem_ct_len(mlkem_level(k));
+        if be32(mat, next) != ctn { return ERR_MALFORMED; }
+        let at = next + 4 + ctn;
         if at + 2 > mat.len { return ERR_MALFORMED; }
         let ct = mat[next + 4..at];
         let cipher: i64 = mat[at];
         let n:      i64 = mat[at + 1];
         if at + 2 + n != mat.len || n < 24 { return ERR_MALFORMED; }
-        let sh, ok = bignum::x25519_shared(k.scalar, eph);
+        let sh, ok = kem_ecc_shared(k.curve, k.scalar, eph);
         if !ok { return ERR_DECRYPT; }
-        let ss, okd = mlkem768_decaps(k, ct);
+        let ss, okd = mlkem_decaps_key(k, ct);
         if !okd { return ERR_DECRYPT; }
-        let kek = librepgp_kek(sh, eph, k.point, ss, ct, cipher, k.fpr);
+        let kek = librepgp_kek(sh, eph, k.point, ss, ct, cipher, k.fpr, kem_ecc_bits(k.curve));
         let m, oku = bignum::aes_key_unwrap(kek, mat[at + 2..]);
         if !oku { return ERR_DECRYPT; }
         out.push(cipher as! u8);
@@ -1093,8 +1296,14 @@ fn encrypt_session(k: const Key&, m: const u8[:], out: u8[>..]&) -> i64 {
             eph.push(0x40);
             eph.append(pk);
             z.append(sh);
-        } else if is_nist(k.curve) {
-            let c = nist_curve(k.curve);
+        } else if k.curve == CURVE_X448 {
+            let sk, pk = bignum::x448_keypair();
+            let sh, ok = bignum::x448_shared(sk, k.point);
+            if !ok { return ERR_KEY; }
+            eph.append(pk);
+            z.append(sh);
+        } else if is_weierstrass(k.curve) {
+            let c = weierstrass_curve(k.curve);
             let sk, pk = bignum::ec_keypair(c);
             let sh, ok = bignum::ecdh_shared(c, sk, k.point);
             if !ok { return ERR_KEY; }
@@ -1111,7 +1320,8 @@ fn encrypt_session(k: const Key&, m: const u8[:], out: u8[>..]&) -> i64 {
         for i in padn { padded.push(padn as! u8); }
         let w, okw = bignum::aes_key_wrap(kek, padded);
         if !okw { return ERR_KEY; }
-        put_mpi(out, eph);
+        // X448's native octets go whole, as gpg writes them (an SOS).
+        if k.curve == CURVE_X448 { put_sos(out, eph); } else { put_mpi(out, eph); }
         out.push(w.len as! u8);
         out.append(w);
         return OK;
@@ -1130,20 +1340,35 @@ fn encrypt_session(k: const Key&, m: const u8[:], out: u8[>..]&) -> i64 {
         out.append(w);
         return OK;
     }
+    if k.algo == PK_X448 {
+        let sk, pk = bignum::x448_keypair();
+        let sh, ok = bignum::x448_shared(sk, k.point);
+        if !ok { return ERR_KEY; }
+        let kek = x448_kek(pk, k.point, sh);
+        let key = m[1..m.len - 2];
+        let w, okw = bignum::aes_key_wrap(kek, key);
+        if !okw { return ERR_KEY; }
+        out.append(pk);
+        out.push((1 + w.len) as! u8);
+        out.push(m[0]);
+        out.append(w);
+        return OK;
+    }
     if k.algo == PK_MLKEM768_X25519 || k.algo == PK_KYBER {
-        if k.algo == PK_KYBER && k.curve != CURVE_X25519 { return ERR_UNSUPPORTED; }
-        if k.point.len != 32 || k.pq_len != MLKEM768_EK_LEN { return ERR_UNSUPPORTED; }
+        if k.algo == PK_KYBER && k.curve == CURVE_NONE { return ERR_UNSUPPORTED; }
+        if k.algo == PK_MLKEM768_X25519 && (k.point.len != 32 || k.pq_len != MLKEM768_EK_LEN) { return ERR_UNSUPPORTED; }
         let cipher: i64 = m[0];
         // RFC 9980 §4.3.1: AES only, in a v3 PKESK.
         if k.algo == PK_MLKEM768_X25519 && !is_aes(cipher) { return ERR_UNSUPPORTED; }
-        let sk, pk = bignum::x25519_keypair();
-        let sh, ok = bignum::x25519_shared(sk, k.point);
+        let curve = if k.algo == PK_KYBER { k.curve } else { CURVE_X25519 };
+        let sk, pk = kem_ecc_keypair(curve);
+        let sh, ok = kem_ecc_shared(curve, sk, k.point);
         if !ok { return ERR_KEY; }
-        let ss, ct, oke = bignum::mlkem_encaps(3, pq_pub(k));
+        let ss, ct, oke = bignum::mlkem_encaps(mlkem_level(k), pq_pub(k));
         if !oke { return ERR_KEY; }
         let key = m[1..m.len - 2];
         var kek: u8[>..] = [];
-        if k.algo == PK_KYBER { kek = librepgp_kek(sh, pk, k.point, ss, ct, cipher, k.fpr); }
+        if k.algo == PK_KYBER { kek = librepgp_kek(sh, pk, k.point, ss, ct, cipher, k.fpr, kem_ecc_bits(curve)); }
         else { kek = ietf_kek(ss, sh, pk, k.point, k.algo); }
         let w, okw = bignum::aes_key_wrap(kek, key);
         if !okw { return ERR_KEY; }

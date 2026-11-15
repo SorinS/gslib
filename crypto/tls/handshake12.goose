@@ -34,26 +34,28 @@ import crypto.x509.keys;
 let DOWNGRADE12: u8[8] = [0x44, 0x4f, 0x57, 0x4e, 0x47, 0x52, 0x44, 0x01];
 let DOWNGRADE11: u8[8] = [0x44, 0x4f, 0x57, 0x4e, 0x47, 0x52, 0x44, 0x00];
 
-// The signature schemes of TLS 1.2: TLS 1.3's but ML-DSA, no SHA-1 (as Go
-// since 1.25).
-let SIG_SCHEMES12: u16[10] = [0x0403, 0x0503, 0x0603, 0x0807, 0x0804, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601];
+// The signature schemes of TLS 1.2: TLS 1.3's but ML-DSA and the Brainpool
+// ones (in TLS 1.2 a Brainpool key signs with the ECDSA ones, RFC 8422), no
+// SHA-1 (as Go since 1.25).
+let SIG_SCHEMES12: u16[11] = [0x0403, 0x0503, 0x0603, 0x0807, 0x0808, 0x0804, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601];
 
-// The schemes of CertificateVerify: not Ed25519, which signs the messages
-// themselves, not a hash of them, so would need them all kept (Go keeps
-// them; a Conn here holds only the hashes, see Log12). TLS 1.3 signs a
-// transcript hash, and takes Ed25519 client certificates.
+// The schemes of CertificateVerify: not Ed25519 or Ed448, which sign the
+// messages themselves, not a hash of them, so would need them all kept (Go
+// keeps them; a Conn here holds only the hashes, see Log12). TLS 1.3 signs
+// a transcript hash, and takes Ed25519 and Ed448 client certificates.
 let CV_SCHEMES12: u16[9] = [0x0403, 0x0503, 0x0603, 0x0804, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601];
 
 // Whether a scheme suits a key in TLS 1.2: RSA with PSS or PKCS #1 v1.5,
-// ECDSA with any of its hashes whatever the curve (§7.4.1.4.1), Ed25519
-// (RFC 8422).
+// ECDSA with any of its hashes whatever the curve (§7.4.1.4.1; Brainpool
+// keys too, RFC 7027), Ed25519 and Ed448 (RFC 8422).
 fn scheme_fits12(kind: i64, s: u16) -> bool {
     if kind == x509::KEY_RSA {
         return s == x509::RSA_PSS_RSAE_SHA256 || s == x509::RSA_PSS_RSAE_SHA384 || s == x509::RSA_PSS_RSAE_SHA512 ||
                s == x509::RSA_PKCS1_SHA256 || s == x509::RSA_PKCS1_SHA384 || s == x509::RSA_PKCS1_SHA512;
     }
     if kind == x509::KEY_ED25519 { return s == x509::ED25519; }
-    if kind == x509::KEY_EC_P256 || kind == x509::KEY_EC_P384 || kind == x509::KEY_EC_P521 {
+    if kind == x509::KEY_ED448 { return s == x509::ED448; }
+    if kind == x509::KEY_EC_P256 || kind == x509::KEY_EC_P384 || kind == x509::KEY_EC_P521 || x509::is_brainpool(kind) {
         return s == x509::ECDSA_SECP256R1_SHA256 || s == x509::ECDSA_SECP384R1_SHA384 || s == x509::ECDSA_SECP521R1_SHA512;
     }
     return false;
@@ -106,19 +108,16 @@ fn verify12(leaf: const x509::Cert&, s: u16, msg: const u8[:], sig: const u8[:])
     return x509::verify_scheme(leaf, s, msg, sig) == x509::OK;
 }
 
-// Whether a key serves a suite's key exchange: ECDSA suites take EC and
-// Ed25519 keys, the others RSA ones.
+// Whether a key serves a suite's key exchange: ECDSA suites take EC
+// (Brainpool too), Ed25519 and Ed448 keys, the others RSA ones.
 fn kx_fits(kx: i64, kind: i64) -> bool {
     if kx == KX_ECDHE_ECDSA {
-        return kind == x509::KEY_EC_P256 || kind == x509::KEY_EC_P384 || kind == x509::KEY_EC_P521 || kind == x509::KEY_ED25519;
+        return kind == x509::KEY_EC_P256 || kind == x509::KEY_EC_P384 || kind == x509::KEY_EC_P521 ||
+               x509::is_brainpool(kind) || kind == x509::KEY_ED25519 || kind == x509::KEY_ED448;
     }
     return kind == x509::KEY_RSA;
 }
 
-// The groups of TLS 1.2's ECDHE: no ML-KEM.
-fn ecdh_group12(g: u16) -> bool {
-    g == GROUP_X25519 || g == GROUP_SECP256R1 || g == GROUP_SECP384R1 || g == GROUP_SECP521R1
-}
 
 let ALERT_UNSUPPORTED_CERTIFICATE: u8 = 43;
 
@@ -331,7 +330,7 @@ fn client_server_key_exchange12(c: Conn&, cfg: const ClientConfig&, m: const u8[
     if !done(b) { return fail(c, ALERT_DECODE_ERROR, out); }
     var offered = false;
     for g in cfg.groups { if g == group { offered = true; } }
-    if curve_type != 3 || !offered || !ecdh_group12(group as! u16) || point.end - point.pos != ecdh_len(group as! u16) {
+    if curve_type != 3 || !offered || !group12(group as! u16) || point.end - point.pos != ecdh_len(group as! u16) {
         return fail(c, ALERT_ILLEGAL_PARAMETER, out);
     }
     if !offered_scheme(SIG_SCHEMES12, scheme as! u16) { return fail(c, ALERT_ILLEGAL_PARAMETER, out); }
@@ -544,7 +543,7 @@ fn server_client_hello12(c: Conn&, cfg: const ServerConfig&, m: const u8[:], h: 
     var group: u16 = 0;
     for g in cfg.groups {
         let offered = if h.has_groups { in_u16_list(m, h.groups, g) } else { g == GROUP_SECP256R1 };
-        if group == 0 && ecdh_group12(g) && offered { group = g; }
+        if group == 0 && group12(g) && offered { group = g; }
     }
     // The suite: the server's first that the client offers and the key,
     // group and schemes allow.

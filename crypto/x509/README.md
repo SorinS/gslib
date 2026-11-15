@@ -14,11 +14,11 @@ CertificateVerify signatures.
 | `x509.constraints` | name constraints |
 | `x509.policy` | certificate policy processing |
 | `x509.crl` | `Crl`, `parse_crl`, `check_crl`, `crl_lookup`, `revocation_status` |
-| `x509.keys` | `PrivateKey`, key generation, PKCS #8 / SEC 1 / PKCS #1 / SPKI parsing and marshalling (ML-DSA, SLH-DSA, ML-KEM and DSA included), signing |
+| `x509.keys` | `PrivateKey`, key generation, PKCS #8 / SEC 1 / PKCS #1 / SPKI parsing and marshalling (brainpool, Ed448, X448, ML-DSA, SLH-DSA, ML-KEM and DSA included), signing |
 | `x509.ocsp` | OCSP (RFC 6960): `ocsp_create_request`, `ocsp_parse_request`, `ocsp_parse_response`, `ocsp_check_response`, `ocsp_create_response`, `ocsp_error_response` |
 | `x509.pkcs12` | `pkcs12_decode`: PKCS #12 files to their key and certificates |
-| `x509.cms` | CMS SignedData (RFC 5652) with one signer: `cms_sign`, `cms_sign_with` (id-data, detached, signingTime, smimeCapabilities, key identifier, Ed25519), `cms_unsigned`, `cms_parse_signed`, `cms_parse_signed_ber`, `cms_verify`, `cms_verify_detached`, `cms_signing_time`, `cms_content`, `cms_certs`, `cms_der` (BER to DER); ML-DSA signers (RFC 9882) and SHAKE digests; PKINIT's carrier and S/MIME's |
-| `x509.cms_env` | CMS EnvelopedData and AuthEnvelopedData (RFC 5652 §6, RFC 5083/5084): `cms_encrypt`, `cms_decrypt`, `cms_content_type`; RSA-OAEP and PKCS #1 v1.5 key transport, ECDH key agreement (RFC 5753), ML-KEM recipients (KEMRecipientInfo, RFC 9629 and RFC 9936), AES-CBC and AES-GCM |
+| `x509.cms` | CMS SignedData (RFC 5652) with one signer: `cms_sign`, `cms_sign_with` (id-data, detached, signingTime, smimeCapabilities, key identifier, Ed25519, Ed448), `cms_unsigned`, `cms_parse_signed`, `cms_parse_signed_ber`, `cms_verify`, `cms_verify_detached`, `cms_signing_time`, `cms_content`, `cms_certs`, `cms_der` (BER to DER); ML-DSA signers (RFC 9882) and SHAKE digests; PKINIT's carrier and S/MIME's |
+| `x509.cms_env` | CMS EnvelopedData and AuthEnvelopedData (RFC 5652 §6, RFC 5083/5084): `cms_encrypt`, `cms_decrypt`, `cms_content_type`; RSA-OAEP and PKCS #1 v1.5 key transport, ECDH key agreement (RFC 5753; NIST and brainpool curves), X448 key agreement (RFC 8418), ML-KEM recipients (KEMRecipientInfo, RFC 9629 and RFC 9936), AES-CBC and AES-GCM |
 | `x509.create` | `Template`, `create_certificate`, `name_der`, SAN and name-constraint builders, `create_csr`, `parse_csr`, `check_csr`, `create_crl` | It builds on
 [asn1](../../encoding/asn1) for DER and [bignum](../bignum) for the
 cryptography.
@@ -66,11 +66,12 @@ scalar or an `asn1::Tlv` into that copy:
 |---|---|
 | RSA PKCS #1 v1.5 with SHA-256, SHA-384, SHA-512 | RSA (up to 4096 bits) |
 | RSASSA-PSS with SHA-256, SHA-384, SHA-512 (MGF1 on the same hash) | ECDSA P-224, P-256, P-384, P-521 |
-| ECDSA with SHA-256, SHA-384, SHA-512 | Ed25519 |
-| Ed25519 | ML-DSA-44, ML-DSA-65, ML-DSA-87 |
+| ECDSA with SHA-256, SHA-384, SHA-512 | ECDSA brainpoolP256r1, P384r1, P512r1 (RFC 5639) |
+| Ed25519 | Ed25519, Ed448 |
+| Ed448 (pure, empty context, RFC 8410) | ML-DSA-44, ML-DSA-65, ML-DSA-87 |
 | ML-DSA-44, ML-DSA-65, ML-DSA-87 (pure, empty context, RFC 9881) | DSA (p up to 3072 bits; parameters in the key) |
 | DSA with SHA-224, SHA-256, SHA-384, SHA-512 | SLH-DSA, all twelve sets |
-| SLH-DSA, all twelve sets: SHA2 and SHAKE, 128/192/256, s and f (pure, empty context, RFC 9909) | |
+| SLH-DSA, all twelve sets: SHA2 and SHAKE, 128/192/256, s and f (pure, empty context, RFC 9909) | X448 and ML-KEM (they sign nothing: CMS recipients) |
 
 An ML-DSA signature must come from a key of the same parameter set
 (`sig_hash` holds the set: 44, 65 or 87), and an SLH-DSA one likewise
@@ -79,6 +80,17 @@ types are `KEY_SLHDSA_SHA2_128S` to `KEY_SLHDSA_SHAKE_256F`, with
 `is_slhdsa`, `slhdsa_set` and `slhdsa_kind`). SLH-DSA has no TLS
 SignatureScheme, so `verify_scheme` does not take it. Go 1.27 parses DSA keys but
 checks no DSA signatures; here they are checked, as openssl does.
+
+The brainpool curves are named curves under id-ecPublicKey
+(1.3.36.3.3.2.8.1.1.7, .11 and .13: `KEY_EC_BP256`, `KEY_EC_BP384`,
+`KEY_EC_BP512`; `is_brainpool`, and `is_ec` takes them with the NIST
+ones), signing ECDSA with any of SHA-256, -384 and -512. Ed448
+(`KEY_ED448`, `SIG_ED448`, id-Ed448 1.3.101.113) and X448 (`KEY_X448`,
+id-X448 1.3.101.111) are RFC 8410's: parameters absent. The TLS 1.3
+ECDSA schemes name a NIST curve, so `verify_scheme` refuses brainpool
+keys under them; brainpool keys verify under RFC 8734's
+ecdsa_brainpoolP256r1tls13_sha256, P384r1 and P512r1 (`ECDSA_BRAINPOOLP*`,
+each bound to its curve), and Ed448 keys under ed448 (`ED448`, 0x0808).
 
 SHA-1 and other algorithms parse but fail when used, with
 `ERR_UNSUPPORTED_ALGORITHM`.
@@ -99,7 +111,8 @@ covers exactly one label, and needs at least two labels after it.
 `verify_scheme(c, scheme, msg, sig)` checks a TLS 1.3 SignatureScheme
 signature with c's key: rsa_pkcs1_*, rsa_pss_rsae_*,
 ecdsa_secp256r1_sha256, ecdsa_secp384r1_sha384, ecdsa_secp521r1_sha512
-(with the curve bound to the scheme, as TLS 1.3 requires), and ed25519.
+(with the curve bound to the scheme, as TLS 1.3 requires), the brainpool
+ones of RFC 8734 likewise, ed25519 and ed448.
 
 `verify_chain(leaf, intermediates, roots, now, host)` searches depth-first
 for a path from the leaf through the intermediates to a root, and
@@ -111,12 +124,16 @@ past that), so intermediates sent by a peer cannot buy unbounded work. Each link
 it, and every certificate on the path must be within its validity period
 at `now` with no unknown critical extension. The CAs, roots included, must
 have basicConstraints CA (a self-issued v1 root without basicConstraints
-is accepted) and respect their path lengths. A CA that has key usage must
+is accepted) and respect their path lengths, which count the
+non-self-issued intermediates below them (RFC 5280 §4.2.1.9: a CA's key
+rollover certificate does not count). A CA that has key usage must
 allow keyCertSign, and one that has extended key usage must allow
 serverAuth. The leaf's own extended key usage, if present, must allow
 serverAuth, and its key usage must allow a TLS key. `Options.key_usages`
 (Go's KeyUsages, as `EKU_*` masks) changes the usage required of the leaf
-and the CAs: any one of those given will do, and `EKU_ANY` accepts any. `host`, if not empty,
+and the CAs: any one of those given will do, as long as the leaf and
+every CA allow it (absent or anyExtendedKeyUsage allows all), and
+`EKU_ANY` accepts any. `host`, if not empty,
 must match the leaf. A leaf that is itself one of the roots is accepted
 as pinned.
 
@@ -210,8 +227,10 @@ The Windows certificate store is not read.
 
 ## Keys
 
-`PrivateKey` holds an RSA key, an EC scalar (P-224, P-256, P-384, P-521),
-an Ed25519 or ML-DSA seed (`seed`), an SLH-DSA key (`slh`), or a DSA key (`dsa`). These
+`PrivateKey` holds an RSA key, an EC scalar (P-224, P-256, P-384, P-521,
+brainpoolP256r1, P384r1, P512r1), an Ed25519 or ML-DSA seed (`seed`), an
+Ed448 seed (57 bytes) or X448 key (56) in `key448`, an SLH-DSA key
+(`slh`), or a DSA key (`dsa`). These
 correspond to Go's functions:
 
 | Go | Here |
@@ -237,6 +256,11 @@ from the seeds, which would cost a key generation
 (`bignum::slhdsa_check_key` does it). Signing is hedged; a key of an "s"
 set takes seconds per signature (see bignum's README for timings).
 
+Ed448 and X448 keys (Go has neither) are written in PKCS #8 as the seed
+or key in an OCTET STRING, as Ed25519's and as openssl writes them; a
+OneAsymmetricKey v2 with the public key is read too. Brainpool keys are
+written as openssl writes them, in PKCS #8 and SEC 1.
+
 DSA keys go beyond Go, which has no DSA private keys in x509. Both
 PKCS #8 and openssl's "DSA PRIVATE KEY" are read, and PKCS #8 is
 written. DSA signatures use RFC 6979 nonces; ML-DSA signing is hedged. `sign(key, alg, hash, msg)`
@@ -249,10 +273,11 @@ AlgorithmIdentifier, and `default_sig(kind)` gives the default algorithm.
 `sign_digest(key, alg, hash, digest)` and `verify_digest(cert, alg, hash,
 salt, digest, sig)` take a digest the caller made, as Go's `crypto.Signer`
 does, for RSA, ECDSA and DSA (TLS 1.2's CertificateVerify hashes as the
-handshake goes); Ed25519, ML-DSA and SLH-DSA sign messages, so they give
+handshake goes); Ed25519, Ed448, ML-DSA and SLH-DSA sign messages, so they give
 false and `ERR_UNSUPPORTED_ALGORITHM`.
 As in Go, the default for RSA is PKCS #1 v1.5 with SHA-256, for ECDSA
-it is the curve's own hash, and for ML-DSA (and SLH-DSA) the key's own set. For DSA it
+it is the curve's own hash (SHA-256, -384 and -512 for the three
+brainpool curves), and for ML-DSA (and SLH-DSA) the key's own set. For DSA it
 is SHA-256, as in openssl.
 
 ## Creating certificates, requests and CRLs
@@ -347,7 +372,14 @@ certificate path and usages are the caller's to check.
 `detached` (eContent left out), `signing_time` (the signingTime
 attribute, UTCTime through 2049), `capabilities` (smimeCapabilities) and
 `by_key_id` (the signer by subject key identifier, SignerInfo version 3);
-it signs by Ed25519 too (RFC 8419: SHA-512 digest). Over id-data the
+it signs by Ed25519 too (RFC 8419: SHA-512 digest), and by Ed448 (RFC
+8419: the digest id-shake256-len with 512 output bits, `CMS_SHAKE256_LEN`,
+written with its INTEGER parameter; pure Ed448 over the attributes, no
+context). Reading, an Ed448 signer's digest is id-shake256-len (512) or
+id-shake256 (RFC 8419 §3.2's, without signed attributes, as openssl
+signs). openssl's cms reads neither id-shake256-len nor signs Ed448
+with attributes, so `scripts/check_curves.py` checks ours with its
+primitives. Brainpool signers are ECDSA as on the NIST curves. Over id-data the
 SignedData is version 1. `cms_verify_detached(sd, content)` checks a
 detached signature; over id-data signed attributes may be absent, the
 signature then over the content. `cms_der` turns BER (indefinite lengths,
@@ -355,16 +387,20 @@ constructed OCTET STRINGs) into DER, as mail clients send CMS.
 
 `cms_encrypt(content_type, content, recipients, o)` encrypts to
 certificates (DER laid end to end): RSA by RSAES-OAEP with SHA-256 and
-MGF1-SHA-256 (or PKCS #1 v1.5 with `rsa_pkcs1`), EC P-256/384/521 by
-ephemeral-static ECDH, the X9.63 KDF over SHA-256/384/512
-(dhSinglePass-stdDH-shaNNNkdf-scheme) and AES key wrap of the content
-key's size; the content by AES-128/256-CBC (EnvelopedData) or
+MGF1-SHA-256 (or PKCS #1 v1.5 with `rsa_pkcs1`), EC P-256/384/521 and
+brainpoolP256r1/P384r1/P512r1 by ephemeral-static ECDH, the X9.63 KDF
+over SHA-256/384/512 as the curve (dhSinglePass-stdDH-shaNNNkdf-scheme)
+and AES key wrap of the content key's size; X448 by RFC 8418 (the
+originator's key under id-X448, the X9.63 KDF over SHA-512, or
+HKDF-SHA512 with `x448_hkdf`, then AES key wrap; openssl's cms has no X448
+key agreement, so it is checked against openssl's primitives); the content by AES-128/256-CBC (EnvelopedData) or
 AES-128/256-GCM (AuthEnvelopedData, 16-byte tags). `cms_decrypt(der, key,
 cert)` finds the certificate's RecipientInfo (issuer and serial, or key
 identifier) and reads what openssl writes: OAEP with SHA-1 or SHA-2,
 PKCS #1 v1.5 by implicit rejection (a malformed block decrypts the
 content under a random key, so the error is the content's, not the
-padding's), openssl's default SHA-1 ECDH KDF, AES-192, BER. Its own
+padding's), openssl's default SHA-1 ECDH KDF, RFC 8418's HKDF-SHA256,
+-384 and -512 (the ukm as the salt), AES-192, BER. Its own
 errors are ERR_CMS_NOT_RECIPIENT and ERR_CMS_DECRYPT.
 
 ### Post-quantum
@@ -404,6 +440,7 @@ In gslib's `examples/x509/`, run from gslib's top as `goose examples/x509/<name>
 - `parse_cert.goose`: a PEM chain's certificates taken apart, host matching, and which signed which (`example-chain.pem`, or a file of your own).
 - `make_ca.goose`: a private CA: root, intermediate and server certificate, verified; an optional DIR gets the PEM files.
 - `keys.goose`: P-256, P-384, Ed25519, RSA and ML-DSA keys: generating, PKCS #8 PEM, SEC 1 and PKCS #1, signing.
+- `new_curves.goose`: a brainpoolP384r1 CA issuing an Ed448 server certificate and an X448 one; the Ed448 key through PKCS #8 PEM and back, the chain verified for its host name, CMS SignedData by Ed448 and AuthEnvelopedData to X448; a wrong host, a changed certificate and a changed signature refused. An optional DIR gets the PEM files, which `openssl verify` accepts.
 - `slhdsa_cert.goose`: an SLH-DSA-SHA2-128f CA and an SLH-DSA-SHAKE-128f server certificate it issues, written as PEM (key in PKCS #8), read back and verified for the host name; a changed certificate refused. An optional DIR gets the PEM files, which `openssl verify` accepts.
 - `verify_pool.goose`: path building over root and intermediate pools, name constraints, policies, and key usages.
 - `csr.goose`: a CSR made, checked against a name policy and issued; a changed one refused.
@@ -419,10 +456,12 @@ In gslib's `examples/x509/`, run from gslib's top as `goose examples/x509/<name>
 ```bash
 python3 scripts/run_tests.py [--native] # at -O0, -O2 and --debug (and natively)
 python3 scripts/check_created.py        # x509.create's output against openssl and Go
+python3 scripts/check_curves.py         # brainpool, Ed448 and X448 output against openssl
 python3 scripts/check_roots.py          # system roots against Go's rules
 python3 scripts/gen_vectors.py          # regenerate the vectors with openssl
 python3 scripts/pq_vectors.py           # remake vectors/pq.txt (openssl, Go) and pq_slhdsa.txt
 python3 scripts/pq_vectors.py slhdsa    # remake vectors/pq_slhdsa.txt alone (openssl)
+python3 scripts/curves_vectors.py       # remake vectors/curves.txt (openssl)
 python3 scripts/pkcs12_vectors.py       # remake the PKCS #12 vectors (openssl)
 python3 scripts/cms_vectors.py          # remake vectors/cms.txt (openssl cms -sign)
 python3 scripts/check_cms.py            # x509.cms's SignedData through openssl cms -verify
@@ -484,6 +523,36 @@ its arguments.
   and reads their keys. openssl also verifies an SLH-DSA-SHAKE-128f
   root's SLH-DSA-SHA2-128f leaf, an SLH-DSA CSR and CRL made here, and
   reads the leaf's PKCS #8 key.
+- `curves_vectors`: brainpool, Ed448 and X448 (`scripts/curves_vectors.py`,
+  262 checks):
+  - openssl's brainpoolP256r1/P384r1/P512r1 keys in PKCS #8 and SEC 1, and
+    Ed448 and X448 keys in PKCS #8 (and as OneAsymmetricKey v2 with the
+    public key), must parse and marshal back to its bytes and
+    SubjectPublicKeyInfo; short keys and the other curve's OID refused;
+  - openssl's hierarchies (brainpoolP512r1 → P384r1 → Ed448, P256r1 and
+    X448 leaves; Ed448 root → brainpoolP384r1 leaf) validate as `openssl
+    verify` said, a wrong issuer key, a missing root and a wrong host among
+    them; its brainpool and Ed448 requests and CRLs check, each CRL
+    revoking its leaf; its PKCS #12 files give the key;
+  - its SignedData by brainpool signers (SHA-256/384/512, no attributes, by
+    key identifier) and by Ed448 without attributes, and one by Ed448 with
+    them built from its primitives (RFC 8419), verify, and refuse a changed
+    content; its EnvelopedData to brainpool recipients (its SHA-1 and
+    SHA-384 KDFs, GCM, key identifier, three recipients), and ones to X448
+    built from its primitives (X9.63 SHA-512, HKDF-SHA512 with a ukm,
+    HKDF-SHA256), decrypt, and not for another recipient or a wrong key;
+  - keys of each kind made here sign certificates, requests and CMS that
+    check (X448 refused), OCSP responses by a brainpool and an Ed448 CA
+    check, and EnvelopedData to brainpool and X448 together
+    (X9.63 or HKDF, CBC or GCM) decrypts for each.
+
+  `scripts/check_curves.py` has openssl check what is made here (38
+  checks): the leaves under a brainpoolP512r1 root and an Ed448 one, keys
+  in PKCS #8 and SEC 1, brainpool and Ed448 requests and CRLs (revocation
+  found), brainpool SignedData verified and changed refused, EnvelopedData
+  decrypted per brainpool recipient; the Ed448 SignedData and the X448
+  recipients (X9.63 and HKDF) with openssl's primitives, which its cms
+  lacks.
 - `pool_api`: adding certificates once, from DER, PEM, files, and
   `vectors/rootdir` (`scripts/make_rootdir.py`). The directory holds PEM
   and DER files, a c_rehash link, junk, a text file and a subdirectory
@@ -495,6 +564,20 @@ its arguments.
   `scripts/check_roots.py` checks system root loading against Go's rules,
   with the environment as it is, with `SSL_CERT_FILE` and `SSL_CERT_DIR`
   set, and with nothing to find.
+- `path_rules`: the rules over a whole path, on certificates made here:
+  - a CA's key rollover (a self-issued certificate for the new key,
+    signed by the old) fits under path length 0, another CA does not;
+    under path length 1, a rollover and one CA fit, two CAs do not;
+  - of `Options.key_usages`, one must be allowed by every certificate: a
+    server-only leaf under a client-only CA, or under a client-only root,
+    is refused for server or client authentication or both; a
+    server-only CA, or one with anyExtendedKeyUsage, passes;
+  - the search backs up from a path that leaves no usage to another
+    path that does, at the root and one level below it.
+
+  `scripts/check_created.py` has openssl agree on the rollover, the CA
+  beyond path length 0, and the server-only leaf under a client-only CA
+  (refused as sslserver and as sslclient) and under a server-only one.
 - `ocsp_vectors`: requests and responses made by Go's x/crypto/ocsp
   (`tools/govectors`): requests made here byte for byte and parsed back;
   good, revoked and unknown responses from the CA and from a delegated

@@ -13,8 +13,12 @@
 //   goose-pgp genkey [--pass-file F] [--type T] "Name <email>" SECRET_OUT [PUBLIC_OUT]
 //
 // genkey's --type: ed25519 (the default: Ed25519 + Curve25519, as gpg's
-// default), rsa (RSA-3072), pqc (gpg 2.5's post-quantum key: Ed25519 with a
-// v5 ML-KEM-768+X25519 Kyber subkey, which gpg encrypts to) or rfc9980 (v6
+// default), rsa (RSA-3072), brainpoolP256r1, brainpoolP384r1 or
+// brainpoolP512r1 (ECDSA + ECDH on that curve), ed448 (gpg's: v5 Ed448 +
+// cv448), ed448-v6 (RFC 9580's Ed448 + X448, v6, which gpg does not read),
+// pqc (gpg 2.5's default post-quantum key: brainpoolP384r1 with a v5
+// ky768_bp256 Kyber subkey, ML-KEM-768+brainpoolP256r1), ky768_cv25519
+// (Ed25519 with a ky768_cv25519 subkey, ML-KEM-768+X25519) or rfc9980 (v6
 // ML-DSA-65+Ed25519 with an ML-KEM-768+X25519 subkey, which gpg does not
 // read).
 //
@@ -56,6 +60,19 @@ fn slurp(path: const u8[:]) -> u8[>..] {
     if path == "-" { read_stdin(d); return d; }
     if !read_file(path, d) { die(str("cannot read ", path)); }
     return d;
+}
+
+// A text literal's data with its CRLF line ends made LF again, as gpg
+// writes it out.
+fn native_text(data: const u8[:]) -> u8[>..] {
+    var out: u8[>..] = [];
+    var i = 0;
+    while i < data.len {
+        if data[i] == '\r' && i + 1 < data.len && data[i + 1] == '\n' { i++; }
+        out.push(data[i]);
+        i++;
+    }
+    return out;
 }
 
 fn emit(path: const u8[:], data: const u8[:]) {
@@ -261,7 +278,7 @@ fn main() {
                 }
             }
         }
-        emit(a[o.rest[1]], m.data);
+        if m.format == 't' || m.format == 'u' { emit(a[o.rest[1]], native_text(m.data)); } else { emit(a[o.rest[1]], m.data); }
     } else if cmd == "list-packets" {
         if o.rest.len != 1 { usage(); }
         var out: u8[>..] = [];
@@ -320,7 +337,13 @@ fn main() {
         var e = openpgp::OK;
         if t.len == 0 || t == "ed25519" { e = openpgp::generate_key(kr, a[o.rest[0]], o.w.created); }
         else if t == "rsa" { e = openpgp::generate_rsa_key(kr, a[o.rest[0]], 3072, o.w.created); }
-        else if t == "pqc" { e = openpgp::generate_pqc_key(kr, a[o.rest[0]], o.w.created); }
+        else if t == "brainpoolP256r1" { e = openpgp::generate_brainpool_key(kr, a[o.rest[0]], 256, o.w.created); }
+        else if t == "brainpoolP384r1" { e = openpgp::generate_brainpool_key(kr, a[o.rest[0]], 384, o.w.created); }
+        else if t == "brainpoolP512r1" { e = openpgp::generate_brainpool_key(kr, a[o.rest[0]], 512, o.w.created); }
+        else if t == "ed448" { e = openpgp::generate_ed448_key(kr, a[o.rest[0]], o.w.created); }
+        else if t == "ed448-v6" { e = openpgp::generate_ed448_v6_key(kr, a[o.rest[0]], o.w.created); }
+        else if t == "pqc" { e = openpgp::generate_pqc_bp_key(kr, a[o.rest[0]], o.w.created); }
+        else if t == "ky768_cv25519" { e = openpgp::generate_pqc_key(kr, a[o.rest[0]], o.w.created); }
         else if t == "rfc9980" { e = openpgp::generate_rfc9980_key(kr, a[o.rest[0]], o.w.created); }
         else { usage(); }
         if e != openpgp::OK { fail("genkey", e); }

@@ -167,13 +167,16 @@ The header fields that are not Content-* (Date, From, To, Subject,
 Message-ID, ...) stay outside; the entity (the Content-* fields and the
 body) is what is signed or encrypted. multipart/signed signs the entity
 exactly as it is sent, so it must be 7bit: a `Msg` with `ENC_8BIT` is
-refused. RSA keys sign with PKCS #1 v1.5 (`pss` for PSS), EC keys with
-ECDSA, Ed25519 keys with Ed25519 (RFC 8419), ML-DSA-44, -65 and -87 keys
-with pure ML-DSA (RFC 9882; Ed25519 and ML-DSA digest by SHA-512 and say
-micalg=sha-512 whatever `hash` is). Recipients are certificates, DER laid
-end to end: RSA ones by RSAES-OAEP with SHA-256 (`rsa_pkcs1` for v1.5),
-EC ones (P-256, P-384, P-521) by ECDH with the X9.63 KDF and AES key
-wrap, ML-KEM-512, -768 and -1024 ones (RFC 9935 certificates) by
+refused. RSA keys sign with PKCS #1 v1.5 (`pss` for PSS), EC keys (the
+NIST curves and brainpoolP256r1, P384r1, P512r1) with ECDSA, Ed25519 keys
+with Ed25519 (RFC 8419), ML-DSA-44, -65 and -87 keys with pure ML-DSA
+(RFC 9882; Ed25519 and ML-DSA digest by SHA-512 and say micalg=sha-512
+whatever `hash` is). Ed448 keys do not sign (RFC 8419 gives them
+SHAKE256, which has no micalg), but their signatures are read.
+Recipients are certificates, DER laid end to end: RSA ones by RSAES-OAEP
+with SHA-256 (`rsa_pkcs1` for v1.5), EC ones (P-256, P-384, P-521 and
+the three brainpool curves) by ECDH with the X9.63 KDF and AES key wrap,
+X448 ones by RFC 8418 (the X9.63 KDF over SHA-512), ML-KEM-512, -768 and -1024 ones (RFC 9935 certificates) by
 KEMRecipientInfo (RFC 9629, RFC 9936: HKDF-SHA256 and AES key wrap), any
 mix of them in one message; the content by AES-CBC (EnvelopedData) or
 AES-GCM (AuthEnvelopedData). A post-quantum correspondent has two
@@ -213,11 +216,15 @@ OpenPGP underneath is crypto/openpgp (its README has the formats).
 
 Post-quantum recipients need nothing new: a recipient whose encryption
 key is gpg 2.5's Kyber subkey (LibrePGP's ML-KEM-768+X25519,
-`openpgp::generate_pqc_key` or gpg's `ky768_cv25519`) or RFC 9980's
-ML-KEM-768+X25519 gets a post-quantum PKESK from the same `encrypt` and
-`sign_encrypt`, and `open` reads them; an RFC 9980 ML-DSA-65+Ed25519 key
-signs (micalg=pgp-sha256) like any other. gpg 2.5 reads the Kyber kind
-only.
+`openpgp::generate_pqc_key` or gpg's `ky768_cv25519`, or its default
+ML-KEM-768+brainpoolP256r1, `openpgp::generate_pqc_bp_key` or gpg's
+`pqc`) or RFC 9980's ML-KEM-768+X25519 gets a post-quantum PKESK from the
+same `encrypt` and `sign_encrypt`, and `open` reads them; an RFC 9980
+ML-DSA-65+Ed25519 key signs (micalg=pgp-sha256) like any other. gpg 2.5
+reads the Kyber kind only. The same goes for gpg's Brainpool and Ed448
+keys: a brainpoolP384r1 key signs with micalg=pgp-sha384, an Ed448 one
+(gpg's v5 signatures) with pgp-sha512, and both are checked against gpg
+both ways.
 
 ## Tools
 
@@ -404,7 +411,7 @@ python3 mail/scripts/check_message.py
   then the keys looked up through dns.client in goose-dnsd on 127.0.0.1 (a
   record in two strings, a missing selector, a revoked key).
 - `scripts/interop_smime.py`: goose-mail's smime and `openssl cms` (3 or
-  later) both ways, 96 cases: signing detached, opaque and BER by every
+  later) both ways, 129 cases: signing detached, opaque and BER by every
   key, checked to the test root; encryption by RSA-OAEP, RSA v1.5, P-256
   and P-384 (openssl's SHA-1 and SHA-256 KDFs), AES-CBC and AES-GCM,
   several recipients, key identifiers; sign-then-encrypt; refusals. With
@@ -412,7 +419,14 @@ python3 mail/scripts/check_message.py
   post-quantum: ML-DSA-44/65/87 signing both ways (openssl's SHAKE256 and
   SHA-512 digests, opaque, BER), ML-KEM-512/768/1024 encryption both ways
   (GCM, key identifiers, a ukm, HKDF-SHA384/512, beside RSA and EC
-  recipients, BER), sign-then-encrypt both ways.
+  recipients, BER), sign-then-encrypt both ways. 33 of them on the
+  brainpool curves, Ed448 and X448: brainpoolP256r1/P384r1/P512r1
+  signing both ways (detached, opaque, BER, a key identifier), openssl's
+  Ed448 signatures without signed attributes (opaque: its cms signs
+  Ed448 neither with them nor streamed), encryption to brainpool
+  recipients both ways (its SHA-384 KDF, GCM, key identifiers, BER) and
+  to an X448 one beside them (read back here: openssl's cms has no X448
+  key agreement), sign-then-encrypt.
 - `scripts/interop_pgp.py`: mail.pgp and gpg both ways (15 cases): gpg
   verifies and decrypts our parts; we open gpg's signed, encrypted,
   combined and nested messages, and refuse a changed body; both ways to

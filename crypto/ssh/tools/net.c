@@ -182,14 +182,24 @@ int32_t net_poll_set(net_fds fds, net_buf ready, int32_t timeout_ms) {
 
 /* One write of what fits: how many bytes went, 0 when the fd is full (a
    socket's write never waits; any other fd's does unless it is
-   non-blocking), -1 on error (a closed reader among them). */
+   non-blocking), -1 on error (a closed reader among them). A socket is
+   made non-blocking for the write: macOS ignores MSG_DONTWAIT in send,
+   and waits for room for all of it. */
 int64_t net_write_some(int32_t fd, net_slice data) {
+    struct stat st;
+    int fl = -1;
+    if (fstat(fd, &st) == 0 && S_ISSOCK(st.st_mode)) {
+        fl = fcntl(fd, F_GETFL, 0);
+        if (fl >= 0 && !(fl & O_NONBLOCK)) fcntl(fd, F_SETFL, fl | O_NONBLOCK);
+    }
     ssize_t n;
     do {
         n = send(fd, data.data, (size_t)data.len, MSG_DONTWAIT);
         if (n < 0 && errno == ENOTSOCK) n = write(fd, data.data, (size_t)data.len);
     } while (n < 0 && errno == EINTR);
-    if (n < 0) return errno == EAGAIN || errno == EWOULDBLOCK ? 0 : -1;
+    int err = errno;
+    if (fl >= 0 && !(fl & O_NONBLOCK)) fcntl(fd, F_SETFL, fl);
+    if (n < 0) return err == EAGAIN || err == EWOULDBLOCK ? 0 : -1;
     return (int64_t)n;
 }
 

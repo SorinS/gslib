@@ -1,7 +1,7 @@
 // jwx.jwa: the identifiers of JSON Web Algorithms (RFC 7518, RFC 8037,
-// RFC 9864's fully specified "Ed25519" and RFC 9964's ML-DSA): signature,
-// key management and content encryption algorithms, key types and curves,
-// with their names and what each needs.
+// RFC 9864's fully specified "Ed25519" and "Ed448" and RFC 9964's ML-DSA):
+// signature, key management and content encryption algorithms, key types
+// and curves, with their names and what each needs.
 
 namespace jwa;
 
@@ -30,6 +30,7 @@ let NONE: i64 = 15;
 let ML_DSA_44: i64 = 16;
 let ML_DSA_65: i64 = 17;
 let ML_DSA_87: i64 = 18;
+let ED448: i64 = 19;             // RFC 9864: EdDSA on Ed448 by name
 
 // --- Key management algorithms (RFC 7518 §4) ----------------------------------
 
@@ -77,10 +78,12 @@ let CRV_P384: i64 = 2;
 let CRV_P521: i64 = 3;
 let CRV_ED25519: i64 = 4;
 let CRV_X25519: i64 = 5;
+let CRV_ED448: i64 = 6;
+let CRV_X448: i64 = 7;
 
 // Every algorithm, for looking names up.
 let ALL: i64[] = [HS256, HS384, HS512, RS256, RS384, RS512, PS256, PS384, PS512, ES256, ES384, ES512,
-                  EDDSA, ED25519, NONE, ML_DSA_44, ML_DSA_65, ML_DSA_87,
+                  EDDSA, ED25519, ED448, NONE, ML_DSA_44, ML_DSA_65, ML_DSA_87,
                   RSA1_5, RSA_OAEP, RSA_OAEP_256, RSA_OAEP_384, RSA_OAEP_512, A128KW, A192KW, A256KW,
                   DIRECT, ECDH_ES, ECDH_ES_A128KW, ECDH_ES_A192KW, ECDH_ES_A256KW,
                   A128GCMKW, A192GCMKW, A256GCMKW, PBES2_HS256_A128KW, PBES2_HS384_A192KW, PBES2_HS512_A256KW,
@@ -101,6 +104,7 @@ fn name(a: i64) -> const u8[:] {
     if a == ES512 { return "ES512"; }
     if a == EDDSA { return "EdDSA"; }
     if a == ED25519 { return "Ed25519"; }
+    if a == ED448 { return "Ed448"; }
     if a == NONE { return "none"; }
     if a == ML_DSA_44 { return "ML-DSA-44"; }
     if a == ML_DSA_65 { return "ML-DSA-65"; }
@@ -142,7 +146,7 @@ fn lookup(s: const u8[:]) -> i64 {
     return UNKNOWN;
 }
 
-fn is_signature(a: i64) -> bool { a >= HS256 && a <= ML_DSA_87 }
+fn is_signature(a: i64) -> bool { a >= HS256 && a <= ED448 }
 fn is_key_management(a: i64) -> bool { a >= RSA1_5 && a <= PBES2_HS512_A256KW }
 fn is_content(a: i64) -> bool { a >= A128CBC_HS256 && a <= A256GCM }
 
@@ -150,7 +154,7 @@ fn is_hmac(a: i64) -> bool { a >= HS256 && a <= HS512 }
 fn is_rsa_pkcs1(a: i64) -> bool { a >= RS256 && a <= RS512 }
 fn is_rsa_pss(a: i64) -> bool { a >= PS256 && a <= PS512 }
 fn is_ecdsa(a: i64) -> bool { a >= ES256 && a <= ES512 }
-fn is_eddsa(a: i64) -> bool { a == EDDSA || a == ED25519 }
+fn is_eddsa(a: i64) -> bool { a == EDDSA || a == ED25519 || a == ED448 }
 fn is_mldsa(a: i64) -> bool { a >= ML_DSA_44 && a <= ML_DSA_87 }
 
 // The FIPS 204 parameter set of an ML-DSA algorithm (44, 65 or 87), as
@@ -245,11 +249,13 @@ fn crv_name(c: i64) -> const u8[:] {
     if c == CRV_P521 { return "P-521"; }
     if c == CRV_ED25519 { return "Ed25519"; }
     if c == CRV_X25519 { return "X25519"; }
+    if c == CRV_ED448 { return "Ed448"; }
+    if c == CRV_X448 { return "X448"; }
     return "";
 }
 
 fn crv_lookup(s: const u8[:]) -> i64 {
-    for c in [CRV_P256, CRV_P384, CRV_P521, CRV_ED25519, CRV_X25519] {
+    for c in [CRV_P256, CRV_P384, CRV_P521, CRV_ED25519, CRV_X25519, CRV_ED448, CRV_X448] {
         if crv_name(c) == s { return c; }
     }
     return CRV_UNKNOWN;
@@ -261,10 +267,27 @@ fn crv_len(c: i64) -> i64 {
     if c == CRV_P384 { return 48; }
     if c == CRV_P521 { return 66; }
     if c == CRV_ED25519 || c == CRV_X25519 { return 32; }
+    if c == CRV_ED448 { return 57; }
+    if c == CRV_X448 { return 56; }
     return 0;
 }
 
 fn is_nist(c: i64) -> bool { c == CRV_P256 || c == CRV_P384 || c == CRV_P521 }
+
+// The OKP curves (RFC 8037 §2): Ed25519 and Ed448 sign, X25519 and X448
+// agree on keys.
+fn is_okp(c: i64) -> bool { c == CRV_ED25519 || c == CRV_X25519 || c == CRV_ED448 || c == CRV_X448 }
+fn is_edwards(c: i64) -> bool { c == CRV_ED25519 || c == CRV_ED448 }
+fn is_montgomery(c: i64) -> bool { c == CRV_X25519 || c == CRV_X448 }
+
+// The curves an EdDSA algorithm signs with: "EdDSA" (RFC 8037 §3.1) either
+// Edwards curve, RFC 9864's "Ed25519" and "Ed448" their own only.
+fn eddsa_fits(a: i64, c: i64) -> bool {
+    if a == EDDSA { return is_edwards(c); }
+    if a == ED25519 { return c == CRV_ED25519; }
+    if a == ED448 { return c == CRV_ED448; }
+    return false;
+}
 
 // The key type an algorithm works with: signing and verifying for
 // signatures, the recipient's key for key management.
@@ -274,5 +297,5 @@ fn kty_of(a: i64) -> i64 {
     if is_ecdsa(a) { return KTY_EC; }
     if is_eddsa(a) { return KTY_OKP; }
     if is_mldsa(a) { return KTY_AKP; }
-    return KTY_UNKNOWN;     // ECDH-ES takes EC or OKP (X25519); none takes none
+    return KTY_UNKNOWN;     // ECDH-ES takes EC or OKP (X25519, X448); none takes none
 }

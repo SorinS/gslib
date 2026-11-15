@@ -1,6 +1,6 @@
 #!/bin/sh
 # PEM fixtures for test/pem.goose, made by OpenSSL (independent of gslib;
-# ML-DSA needs OpenSSL 3.5 or later):
+# ML-DSA needs OpenSSL 3.5 or later), Ed448, X448 and brainpoolP256r1 too:
 # for each key type a private key (PKCS #8, and SEC 1 or PKCS #1 too), its
 # public key (SubjectPublicKeyInfo), a self-signed certificate, and the
 # certificate's SHA-1 and SHA-256 fingerprints.
@@ -27,6 +27,16 @@ gen ed25519 -algorithm ED25519
 gen mldsa44 -algorithm ML-DSA-44
 gen mldsa65 -algorithm ML-DSA-65
 gen mldsa87 -algorithm ML-DSA-87
+gen ed448 -algorithm ED448
+# X448 only agrees keys, so has no self-signed certificate; brainpool keys
+# have no JOSE curve, and are read only to be refused.
+genkey() {
+    name=$1; shift
+    "$OPENSSL" genpkey "$@" -out "$out/$name.key" 2>/dev/null
+    "$OPENSSL" pkey -in "$out/$name.key" -pubout -out "$out/$name.pub"
+}
+genkey x448 -algorithm X448
+gen bp256 -algorithm EC -pkeyopt ec_paramgen_curve:brainpoolP256r1
 # The traditional forms: PKCS #1 for RSA, SEC 1 for EC.
 "$OPENSSL" pkey -in "$out/rsa.key" -traditional -out "$out/rsa-pkcs1.key"
 "$OPENSSL" pkey -in "$out/p256.key" -traditional -out "$out/p256-sec1.key"

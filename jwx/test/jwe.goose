@@ -341,6 +341,15 @@ fn limits() {
     let c, ec = jwe::encrypt_with("x", key, hc, "\"exp\":1");
     let cx, ecx = jwe::decrypt(c, jwa::A128KW, key);
     tv::check_int("unknown crit refused", ecx, jwx::ERR_CRIT);
+    // A crit name holding a NUL is malformed.
+    var hn = jwe::Header { .. };
+    hn.alg = jwa::A128KW;
+    hn.enc = jwa::A128GCM;
+    for extra in ["\"crit\":[\"exp\\u0000\"],\"exp\\u0000\":1", "\"crit\":[\"\\u0000\"],\"\\u0000\":1"] {
+        let cn, ecn = jwe::encrypt_with("x", key, hn, extra);
+        let pn, epn = jwe::decrypt(cn, jwa::A128KW, key);
+        tv::check(str("NUL crit refused ", extra), ecn == jwx::OK && epn == jwx::ERR_MALFORMED && pn.len == 0);
+    }
 
     // ECDH-ES with an ephemeral key off the curve: refused when parsed.
     let rk = jwk::generate_ec(jwa::CRV_P256);
@@ -379,6 +388,15 @@ fn repeated() {
         } else {
             tv::check_int("different alg twice refused", e, jwx::ERR_MALFORMED);
         }
+    }
+    // A header name holding a NUL is malformed: in the shared header it
+    // would otherwise hide that the recipient's "kid" differs from it.
+    for shared in ["{\"k\\u0000\":1,\"kid\":\"a\"}", "{\"\\u0000\":1}", "{\"kid\\u0000\":\"a\"}"] {
+        let token = str("{\"protected\":\"", prot, "\",\"unprotected\":", shared, ",\"header\":{\"kid\":\"b\"},",
+                        "\"encrypted_key\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"iv\":\"AAAAAAAAAAAAAAAA\",",
+                        "\"ciphertext\":\"AAAA\",\"tag\":\"AAAAAAAAAAAAAAAAAAAAAA\"}");
+        var m = jwe::Message { .. };
+        tv::check_int(str("NUL header name refused ", shared), jwe::parse(m, token), jwx::ERR_MALFORMED);
     }
 }
 

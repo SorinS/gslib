@@ -424,6 +424,7 @@ struct Csr {
 // GeneralNames builder's contents; empty for none), signed by key.
 fn create_csr(subject: const u8[:], san: const u8[:], key: const PrivateKey&) -> u8[>..], i64 {
     let alg, h = default_sig(key.kind);
+    if !sig_fits_key(key.kind, alg, h) { return [], ERR_UNSUPPORTED_ALGORITHM; }    // ML-KEM, X448: no signatures
     var info: u8[>..] = [];
     asn1::put_i64(info, 0);
     info.append(subject);
@@ -536,6 +537,7 @@ fn create_crl(issuer_der: const u8[:], key: const PrivateKey&, entries: const Re
     if ic.has_key_usage && ic.key_usage & KU_CRL_SIGN == 0 { return none, ERR_KEY_USAGE; }
     if marshal_public_key(key) != ic.der[ic.spki.start..ic.spki.end] { return none, ERR_BAD_SIGNATURE; }
     let alg, h = default_sig(key.kind);
+    if !sig_fits_key(key.kind, alg, h) { return none, ERR_UNSUPPORTED_ALGORITHM; }
     let alg_id = sig_alg_id(alg, h);
     var tbs: u8[>..] = [];
     asn1::put_i64(tbs, 1);

@@ -118,7 +118,10 @@ fn sig_data(out: u8[>..]&, sigtype: i64, data: const u8[:]) {
 }
 
 // Checks one signature packet body over data with the keyring's keys.
-fn check_signature(kr: const Keyring&, body: const u8[:], data: const u8[:], canonical: bool, now: i64) -> SigResult {
+// lit_meta: what a v5 signature hashes of the literal packet (inline
+// messages; empty for detached and cleartext signatures).
+fn check_signature(kr: const Keyring&, body: const u8[:], data: const u8[:], canonical: bool, now: i64,
+                   lit_meta: const u8[:] = "") -> SigResult {
     var r = SigResult { .. };
     let s, err = parse_signature(body);
     r.sigtype = s.sigtype;
@@ -127,7 +130,7 @@ fn check_signature(kr: const Keyring&, body: const u8[:], data: const u8[:], can
     r.created = s.created;
     r.keyid = s.issuer;
     r.fpr.append(s.issuer_fpr);
-    if s.version == 6 && s.issuer_fpr.len >= 8 { for i in 8 { r.keyid[i] = s.issuer_fpr[i]; } }
+    if s.version >= 5 && s.issuer_fpr.len >= 8 { for i in 8 { r.keyid[i] = s.issuer_fpr[i]; } }
     if err != OK { r.err = err; return r; }
     if s.sigtype != SIG_BINARY && s.sigtype != SIG_TEXT { r.err = ERR_UNSUPPORTED; return r; }
     var idx = -1;
@@ -138,7 +141,7 @@ fn check_signature(kr: const Keyring&, body: const u8[:], data: const u8[:], can
     let k = kr.keys[idx];
     var input: u8[>..] = [];
     if canonical { input.append(data); } else { sig_data(input, s.sigtype, data); }
-    let e = verify_signature(k, s, input);
+    let e = verify_signature(k, s, input, lit_meta);
     if e != OK { r.err = e; return r; }
     // The key, at the signature's time: bound, not revoked or expired,
     // allowed to sign.
@@ -156,13 +159,16 @@ fn check_signature(kr: const Keyring&, body: const u8[:], data: const u8[:], can
     return r;
 }
 
-// Checks every signature packet in m.sig_packets over m.data.
-fn check_signatures(kr: const Keyring&, m: Message&, now: i64) {
+// Checks every signature packet in m.sig_packets over m.data; inline when
+// m's literal packet was read with them (v5 signatures hash its header).
+fn check_signatures(kr: const Keyring&, m: Message&, now: i64, inline: bool = false) {
+    var meta: u8[>..] = [];
+    if inline { meta = literal_meta(m.format, m.filename, m.mtime); }
     var at = 0;
     while at < m.sig_packets.len {
         let p, err = next_packet(m.sig_packets, at);
         if err != OK { break; }
-        let r = check_signature(kr, m.sig_packets[p.body..p.body_end], m.data, false, now);
+        let r = check_signature(kr, m.sig_packets[p.body..p.body_end], m.data, false, now, meta);
         m.sigs.push(r);
         at = p.end;
     }
@@ -506,7 +512,7 @@ fn read_message(kr: const Keyring&, input: const u8[:], m: Message&, opt: ReadOp
         let more, err = read_layer(kr, cur, m, opt, next, depth == 0);
         if err != OK { return err; }
         if !more {
-            check_signatures(kr, m, opt.now);
+            check_signatures(kr, m, opt.now, true);
             return OK;
         }
         cur.clear();
@@ -563,7 +569,9 @@ fn verify_cleartext(kr: const Keyring&, text: const u8[:], m: Message&, now: i64
         if err != OK || p.partial || p.tag != TAG_SIGNATURE { return ERR_MALFORMED; }
         at = p.end;
         let body = ct.sigs[p.body..p.body_end];
-        var r = check_signature(kr, body, ct.text, true, now);
+        // A v5 signature hashes the literal packet gpg fakes for the text:
+        // format 't', no name, date 0.
+        var r = check_signature(kr, body, ct.text, true, now, literal_meta('t', "", 0));
         let hash: i64 = if body.len > 3 { body[3] } else { 0 };
         // No Hash: header puts no limit on the hash (RFC 9580 §7.1).
         let listed = ct.hashes.len == 0 || contains(ct.hashes[..], hash);
@@ -589,13 +597,15 @@ fn resolve_signer(kr: const Keyring&, signer: i64) -> i64, i64 {
     return idx, OK;
 }
 
+// A literal data packet; text goes in with CRLF line ends (RFC 9580 §5.9),
+// as gpg writes it and as a text signature hashes it.
 fn put_literal(out: u8[>..]&, data: const u8[:], opt: WriteOptions) {
     var b: u8[>..] = [];
     b.push(if opt.text { 'u' } else { 'b' });
     b.push(opt.filename.len as! u8);
     b.append(opt.filename);
     put32(b, opt.mtime);
-    b.append(data);
+    if opt.text { canonical_text(b, data); } else { b.append(data); }
     put_packet(out, TAG_LITERAL, b);
 }
 
@@ -637,7 +647,7 @@ fn put_signed_literal(kr: const Keyring&, signer: i64, data: const u8[:], opt: W
     var input: u8[>..] = [];
     sig_data(input, sigtype, data);
     var sig: u8[>..] = [];
-    let e = make_signature(k, prm, input, sig);
+    let e = make_signature(k, prm, input, sig, literal_meta(if opt.text { 'u' } else { 'b' }, opt.filename, opt.mtime));
     if e != OK { return e; }
     var salt: u8[>..] = [];
     if k.version == 6 {
@@ -711,7 +721,7 @@ fn sign_cleartext(kr: const Keyring&, signer: i64, text: const u8[:], out: u8[>.
     canonical_text(input, body, true);
     var sig: u8[>..] = [];
     let prm = sig_params(opt, SIG_TEXT);
-    let e = make_signature(kr.keys[idx], prm, input, sig);
+    let e = make_signature(kr.keys[idx], prm, input, sig, literal_meta('t', "", 0));
     if e != OK { return e; }
     out.append("-----BEGIN PGP SIGNED MESSAGE-----\nHash: ");
     out.append(hash_name(signing_hash(kr.keys[idx], opt.hash)));

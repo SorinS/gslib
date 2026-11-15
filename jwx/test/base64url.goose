@@ -52,7 +52,8 @@ fn main() {
     for k in [jwa::KTY_EC, jwa::KTY_RSA, jwa::KTY_OKP, jwa::KTY_OCT] {
         tv::check_int(str("kty ", jwa::kty_name(k)), jwa::kty_lookup(jwa::kty_name(k)), k);
     }
-    for c in [jwa::CRV_P256, jwa::CRV_P384, jwa::CRV_P521, jwa::CRV_ED25519, jwa::CRV_X25519] {
+    for c in [jwa::CRV_P256, jwa::CRV_P384, jwa::CRV_P521, jwa::CRV_ED25519, jwa::CRV_X25519, jwa::CRV_ED448,
+              jwa::CRV_X448] {
         tv::check_int(str("crv ", jwa::crv_name(c)), jwa::crv_lookup(jwa::crv_name(c)), c);
     }
     tv::done("base64url");

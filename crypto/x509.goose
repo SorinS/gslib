@@ -15,6 +15,7 @@ import crypto.bignum;
 import crypto.bignum.rsa;
 import crypto.bignum.ec;
 import crypto.bignum.ed25519;
+import crypto.bignum.ed448;
 import crypto.bignum.hmac;
 import crypto.bignum.mldsa;
 import crypto.bignum.slhdsa;
@@ -79,6 +80,7 @@ let SIG_ED25519: i64 = 4;
 let SIG_MLDSA: i64 = 5;              // sig_hash holds the parameter set: 44, 65 or 87
 let SIG_DSA: i64 = 6;                // with sig_hash (224, 256, 384, 512)
 let SIG_SLHDSA: i64 = 7;             // sig_hash holds the bignum::SLHDSA_* set, 1 to 12
+let SIG_ED448: i64 = 8;              // pure Ed448, the empty context (RFC 8410)
 
 // Public key types.
 let KEY_UNKNOWN: i64 = 0;
@@ -108,6 +110,13 @@ let KEY_SLHDSA_SHAKE_256F: i64 = 31;
 let KEY_MLKEM512: i64 = 40;          // ML-KEM (RFC 9935): encryption only (CMS, cms_env)
 let KEY_MLKEM768: i64 = 41;
 let KEY_MLKEM1024: i64 = 42;
+// brainpoolP256r1, P384r1 and P512r1 (RFC 5639) under id-ecPublicKey,
+// for ECDSA and ECDH as the NIST curves are.
+let KEY_EC_BP256: i64 = 43;
+let KEY_EC_BP384: i64 = 44;
+let KEY_EC_BP512: i64 = 45;
+let KEY_ED448: i64 = 46;             // id-Ed448 (RFC 8410): signatures
+let KEY_X448: i64 = 47;              // id-X448 (RFC 8410): key agreement only (CMS, cms_env)
 
 // Key usage bits (RFC 5280 §4.2.1.3), as KU_* masks of Cert.key_usage.
 let KU_DIGITAL_SIGNATURE: u32 = 1;
@@ -234,12 +243,13 @@ fn sig_alg_of(der: const u8[:], t: asn1::Tlv) -> i64, i64, i64 {
         if asn1::oid_is(der, oid, "1.2.840.113549.1.1.12") { return SIG_RSA_PKCS1, 384, 0; }
         if asn1::oid_is(der, oid, "1.2.840.113549.1.1.13") { return SIG_RSA_PKCS1, 512, 0; }
     }
-    // ECDSA and Ed25519 identifiers carry no parameters at all.
+    // ECDSA, Ed25519 and Ed448 identifiers carry no parameters at all.
     if p.len == 1 {
         if asn1::oid_is(der, oid, "1.2.840.10045.4.3.2") { return SIG_ECDSA, 256, 0; }
         if asn1::oid_is(der, oid, "1.2.840.10045.4.3.3") { return SIG_ECDSA, 384, 0; }
         if asn1::oid_is(der, oid, "1.2.840.10045.4.3.4") { return SIG_ECDSA, 512, 0; }
         if asn1::oid_is(der, oid, "1.3.101.112") { return SIG_ED25519, 0, 0; }
+        if asn1::oid_is(der, oid, "1.3.101.113") { return SIG_ED448, 0, 0; }
         let set = mldsa_set_of_oid(der, oid);
         if set != 0 { return SIG_MLDSA, set, 0; }
         let slh = slhdsa_set_of_oid(der, oid);
@@ -262,6 +272,9 @@ fn ec_named_curve(der: const u8[:], o: asn1::Tlv) -> i64 {
     if asn1::oid_is(der, o, "1.3.132.0.34") { return KEY_EC_P384; }
     if asn1::oid_is(der, o, "1.3.132.0.35") { return KEY_EC_P521; }
     if asn1::oid_is(der, o, "1.3.132.0.33") { return KEY_EC_P224; }
+    if asn1::oid_is(der, o, "1.3.36.3.3.2.8.1.1.7") { return KEY_EC_BP256; }
+    if asn1::oid_is(der, o, "1.3.36.3.3.2.8.1.1.11") { return KEY_EC_BP384; }
+    if asn1::oid_is(der, o, "1.3.36.3.3.2.8.1.1.13") { return KEY_EC_BP512; }
     return KEY_UNKNOWN;
 }
 
@@ -313,8 +326,10 @@ fn mlkem_oid(k: i64) -> const u8[:] {
 }
 
 fn is_ec(kind: i64) -> bool {
-    kind == KEY_EC_P256 || kind == KEY_EC_P384 || kind == KEY_EC_P521 || kind == KEY_EC_P224
+    kind == KEY_EC_P256 || kind == KEY_EC_P384 || kind == KEY_EC_P521 || kind == KEY_EC_P224 || is_brainpool(kind)
 }
+
+fn is_brainpool(kind: i64) -> bool { kind == KEY_EC_BP256 || kind == KEY_EC_BP384 || kind == KEY_EC_BP512 }
 
 // The curve of an EC key type.
 fn curve_of_key(kind: i64) -> bignum::Curve {
@@ -322,7 +337,19 @@ fn curve_of_key(kind: i64) -> bignum::Curve {
     if kind == KEY_EC_P256 { return bignum::p256(); }
     if kind == KEY_EC_P384 { return bignum::p384(); }
     if kind == KEY_EC_P224 { return bignum::p224(); }
+    if kind == KEY_EC_BP256 { return bignum::bp256(); }
+    if kind == KEY_EC_BP384 { return bignum::bp384(); }
+    if kind == KEY_EC_BP512 { return bignum::bp512(); }
     return bignum::p521();
+}
+
+// The hash an EC key type signs and derives keys with by default: SHA-256
+// for P-256, P-224 and brainpoolP256r1, SHA-384 for the 384-bit curves,
+// SHA-512 for P-521 and brainpoolP512r1.
+fn ec_hash_of_key(kind: i64) -> i64 {
+    if kind == KEY_EC_P384 || kind == KEY_EC_BP384 { return 384; }
+    if kind == KEY_EC_P521 || kind == KEY_EC_BP512 { return 512; }
+    return 256;
 }
 
 // The key type of a SubjectPublicKeyInfo, and its subjectPublicKey.
@@ -338,6 +365,10 @@ fn spki_of(der: const u8[:], t: asn1::Tlv) -> i64, asn1::Tlv, bool {
         kind = ec_named_curve(der, alg[1]);
     } else if asn1::oid_is(der, alg[0], "1.3.101.112") && alg.len == 1 {
         kind = KEY_ED25519;
+    } else if asn1::oid_is(der, alg[0], "1.3.101.113") && alg.len == 1 {
+        kind = KEY_ED448;
+    } else if asn1::oid_is(der, alg[0], "1.3.101.111") && alg.len == 1 {
+        kind = KEY_X448;
     } else if mldsa_set_of_oid(der, alg[0]) != 0 && alg.len == 1 {
         kind = mldsa_kind(mldsa_set_of_oid(der, alg[0]));
     } else if slhdsa_set_of_oid(der, alg[0]) != 0 && alg.len == 1 {
@@ -915,6 +946,11 @@ fn verify_with(key_cert: const Cert&, alg: i64, h: i64, salt: i64, msg: const u8
         if key_cert.key_type != KEY_ED25519 { return ERR_BAD_SIGNATURE; }
         return if bignum::ed25519_verify(kb, msg, sig) { OK } else { ERR_BAD_SIGNATURE };
     }
+    if alg == SIG_ED448 {
+        // Pure Ed448 with the empty context (RFC 8410 §6).
+        if key_cert.key_type != KEY_ED448 { return ERR_BAD_SIGNATURE; }
+        return if bignum::ed448_verify(kb, msg, sig) { OK } else { ERR_BAD_SIGNATURE };
+    }
     if alg == SIG_MLDSA {
         // Pure ML-DSA with the empty context (RFC 9881); the set must be the key's.
         if !is_mldsa(key_cert.key_type) || mldsa_set(key_cert.key_type) != h { return ERR_BAD_SIGNATURE; }
@@ -932,7 +968,7 @@ fn verify_with(key_cert: const Cert&, alg: i64, h: i64, salt: i64, msg: const u8
 }
 
 // The same over a digest made by the hash h: RSA, ECDSA and DSA;
-// ERR_UNSUPPORTED_ALGORITHM for Ed25519, ML-DSA and SLH-DSA, which sign messages,
+// ERR_UNSUPPORTED_ALGORITHM for Ed25519, Ed448, ML-DSA and SLH-DSA, which sign messages,
 // and ERR_BAD_SIGNATURE for a digest of another length.
 fn verify_digest(key_cert: const Cert&, alg: i64, h: i64, salt: i64, digest: const u8[:], sig: const u8[:]) -> i64 {
     if alg != SIG_RSA_PKCS1 && alg != SIG_RSA_PSS && alg != SIG_ECDSA && alg != SIG_DSA { return ERR_UNSUPPORTED_ALGORITHM; }
@@ -983,6 +1019,12 @@ let RSA_PSS_RSAE_SHA256: u16 = 0x0804;
 let RSA_PSS_RSAE_SHA384: u16 = 0x0805;
 let RSA_PSS_RSAE_SHA512: u16 = 0x0806;
 let ED25519: u16 = 0x0807;
+let ED448: u16 = 0x0808;
+// The Brainpool curves' TLS 1.3 schemes (RFC 8734); in TLS 1.2 their keys
+// sign with the ECDSA_SECP* codes, which name only the hash there.
+let ECDSA_BRAINPOOLP256R1TLS13_SHA256: u16 = 0x081a;
+let ECDSA_BRAINPOOLP384R1TLS13_SHA384: u16 = 0x081b;
+let ECDSA_BRAINPOOLP512R1TLS13_SHA512: u16 = 0x081c;
 let MLDSA44: u16 = 0x0904;
 let MLDSA65: u16 = 0x0905;
 let MLDSA87: u16 = 0x0906;
@@ -1011,7 +1053,20 @@ fn verify_scheme(c: const Cert&, scheme: u16, msg: const u8[:], sig: const u8[:]
         if c.key_type != KEY_EC_P521 { return ERR_BAD_SIGNATURE; }
         return verify_with(c, SIG_ECDSA, 512, 0, msg, sig);
     }
+    if scheme == ECDSA_BRAINPOOLP256R1TLS13_SHA256 {
+        if c.key_type != KEY_EC_BP256 { return ERR_BAD_SIGNATURE; }
+        return verify_with(c, SIG_ECDSA, 256, 0, msg, sig);
+    }
+    if scheme == ECDSA_BRAINPOOLP384R1TLS13_SHA384 {
+        if c.key_type != KEY_EC_BP384 { return ERR_BAD_SIGNATURE; }
+        return verify_with(c, SIG_ECDSA, 384, 0, msg, sig);
+    }
+    if scheme == ECDSA_BRAINPOOLP512R1TLS13_SHA512 {
+        if c.key_type != KEY_EC_BP512 { return ERR_BAD_SIGNATURE; }
+        return verify_with(c, SIG_ECDSA, 512, 0, msg, sig);
+    }
     if scheme == ED25519 { return verify_with(c, SIG_ED25519, 0, 0, msg, sig); }
+    if scheme == ED448 { return verify_with(c, SIG_ED448, 0, 0, msg, sig); }
     if scheme == MLDSA44 { return verify_with(c, SIG_MLDSA, 44, 0, msg, sig); }
     if scheme == MLDSA65 { return verify_with(c, SIG_MLDSA, 65, 0, msg, sig); }
     if scheme == MLDSA87 { return verify_with(c, SIG_MLDSA, 87, 0, msg, sig); }
