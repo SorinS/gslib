@@ -16,7 +16,8 @@
 //   -o FILE             write bodies to FILE
 //   -L                  follow redirects (at most --max-redirs N, default 50 as curl)
 //   -u USER:PASSWORD    credentials: --basic (sent at once, the default), or
-//                       --digest / --anyauth (in answer to a 401)
+//                       --digest / --ntlm / --anyauth (in answer to a 401;
+//                       --ntlm is NTLMv2 over HTTP/1.1, DOMAIN\user allowed)
 //   --oauth2-bearer T   Authorization: Bearer T
 //   -x URL              a proxy (http, https, socks5, socks5h; userinfo for its
 //                       credentials); else HTTP_PROXY, HTTPS_PROXY and NO_PROXY
@@ -204,6 +205,7 @@ fn main() {
         else if s == "--basic" { c.opt.auth = http::AUTH_BASIC; i++; }
         else if s == "--digest" { c.opt.auth = http::AUTH_DIGEST; i++; }
         else if s == "--anyauth" { c.opt.auth = http::AUTH_ANY; i++; }
+        else if s == "--ntlm" { c.opt.auth = http::AUTH_NTLM; c.opt.http2 = false; i++; }
         else if s == "--oauth2-bearer" && has_next { http::set_bearer(c, next); i += 2; }
         else if (s == "-x" || s == "--proxy") && has_next { proxy.clear(); proxy.append(next); has_proxy = true; i += 2; }
         else if s == "--noproxy" && has_next { no_proxy.clear(); no_proxy.append(next); i += 2; }

@@ -3,10 +3,10 @@
 // (mime/src/path.c), krb5's UDP, private files
 // and host names (krb5/src/krb5sys.c), pkcs11's module loading
 // (pkcs11/src/p11.c), and dns's UDP and listening sockets
-// (dns/src/dnsnet.c), built only into programs that call them.
+// (dns/src/dnsnet.c), and tpm2's TPM device (tpm2/src/tpmdev.c), built only into programs that call them.
 // crypto/bignum's entropy module opens libc through an extern "c" block;
 // on Linux libc.so is a linker script, so the library itself is named.
-c_sources = ["net/src/net.c", "mime/src/path.c", "krb5/src/krb5sys.c", "pkcs11/src/p11.c", "dns/src/dnsnet.c"];
+c_sources = ["net/src/net.c", "mime/src/path.c", "krb5/src/krb5sys.c", "pkcs11/src/p11.c", "dns/src/dnsnet.c", "tpm2/src/tpmdev.c"];
 // pkcs11/src/p11.c loads PKCS#11 modules: dlopen, in libdl before glibc 2.34.
 c_libs_linux = ["dl"];
 c_libs_windows = ["ws2_32"];
@@ -25,6 +25,7 @@ exclude = [
     "net/ldap/test", "net/ldap/tools",
     "encoding/yaml/test",
     "encoding/xml/test", "encoding/xml/tools",
+    "encoding/cbor/test", "encoding/cbor/tools",
     "net/http/test", "net/http/tools",
     "compress/test", "compress/tools",
     "mime/test", "mime/tools",
@@ -38,4 +39,8 @@ exclude = [
     "tsp/test", "tsp/tools",
     "est/test", "est/tools",
     "scep/test", "scep/tools",
+    "ntlm/test", "ntlm/tools",
+    "saml/test", "saml/tools",
+    "webauthn/test", "webauthn/tools",
+    "tpm2/test", "tpm2/tools", "tpm2/scripts",
 ];

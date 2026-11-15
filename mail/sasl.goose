@@ -1,7 +1,10 @@
 // mail.sasl: the client side of the SASL mechanisms SMTP's AUTH (RFC 4954)
 // and POP3's AUTH (RFC 5034) use, as go-mail's smtp package has them:
 // PLAIN (RFC 4616), LOGIN, CRAM-MD5 (RFC 2195), SCRAM-SHA-1 and
-// SCRAM-SHA-256 (RFC 5802, RFC 7677; without channel binding) and XOAUTH2.
+// SCRAM-SHA-256 (RFC 5802, RFC 7677; without channel binding) and XOAUTH2,
+// and NTLM (gslib's ntlm, NTLMv2 only; "DOMAIN\user" as the user), which
+// Exchange servers offer: the NEGOTIATE as the initial response, the
+// AUTHENTICATE answering the CHALLENGE. NTLM is used only when asked for.
 // The protocols carry the exchange, base64-encoded; this module works on
 // the decoded bytes:
 //
@@ -18,11 +21,15 @@ namespace mail;
 
 import std;
 import base64;
+import os;
 import mail;
 import crypto.bignum;
 import crypto.bignum.hmac;
 import crypto.bignum.kdf;
 import crypto.bignum.entropy;
+import ntlm;
+import ntlm.messages;
+import ntlm.client;
 
 let AUTH_AUTO:         i64 = 0;  // the best the server offers: auth_choose
 let AUTH_PLAIN:        i64 = 1;
@@ -31,6 +38,7 @@ let AUTH_CRAM_MD5:     i64 = 3;
 let AUTH_SCRAM_SHA1:   i64 = 4;
 let AUTH_SCRAM_SHA256: i64 = 5;
 let AUTH_XOAUTH2:      i64 = 6;  // the secret is an OAuth 2 access token
+let AUTH_NTLM:         i64 = 7;  // NTLMv2 (MS-SMTPX, MS-POP3, MS-OXIMAP); the user may be DOMAIN\user
 
 fn auth_name(mech: i64) -> const u8[:] {
     match mech {
@@ -40,6 +48,7 @@ fn auth_name(mech: i64) -> const u8[:] {
         AUTH_SCRAM_SHA1 => "SCRAM-SHA-1",
         AUTH_SCRAM_SHA256 => "SCRAM-SHA-256",
         AUTH_XOAUTH2 => "XOAUTH2",
+        AUTH_NTLM => "NTLM",
         _ => "",
     }
 }
@@ -84,10 +93,12 @@ struct Sasl {
     nonce:        u8[..64],
     client_first: u8[..1024],
     server_sig:   u8[..64],
+    nt:           ntlm::Initiator,   // AUTH_NTLM's context
 }
 
 fn sasl_new(mech: i64, user: const u8[:], secret: const u8[:]) -> Sasl {
-    var s = Sasl { mech: mech, step: 0, done: false, user: [], secret: [], nonce: [], client_first: [], server_sig: [] };
+    var s = Sasl { mech: mech, step: 0, done: false, user: [], secret: [], nonce: [], client_first: [], server_sig: [],
+                   nt: ntlm::initiator(ntlm::anonymous_credentials(), "", 0) };
     s.user.append(user[.. ::min(user.len, 512)]);
     s.secret.append(secret[.. ::min(secret.len, 8192)]);
     return s;
@@ -148,6 +159,15 @@ fn sasl_initial(s: Sasl&, out: u8[>..]&) -> bool {
         s.done = true;
         s.step = 1;
         return true;
+    }
+    if s.mech == AUTH_NTLM {
+        // The NEGOTIATE; credentials that will not do give no initial
+        // response, and the first challenge then fails the exchange.
+        let cred, ce = ntlm::credentials(s.user, "", s.secret);
+        if ce != ntlm::OK { return false; }
+        s.nt = ntlm::initiator(cred, "", 0);
+        s.step = 1;
+        return ntlm::negotiate(s.nt, out) == ntlm::OK;
     }
     if s.mech != AUTH_SCRAM_SHA1 && s.mech != AUTH_SCRAM_SHA256 { return false; }
     if s.nonce.len == 0 {
@@ -211,6 +231,12 @@ fn sasl_step(s: Sasl&, challenge: const u8[:], out: u8[>..]&) -> i64 {
         return OK;
     }
     if s.mech == AUTH_SCRAM_SHA1 || s.mech == AUTH_SCRAM_SHA256 { return scram_step(s, step, challenge, out); }
+    if s.mech == AUTH_NTLM {
+        // The CHALLENGE, answered once.
+        if step != 1 || ntlm::authenticate(s.nt, challenge, time_ns() / 1000000000, out) != ntlm::OK { out.clear(); return ERR_AUTH; }
+        s.done = true;
+        return OK;
+    }
     return ERR_AUTH;
 }
 

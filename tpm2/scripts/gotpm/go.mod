@@ -1,0 +1,7 @@
+module gslib/tpm2/gotpm
+
+go 1.25.0
+
+require github.com/google/go-tpm v0.9.8
+
+require golang.org/x/sys v0.47.0 // indirect

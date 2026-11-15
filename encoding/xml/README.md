@@ -162,6 +162,10 @@ fn keyinfo_cert(d, sig) -> u8[>..], bool            // DER, to compare with what
 fn find_signatures(d, out: i64[>..<]&)
 fn sign_enveloped(d: Doc&, el: i64, before: i64, key: const x509::PrivateKey&, cert_der: const u8[:],
                   o: const SignOptions&) -> i64, i64     // the Signature, OK or an error
+fn sig_of_uri(uri: const u8[:], allow_sha1: bool) -> i64, i64  // SignatureMethod URI to x509 alg and hash (x509::SIG_UNKNOWN if refused)
+fn sig_uri(alg: i64, h: i64) -> const u8[:]         // and back; "" for none
+fn verify_value(cert: const x509::Cert&, alg: i64, h: i64, msg: const u8[:], sig: const u8[:],
+                o: const VerifyOptions&) -> i64      // a raw signature as XML-DSig encodes it (ECDSA r||s), OK or an error
 struct VerifyOptions { allow_sha1 = false, max_references = 4, min_rsa_bits = 2048 }
 struct SignOptions { alg = 0 (the key's), hash = 256, digest = 256, c14n = EXC_C14N, inclusive, prefix = "ds", include_cert = true }
 struct Verified { code, message, refs: i64[..16], signature }

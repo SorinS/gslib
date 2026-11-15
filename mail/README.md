@@ -13,7 +13,7 @@ their own I/O over gslib's `net` sockets and its TLS, and a tool,
 | `mail.address` | addresses as Go's net/mail reads and writes them: `parse_address`, `parse_address_list`, `make_address`, `write_address` (display names quoted or RFC 2047-encoded as needed) |
 | `mail.message` | a message, `mail::Msg`: From/To/Cc/Bcc/Reply-To, subject, headers, Date and Message-ID, text and HTML bodies, attachments and inline parts, written by `write` as multipart/mixed > related > alternative, quoted-printable, base64 or 8bit; the SMTP envelope (`envelope_from`, `recipients`) |
 | `mail.link` | the connection under both clients: a socket, TLS from the first byte or after STARTTLS/STLS, lines in and out |
-| `mail.sasl` | SASL's client side: PLAIN, LOGIN, CRAM-MD5, SCRAM-SHA-1, SCRAM-SHA-256 (the server's signature checked), XOAUTH2 |
+| `mail.sasl` | SASL's client side: PLAIN, LOGIN, CRAM-MD5, SCRAM-SHA-1, SCRAM-SHA-256 (the server's signature checked), XOAUTH2, NTLM (NTLMv2 on gslib's ntlm; only when asked for) |
 | `mail.smtp` | an SMTP client (namespace `smtp`): EHLO/HELO, STARTTLS or TLS on 465, AUTH, MAIL with 8BITMIME, SMTPUTF8 and DSN, RCPT, DATA, RSET, NOOP, VRFY, QUIT; `send`, `send_message` |
 | `mail.pop3` | a POP3 client (namespace `pop3`): CAPA, STLS or TLS on 995, USER/PASS, APOP, AUTH, STAT, LIST, UIDL, RETR, TOP, DELE, RSET, NOOP, UTF8, QUIT |
 | `mail.imap` | an IMAP client (namespace `imap`), IMAP4rev2 and IMAP4rev1 servers: CAPABILITY, STARTTLS or TLS on 993, LOGIN, AUTHENTICATE (SASL-IR), ID, ENABLE, SELECT/EXAMINE, LIST/LSUB (modified UTF-7 decoded), CREATE, DELETE, RENAME, SUBSCRIBE, STATUS, FETCH (ENVELOPE and BODYSTRUCTURE parsed), SEARCH/ESEARCH, STORE, COPY, MOVE, EXPUNGE, UID EXPUNGE, APPEND (LITERAL+), NOOP, IDLE, CLOSE, UNSELECT, LOGOUT; a response parser with literals |
@@ -246,7 +246,7 @@ goose-mail smime decrypt --roots roots.pem cert.pem key.pem enc.eml -
 FILE `-` builds a small message with mail.message (an attachment, a
 dotted line, a `bcc:` recipient kept out of the headers). Options:
 `--port`, `--tls mandatory|opportunistic|none|implicit`, `--insecure`,
-`--auth auto|plain|login|cram-md5|scram-sha-1|scram-sha-256|xoauth2|none`
+`--auth auto|plain|login|cram-md5|scram-sha-1|scram-sha-256|xoauth2|ntlm|none`
 (and `user` for pop3 and imap, `apop` for pop3), `--name` (EHLO's).
 
 imap's commands run in order on one connection: `capa`, `id`, `enable

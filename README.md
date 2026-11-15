@@ -16,6 +16,7 @@ later.
 | `net/ldap` | LDAP (RFC 4511): messages, filters, DNs, LDIF, URLs, connections; ldapsearch-style tools | [README](net/ldap/README.md) |
 | `encoding/yaml` | YAML 1.2 | [README](encoding/yaml/README.md) |
 | `encoding/xml` | XML 1.0 and Namespaces, parsed for documents from strangers (no DTDs or entities, limits, strict well-formedness, unique IDs), built and written; Canonical XML 1.0 and 1.1 and Exclusive XML Canonicalization; XML Signature (enveloped, RSA, RSA-PSS, ECDSA, Ed25519), verified against signature wrapping; XML Encryption (AES-GCM, RSA-OAEP, ECDH-ES; AES-CBC and RSA 1.5 to decrypt, opted into): what SAML is built on | [README](encoding/xml/README.md) |
+| `encoding/cbor` | CBOR (RFC 8949) decoded strictly for data from strangers (definite lengths unless opted into, no duplicate map keys, UTF-8 checked, depth, item and size limits, the shortest or the deterministic form when asked; tags passed through) and written in the core deterministic encoding; diagnostic notation; COSE_Key (RFC 9052/9053, RFC 8230) for EC2, OKP and RSA keys and signatures by ES256/384/512, EdDSA, Ed25519, Ed448, PS256/384/512, RS256/384/512, converted to and from JWKs and SubjectPublicKeyInfo: what WebAuthn is built on | [README](encoding/cbor/README.md) |
 | `compress` | Compression and archives, as Go's compress/* and archive/*, plus xz: DEFLATE, gzip, zlib, LZW, bzip2, xz and LZMA, zip, tar; reading and writing | [README](compress/README.md) |
 | `mime` | MIME, as Go's mime, mime/quotedprintable and mime/multipart, and net/textproto's header sections: media types, RFC 2047 encoded-words, file extensions' types, quoted-printable, multipart bodies and forms | [README](mime/README.md) |
 | `krb5` | Kerberos V5 (RFC 4120) as go-krb5 has it: TGTs and service tickets (password, keytab, cross-realm, referrals, FAST armoring), the acceptor, GSS-API (RFC 4121), SPNEGO and HTTP Negotiate, Microsoft's PAC, keytabs and credential caches; goose-krb5 (kinit, kvno, klist) and goose-gss | [README](krb5/README.md) |
@@ -29,12 +30,16 @@ later.
 | `tsp` | Time-stamps (RFC 3161, RFC 5816): requests, replies and TSTInfo, tokens checked (signature, signingCertificate and V2, the TSA's critical timeStamping usage, its path at genTime, imprint, nonce, policy), a TSA that signs them, CMS signatures time-stamped (Appendix A); goose-ts, as openssl ts with a TSA over HTTP | [README](tsp/README.md) |
 | `est` | EST (RFC 7030, RFC 8951) certificates over HTTPS: /cacerts, /simpleenroll and /simplereenroll (waiting out 202 and Retry-After), /csrattrs, /serverkeygen, labels; HTTP Basic or a TLS client certificate; a test CA; goose-est, with the test CA over TLS | [README](est/README.md) |
 | `scep` | SCEP (RFC 8894) certificates: GetCACaps, GetCACert, PKCSReq and RenewalReq with CertPoll, GetCert, GetCRL, by POST or GET; replies checked against the CA's certificate, transactionID and nonces; AES and SHA-256, DES and SHA-1 only when allowed; a test CA; goose-scep | [README](scep/README.md) |
+| `saml` | SAML 2.0 Web Browser SSO and Single Logout, service provider and identity provider: the HTTP-Redirect binding (DEFLATE, the query signed and checked over the bytes as received) and HTTP-POST; Responses checked as the profile asks, reading only what xml's signature verification says is signed (all eight XSW attacks, the comment-in-NameID bug, replay refused), encrypted assertions; signed and encrypted Responses made; metadata read, verified and written; goose-saml (metadata, an SP, a test IdP, verify) | [README](saml/README.md) |
+| `ntlm` | NTLM authentication ([MS-NLMP]), NTLMv2 only (no LM or NTLMv1 response is ever made, and the acceptor refuses them): NEGOTIATE, CHALLENGE and AUTHENTICATE with their AV_PAIRs, an initiator and an acceptor (the NT hash looked up through a block) checking NTProofStr, the MIC, the time, channel bindings (tls-server-end-point) and the target name; signing and sealing; NTLM inside SPNEGO (krb5), over HTTP (net/http's fetch, `AUTH_NTLM`) and in SMTP/POP3/IMAP AUTH (mail); goose-ntlm (compute, decode, a test HTTP server, a client) | [README](ntlm/README.md) |
+| `tpm2` | TPM 2.0, as go-tpm with go-tpm-tools' checks: raw TCP (swtpm), the Microsoft simulator's protocol and Linux's /dev/tpmrm0; password, HMAC (bound, salted by RSA-OAEP or ECDH) and policy sessions with AES-CFB parameter encryption; the TCG EK and SRK templates, keys, signing, RSA-OAEP, ECDH, NV and EK certificates, PCRs, sealing to PCR policies; a policy calculator; Quote, Certify, CertifyCreation and ActivateCredential, with their verification, MakeCredential and TCG event log replay in software; goose-tpm | [README](tpm2/README.md) |
+| `webauthn` | WebAuthn Level 3 and passkeys for a relying party: registration and authentication options as the L3 JSON has them; registrations checked whole (clientDataJSON, the attestation object, authenticator data and its flags, the algorithm) with every attestation format but SafetyNet: none, packed, fido-u2f, tpm, android-key, apple, chained to the RP's roots by x509; authentications against the stored credential record (signature, user handle, counter, backup flags); FIDO MDS3 BLOBs verified and searched; goose-webauthn (options, verify, MDS, a demo RP for a real browser) | [README](webauthn/README.md) |
 | `net/http` | HTTP/1.1 and HTTP/2, server and client: a client with Go's policy (redirects, cookies, credentials, proxies, gzip, TLS session resumption, streaming uploads, several responses at once), URLs, cookies, HPACK; goose-http and goose-httpd | [README](net/http/README.md) |
 | `net` | TCP client sockets, as the client half of Go's net: `net::dial` with a deadline, `net::read` and `net::write` with timeouts, `net::readable`, `net::close`; what http, dns, krb5 and the examples connect with (POSIX and Winsock) | [net.goose](net.goose) |
 
-## dns, pkcs11, jwx, mail, openpgp, acme, oauth, tsp, xml, est and scep
+## dns, pkcs11, jwx, mail, openpgp, acme, oauth, tsp, xml, est, scep, saml, ntlm, tpm2 and webauthn
 
-These eleven have the most to say beyond their table rows: what each
+These fifteen have the most to say beyond their table rows: what each
 module does, how it was built and how it was tested. Each README has the
 full API.
 
@@ -457,6 +462,194 @@ both ways, each certificate checked by openssl. micromdm signs its
 replies with SHA-1 and encrypts them with single DES whatever its caps
 say, so goose-scep talks to it with `--legacy`.
 
+### saml: SAML 2.0 single sign-on
+
+`saml` is both sides of SAML 2.0's Web Browser SSO and Single Logout, on
+`xml`. A service provider sends AuthnRequests by the HTTP-Redirect
+binding (DEFLATE, base64, the query signed by SigAlg and Signature) or
+HTTP-POST (an auto-submitting form, the XML signed), and checks the
+Response that comes back as the profile asks: the Response's signature
+and then the assertion's, with the IdP's certificates from its metadata;
+Destination, Issuer, InResponseTo against the request ID the caller kept
+(an IdP-initiated Response only when allowed), the status, exactly one
+assertion as a direct child of the verified Response, decrypted when it
+came encrypted, a bearer SubjectConfirmation with our ACS as Recipient
+and a NotOnOrAfter ahead, Conditions with a clock skew, an
+AudienceRestriction naming us, OneTimeUse, SessionNotOnOrAfter; the
+NameID and every attribute value. What it reads, it reads from the nodes
+xml's verification returned as signed, never by searching the document
+again, which is what defeats signature wrapping; the NameID is its whole
+text, so a comment cannot cut it short (the bug Duo found in 2018 in
+several libraries). The assertion's ID and how long to remember it come
+back for the caller's replay cache, through a block. An identity
+provider reads AuthnRequests (signatures by either binding, the ACS URL
+against the SP's metadata) and answers with the assertion signed, the
+Response signed, or both, the assertion encrypted to the SP's key when
+asked. Logout requests and responses go both ways over both bindings,
+and must be signed. Metadata is read (an entity, or one out of an
+aggregate; verified against a pinned certificate when signed, validUntil
+checked) and written, signed or not. goose-saml prints metadata, runs a
+small SP that prints each verified assertion as JSON and a test IdP, and
+checks a Response from a file.
+
+Tested without a network against all eight wrapping attacks of "On
+Breaking SAML" and their variants, the NameID comment, unsigned and
+foreign-signed assertions, every time window, audience, recipient,
+destination and InResponseTo fault, replay, SHA-1 (a libxmlsec1-signed
+Response, refused by default), RSA 1024, DOCTYPEs, a DEFLATE bomb and
+oversized messages; live (`make interop-saml`) against python3-saml
+(OneLogin's toolkit, on libxmlsec1) as an SP and as the signer of
+Responses, and against crewjam/saml's SP and IdP, both ways, by both
+bindings, encrypted and not, logins and logouts.
+
+### ntlm: NTLMv2
+
+`ntlm` is NTLM authentication ([MS-NLMP]) for the peers that offer
+nothing better: IIS and http.sys sites, Exchange's SMTP, POP3 and IMAP,
+workgroup machines. It is legacy (keys from an unsalted MD4 of the
+password, RC4 and HMAC-MD5), and NTLMv2 is all of it that is here: no LM
+or NTLMv1 response is ever computed, and the acceptor refuses them
+(24-byte responses, LM alone, LM_KEY), since an NTLMv1 response turns
+back into the NT hash. The initiator offers 128-bit keys, KEY_EXCH and
+extended session security, refuses a CHALLENGE that drops them, sends
+the server's target info back with MsvAvFlags, the channel bindings
+(MD5 of gss_channel_bindings_struct around RFC 5929's
+tls-server-end-point) and the SPN, a random session key RC4'd under the
+session base key, and the MIC over the three messages. The acceptor
+writes a CHALLENGE with its names and the time, and checks the
+AUTHENTICATE strictly: every field inside the message and none
+overlapping, the AV_PAIRs ending in MsvAvEOL with nothing twice,
+NTProofStr against the NT hash its caller's block gives (one error for
+an unknown user and a wrong password), the time within a skew and the
+timestamp it sent, channel bindings and the target name as its policy
+asks, flags not downgraded, and the MIC. Signing and sealing (HMAC-MD5,
+RC4, sequence numbers) follow as GSS wrap and MIC. NTLM also goes where
+gslib already spoke Negotiate: krb5.spnego takes it as SPNEGO's
+mechanism with mechListMIC on the NTLM keys, net/http's fetch answers
+`WWW-Authenticate: NTLM` (or `Negotiate` alone, with raw NTLMSSP) on the
+same HTTP/1.1 connection with the channel binding of the server's
+certificate, and mail's SASL has `AUTH_NTLM`. goose-ntlm computes
+responses from given inputs, decodes messages, runs both sides over
+stdin and stdout, serves HTTP behind NTLM and fetches through it.
+
+Tested against [MS-NLMP] §4.2.4 byte for byte (NTOWFv2, LMv2,
+NTProofStr, the session and encrypted keys, the CHALLENGE and
+AUTHENTICATE messages, §4.2.4.4's sealing), and without a network
+against truncated, oversized, out-of-range and overlapping messages,
+AV_PAIR lists without an end or with a pair twice, every single byte of
+an AUTHENTICATE changed, wrong and stripped MICs, old and replayed
+timestamps, channel binding and SPN mismatches, NTLMv1 and LM, and
+downgraded flags both ways; live (`make interop-ntlm`) against pyspnego
+as initiator and acceptor (raw and SPNEGO, channel bindings, sealing),
+impacket, curl `--ntlm` and Azure/go-ntlmssp, both ways over HTTP.
+
+### tpm2: TPM 2.0
+
+`tpm2` talks to a TPM 2.0 and checks what it says, after go-tpm with
+go-tpm-tools' attestation verification. Commands go over raw TCP (swtpm's
+data channel), the Microsoft simulator's protocol (with its platform
+channel's power-on) or Linux's /dev/tpmrm0, each response read with its
+sizes checked against what is left and the structure's maximum, and
+refused whole when any of it lies. Sessions are password, HMAC (cpHash
+and rpHash, fresh nonces, bound to an entity, salted to a TPM key by
+RSA-OAEP or by ECDH and KDFe) and policy, and any of them encrypts a
+command's first parameter or a response's with AES-CFB. The TCG
+templates make EKs and SRKs whose Names are checked against the ones
+computed here; keys sign (RSASSA, RSAPSS, ECDSA, each signature checked
+by x509 through the key as a SubjectPublicKeyInfo), decrypt and do ECDH;
+NV indices are defined, written, read, counted and extended, and EK
+certificates read from their standard indices. A policy calculator
+gives an object's authPolicy before the object exists (PolicyPCR,
+PolicySecret, PolicySigned, PolicyOR, PolicyAuthValue, PolicyPassword,
+PolicyCommandCode, PolicyAuthorize), the same digests a trial session
+gives, and the same assertions satisfy a policy session for Unseal.
+For attestation it quotes, certifies and activates credentials on the
+TPM, and verifies with none: a TPMS_ATTEST's signature by the AK, its
+nonce, PCR selection and digest against PCR values, a certified Name or
+creation hash; a TCG crypto-agile event log replayed to the PCRs it
+should give; and MakeCredential, which binds a verifier's secret to an
+AK's Name under the EK, so that only that TPM gets it back. goose-tpm
+does the same from a shell: random bytes, PCRs, primaries, EK keys and
+certificates, quotes and their verification, sealing, keys and
+signatures, NV.
+
+Tested without a TPM against the Names, quotes, certifications and
+policy digests swtpm made, KDFa, KDFe, command and response HMACs,
+policies and an event log computed with Python's hashlib, MakeCredential
+recovered with software EKs' private keys, and responses that lie in
+every field; against go-tpm on 3000 random cases (KDFs, Names of every
+kind of public area, policy digests); live (`make interop-tpm2`) against
+swtpm, with EK certificates provisioned by swtpm_setup, and the Sail TPM
+emulator over TCP and mssim, whose departures from the specification
+(policies not enforced at use, a bound session's parameter-encryption
+key, OAEP labels ignored, ECC ActivateCredential, random primaries) are
+in tpm2's README.
+
+### webauthn: passkeys and FIDO metadata
+
+`webauthn` is the relying party's half of WebAuthn Level 3: the server
+that makes the options a browser's navigator.credentials.create() and
+.get() take, in the L3 JSON serialization (base64url for bytes:
+challenges made from the OS's entropy, the user handle, the algorithms
+asked for, credentials to exclude or allow with their transports,
+residentKey and userVerification, attestation and its formats, hints,
+credProps), and checks what comes back. A registration is checked
+whole, as §7.1 orders it: clientDataJSON with no member twice, its type,
+the challenge exactly, an origin from the RP's list (its related origins
+included), crossOrigin and topOrigin only when the RP allows them; the
+attestation object decoded strictly; the authenticator data's RP ID
+hash, its flags (UP, UV when required, BS never without BE, AT and ED
+saying what follows) and nothing after it, a credential ID of at most
+1023 bytes, the COSE key on its curve with an alg the RP asked for and
+that fits it; and the attestation statement by format: packed (self or
+with a certificate, its subject and FIDO AAGUID extension checked),
+fido-u2f, tpm (TPMS_ATTEST and TPMT_PUBAREA parsed, the certified name
+and extraData recomputed, the AIK certificate's empty subject, TCG SAN
+with a registered manufacturer and AIK key usage), android-key (the key
+description: the challenge, no allApplications, a generated signing
+key), apple (the nonce extension) and none. The statement's
+certificates are checked against the roots the RP trusts with x509;
+untrusted attestation is an error only when the RP says so. What comes
+out is the credential record the RP stores, as deterministic CBOR if it
+likes. An authentication is checked against that record: the same
+client data rules, the signature over authData and the client data's
+hash by the stored key and algorithm, a passkey's user handle, the
+backup flags, and a counter that did not go forward, reported (and
+refused only when asked). MDS3 BLOBs are verified (the JWT's x5c to the
+FIDO root, by jwx) and searched by AAGUID for an authenticator's
+attestation roots and status, refusing revoked and compromised ones.
+goose-webauthn makes options, verifies responses and BLOBs from files,
+and serves a small RP on localhost whose page registers a passkey and
+signs in with it, for trying a real browser and authenticator by hand.
+
+It stands on `encoding/cbor`, new with it: RFC 8949 decoded into nodes
+that point into the input, strictly (definite lengths unless opted into,
+no duplicate map keys by value, UTF-8 checked, limits on depth, items
+and size, the shortest or the deterministic form when asked), written in
+the core deterministic encoding, and shown in diagnostic notation; and
+its COSE_Key module, whose keys verify ES256 to ES512, EdDSA, Ed25519,
+Ed448, PS256 to PS512 and RS256 to RS512 signatures and convert to and
+from JWKs and SubjectPublicKeyInfo.
+
+Tested against every registration and authentication of the L3
+specification's test vectors (§16: none, self, crossOrigin, topOrigin, a
+long credential ID, packed with six key types, TPM, Android Key, Apple,
+FIDO U2F, chained to its root), py_webauthn's vectors from real
+authenticators (YubiKeys, four TPMs, Android phones under
+Google's roots, an iPhone under Apple's), and a software authenticator
+changing one thing at a time (wrong challenge, origin, RP ID and type,
+missing UP and UV, contradicting flags, trailing bytes, duplicate CBOR
+keys, oversized credential IDs, a wrong AAGUID extension, an ES256 key
+that says RS256, unknown and forbidden algorithms, counters going
+back); cbor against RFC 8949's Appendix A and against Python's cbor2 on
+random items written every way and mutated (`make differential-cbor`);
+live (`make interop-webauthn`) against python-fido2's Fido2Server,
+py_webauthn and go-webauthn, both ways: a software authenticator built
+with python-fido2's classes registers and signs in with all four, each
+refuses the same tampered responses, each one's options are answered
+and checked by the others, and goose-webauthn's options are read by all
+three. The real FIDO MDS3 BLOB verifies too.
+
 ## Post-quantum cryptography
 
 The NIST post-quantum standards are in crypto/bignum, and the protocols
@@ -603,6 +796,10 @@ oauth.goose, oauth/                   oauth, the same
 tsp.goose, tsp/                       tsp, the same
 est.goose, est/                       est, the same
 scep.goose, scep/                     scep, the same
+saml.goose, saml/                     saml, the same
+ntlm.goose, ntlm/                     ntlm, the same
+tpm2.goose, tpm2/, tpm2/src/          tpm2, the same, and its TPM device's C
+webauthn.goose, webauthn/             webauthn, the same
 examples/<lib>/                       each library's examples (excluded too)
 scripts/run_all.py            every library's unit tests
 Makefile                      the programs, checks and tests
@@ -652,7 +849,8 @@ make build      # the programs into ../bin (BIN=dir for another): goose-http, go
                 # goose-ssh, goose-sshd, goose-scp, goose-sftp-server, goose-ssh-keygen,
                 # goose-ldapsearch, goose-ldapadd, goose-ldapmodify and the other ldap tools,
                 # goose-krb5, goose-gss, goose-dig, goose-dnsd, goose-mail, goose-pgp, goose-acme,
-                # goose-oauth, goose-ts, goose-est, goose-scep
+                # goose-oauth, goose-ts, goose-est, goose-scep, goose-saml, goose-ntlm, goose-tpm,
+                # goose-webauthn
 make check      # type-check every tool and example
 ```
 
@@ -666,9 +864,10 @@ make test                 # every library's unit tests (make test-http: one libr
 make test-native          # also built with the C compiler
 make interop              # live: OpenSSL, Go, OpenSSH, OpenLDAP, curl, nghttp2, h2spec, pkcs11-tool, dig, miekg/dns,
                           # mailpit, dovecot, dkimpy, gpg, Pebble, OpenBao, node-oidc-provider,
-                          # digitorus/timestamp, signxml, xmlsec, GlobalSign's EST, micromdm's SCEP
+                          # digitorus/timestamp, signxml, xmlsec, GlobalSign's EST, micromdm's SCEP,
+                          # pyspnego, impacket, go-ntlmssp, swtpm, tpmemu, python-fido2, py_webauthn, go-webauthn
 make differential         # against Go (net/http, net/url, hpack, compress, mime, jwx, miekg/dns), zlib, openssl,
-                          # libxml2 (lxml, xmlsec)
+                          # libxml2 (lxml, xmlsec), go-tpm, cbor2
 make test-all             # check, test, interop and differential
 python3 scripts/run_all.py [--native] [--only http,tls]   # what make test runs
 ```
@@ -713,3 +912,28 @@ in Docker or Podman, is skipped unless a daemon is already running.
 tsp's interop needs openssl 3 or later (`openssl ts`, `openssl cms`), and
 uses curl and Go (digitorus/timestamp, fetched by `tsp/scripts/gotsa`'s
 go.mod) when they are installed.
+
+saml's interop needs a Python with requests, python3-saml and lxml in a
+venv (`SAML_PYTHON`; python-xmlsec's wheel carries libxmlsec1), and Go
+for crewjam/saml (fetched by `saml/scripts/crewjam`'s go.mod); each part
+is skipped without what it needs.
+
+ntlm's interop needs a Python with pyspnego (impacket optional) in a
+venv (`NTLM_PYTHON`), and uses curl and Go (Azure/go-ntlmssp, pinned by
+`ntlm/scripts/gontlm`'s go.mod) when they are there. It talks to no
+Windows host; ntlm/README.md says how to try one of your own.
+
+tpm2's interop needs swtpm (`brew install swtpm`, `apt install swtpm
+swtpm-tools`; swtpm_setup for the EK certificates) and runs the Sail TPM's
+tpmemu when `TPMEMU` names it (or it is on the PATH); each is skipped when
+missing, and tpmemu's known departures from the specification are
+reported, not failed. Its differential needs Go (go-tpm, pinned by
+`tpm2/scripts/gotpm`'s go.mod).
+
+webauthn's interop needs a Python with fido2 (python-fido2 2.x),
+webauthn (py_webauthn), cbor2 and cryptography in a venv
+(`WEBAUTHN_PYTHON`), and Go for go-webauthn (pinned by
+`webauthn/scripts/gowebauthn`'s go.mod); each part is skipped without
+what it needs. No browser or hardware key can be driven from here:
+webauthn/README.md says how to try `goose-webauthn serve` with your own.
+cbor's differential needs cbor2 (`CBOR_PYTHON`).

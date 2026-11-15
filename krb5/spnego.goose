@@ -12,6 +12,12 @@
 // sent by the initiator whenever the acceptor sent one. Microsoft's
 // NegTokenInit2 (its negHints) is read; a raw Kerberos token where SPNEGO
 // was expected (as some HTTP clients send) is taken too.
+//
+// NTLM as SPNEGO's mechanism (1.3.6.1.4.1.311.2.2.10, [MS-SPNG]) is the
+// spnego_ntlm_* functions at the end, on gslib's ntlm: both sides, a raw
+// NTLMSSP token in place of SPNEGO taken too, and mechListMIC signed and
+// checked with the NTLM session's keys (the RC4 state reset after each,
+// as Windows does). They return ntlm's error codes.
 
 namespace krb5;
 
@@ -25,6 +31,11 @@ import krb5.ccache;
 import krb5.service;
 import krb5.gssapi;
 import krb5.config;
+import ntlm;
+import ntlm.messages;
+import ntlm.session;
+import ntlm.client;
+import ntlm.server;
 
 let SPNEGO_OID = "1.3.6.1.5.5.2";
 let NTLM_OID = "1.3.6.1.4.1.311.2.2.10";
@@ -355,4 +366,197 @@ fn negotiate_token(value: const u8[:]) -> u8[>..], bool {
     if b.len == 0 { return out, true; }
     if !base64::decode(out, b) { out.clear(); return out, false; }
     return out, true;
+}
+
+// --- NTLM as the mechanism ([MS-SPNG]) --------------------------------------------------
+
+// A SPNEGO context whose mechanism is NTLM, either side.
+struct SpnegoNtlm {
+    initiator:    bool,
+    ini:          ntlm::Initiator,
+    acc:          ntlm::Acceptor,
+    started:      bool,
+    complete:     bool,
+    raw:          bool,          // bare NTLMSSP tokens, no SPNEGO (the peer sent them so)
+    mic_sent:     bool,
+    mic_received: bool,
+    mech_list:    u8[..1024],    // the DER of the initiator's mechTypes
+}
+
+fn spnego_ntlm_initiator(cred: ntlm::Credentials, spn: const u8[:], want: u32) -> SpnegoNtlm {
+    return SpnegoNtlm { initiator: true, ini: ntlm::initiator(cred, spn, want), acc: ntlm::Acceptor { .. }, started: false,
+                        complete: false, raw: false, mic_sent: false, mic_received: false, mech_list: [] };
+}
+
+fn spnego_ntlm_acceptor(a: ntlm::Acceptor) -> SpnegoNtlm {
+    var init = ntlm::initiator(ntlm::anonymous_credentials(), "", 0);
+    init.state = ntlm::INIT_FAILED;
+    return SpnegoNtlm { initiator: false, ini: init, acc: a, started: false, complete: false, raw: false, mic_sent: false,
+                        mic_received: false, mech_list: [] };
+}
+
+// The session of an established context, for wrap, unwrap and the MICs.
+fn spnego_ntlm_session(ctx: SpnegoNtlm&) -> ntlm::Session& { if ctx.initiator { ctx.ini.session } else { ctx.acc.session } }
+
+// The initiator's first token: NegTokenInit offering NTLM alone, the
+// NEGOTIATE message in it.
+fn spnego_ntlm_init(ctx: SpnegoNtlm&, out: u8[>..]&) -> i64 {
+    if !ctx.initiator || ctx.started { return ntlm::ERR_STATE; }
+    var neg: u8[>..] = [];
+    let e = ntlm::negotiate(ctx.ini, neg);
+    if e != ntlm::OK { return e; }
+    var oids: u8[][>..] = [];
+    oids.push(NTLM_OID);
+    var list: u8[>..] = [];
+    mech_type_list(list, oids);
+    spnego_init_token(out, list, neg, "");
+    ctx.mech_list.append(list);
+    ctx.started = true;
+    return ntlm::OK;
+}
+
+// Our mechListMIC over the mechTypes, the outgoing RC4 state reset after it.
+fn spnego_ntlm_my_mic(ctx: SpnegoNtlm&, out: u8[>..]&) -> i64 {
+    let e = ntlm::get_mic(spnego_ntlm_session(ctx), ctx.mech_list, out);
+    if e != ntlm::OK { return e; }
+    ntlm::reset_rc4(spnego_ntlm_session(ctx), true);
+    ctx.mic_sent = true;
+    return ntlm::OK;
+}
+
+fn spnego_ntlm_check_mic(ctx: SpnegoNtlm&, mic: const u8[:]) -> i64 {
+    let e = ntlm::verify_mic(spnego_ntlm_session(ctx), ctx.mech_list, mic);
+    if e != ntlm::OK { return ntlm::ERR_MIC; }
+    ntlm::reset_rc4(spnego_ntlm_session(ctx), false);
+    ctx.mic_received = true;
+    return ntlm::OK;
+}
+
+// The initiator's next step with the acceptor's token: the CHALLENGE in
+// (the AUTHENTICATE and our mechListMIC out), then the acceptor's
+// mechListMIC checked. done: the exchange is over. `now`: seconds since
+// 1970.
+fn spnego_ntlm_init_continue(ctx: SpnegoNtlm&, token: const u8[:], now: i64, out: u8[>..]&) -> bool, i64 {
+    if !ctx.initiator || !ctx.started || ctx.complete { return true, ntlm::ERR_STATE; }
+    let t, ok = asn1::parse(token, true);
+    if !ok || t.tag != asn1::ctx(1, true) { return true, ntlm::ERR_MALFORMED; }
+    let inner, iok = asn1::explicit(token, t, true);
+    if !iok { return true, ntlm::ERR_MALFORMED; }
+    let state, mech, resp, mic, good = read_neg_resp(token, inner);
+    if !good { return true, ntlm::ERR_MALFORMED; }
+    if state == NEG_REJECT { return true, ntlm::ERR_REJECTED; }
+    if mech.len > 0 && mech[..] != NTLM_OID { return true, ntlm::ERR_REJECTED; }
+    if !ntlm::established(ctx.ini) {
+        if resp.len == 0 { return true, ntlm::ERR_MALFORMED; }
+        var auth: u8[>..] = [];
+        let e = ntlm::authenticate(ctx.ini, resp, now, auth);
+        if e != ntlm::OK { return true, e; }
+        var m: u8[>..] = [];
+        let me = spnego_ntlm_my_mic(ctx, m);
+        if me != ntlm::OK { return true, me; }
+        spnego_resp_token(out, -1, "", auth, m);
+        return false, ntlm::OK;
+    }
+    // The acceptor's verdict, with its mechListMIC.
+    if state != NEG_ACCEPT_COMPLETED || resp.len > 0 { return true, ntlm::ERR_MALFORMED; }
+    if mic.len == 0 { return true, ntlm::ERR_MIC; }
+    let ce = spnego_ntlm_check_mic(ctx, mic);
+    if ce != ntlm::OK { return true, ce; }
+    ctx.complete = true;
+    return true, ntlm::OK;
+}
+
+// The acceptor's step: the initiator's token (NegTokenInit first, then
+// a NegTokenResp with the AUTHENTICATE and its mechListMIC; or bare
+// NTLMSSP tokens), the reply in `out`. F is the NT hash lookup of
+// ntlm::accept_authenticate. done is true when the context is complete
+// (check the error: OK, or why it failed).
+fn spnego_ntlm_accept<F>(ctx: SpnegoNtlm&, token: const u8[:], now: i64, out: u8[>..]&) -> bool, i64 {
+    if ctx.initiator || ctx.complete { return true, ntlm::ERR_STATE; }
+    if ctx.raw || (!ctx.started && ntlm::is_ntlmssp(token)) {
+        ctx.raw = true;
+        if !ctx.started {
+            ctx.started = true;
+            let e = ntlm::accept_negotiate(ctx.acc, token, now, out);
+            return e != ntlm::OK, e;
+        }
+        let e = ntlm::accept_authenticate(ctx.acc, token, now) { user, domain, h => F(user, domain, h) };
+        ctx.complete = e == ntlm::OK;
+        return true, e;
+    }
+    var mech_token: u8[>..] = [];
+    var mic: u8[>..] = [];
+    if !ctx.started {
+        let id, at, err = gss_unframe(token, SPNEGO_OID, false);
+        if err != OK { return true, ntlm::ERR_MALFORMED; }
+        let t, ok = asn1::read(token, at, token.len, true);
+        if !ok || t.tag != asn1::ctx(0, true) { return true, ntlm::ERR_MALFORMED; }
+        let inner, iok = asn1::explicit(token, t, true);
+        if !iok { return true, ntlm::ERR_MALFORMED; }
+        let list, oids, tok, m, good = read_neg_init(token, inner);
+        if !good || list.len > ctx.mech_list.cap { return true, ntlm::ERR_MALFORMED; }
+        ctx.started = true;
+        ctx.mech_list.append(list);
+        var i = 0;
+        var chosen = -1;
+        for o in oids {
+            if chosen < 0 && o[..] == NTLM_OID { chosen = i; }
+            i++;
+        }
+        if chosen < 0 {
+            spnego_resp_token(out, NEG_REJECT, "", "", "");
+            return true, ntlm::ERR_REJECTED;
+        }
+        if chosen != 0 || tok.len == 0 {
+            // The optimistic token is another mechanism's: NTLM named,
+            // its NEGOTIATE awaited.
+            spnego_resp_token(out, NEG_ACCEPT_INCOMPLETE, NTLM_OID, "", "");
+            return false, ntlm::OK;
+        }
+        mech_token.append(tok);
+    } else {
+        let t, ok = asn1::parse(token, true);
+        if !ok || t.tag != asn1::ctx(1, true) { return true, ntlm::ERR_MALFORMED; }
+        let inner, iok = asn1::explicit(token, t, true);
+        if !iok { return true, ntlm::ERR_MALFORMED; }
+        let state, mech, resp, m, good = read_neg_resp(token, inner);
+        if !good { return true, ntlm::ERR_MALFORMED; }
+        mech_token.append(resp);
+        mic.append(m);
+    }
+    if ctx.acc.state == ntlm::ACC_NEW {
+        var ch: u8[>..] = [];
+        let e = ntlm::accept_negotiate(ctx.acc, mech_token, now, ch);
+        if e != ntlm::OK {
+            spnego_resp_token(out, NEG_REJECT, "", "", "");
+            return true, e;
+        }
+        spnego_resp_token(out, NEG_ACCEPT_INCOMPLETE, NTLM_OID, ch, "");
+        return false, ntlm::OK;
+    }
+    let e = ntlm::accept_authenticate(ctx.acc, mech_token, now) { user, domain, h => F(user, domain, h) };
+    if e != ntlm::OK {
+        spnego_resp_token(out, NEG_REJECT, "", "", "");
+        return true, e;
+    }
+    // mechListMIC: the initiator's checked; required when its AUTHENTICATE
+    // carried a MIC (a MIC there and none here is a stripped one).
+    if mic.len > 0 {
+        let ce = spnego_ntlm_check_mic(ctx, mic);
+        if ce != ntlm::OK {
+            spnego_resp_token(out, NEG_REJECT, "", "", "");
+            return true, ce;
+        }
+    } else if ctx.acc.had_mic {
+        spnego_resp_token(out, NEG_REJECT, "", "", "");
+        return true, ntlm::ERR_MIC;
+    }
+    var my: u8[>..] = [];
+    if ctx.mic_received || ctx.acc.had_mic {
+        let me = spnego_ntlm_my_mic(ctx, my);
+        if me != ntlm::OK { return true, me; }
+    }
+    spnego_resp_token(out, NEG_ACCEPT_COMPLETED, "", "", my);
+    ctx.complete = true;
+    return true, ntlm::OK;
 }

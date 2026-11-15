@@ -1,10 +1,13 @@
 // mail.sasl against the RFCs' examples: SCRAM-SHA-1 (RFC 5802 §5),
 // SCRAM-SHA-256 (RFC 7677 §3), CRAM-MD5 (RFC 2195 §2), PLAIN (RFC 4616),
-// and the server's mistakes a client must catch.
+// and the server's mistakes a client must catch; NTLM against gslib's
+// ntlm acceptor in memory.
 import std;
 import gslib from "../..";
 import gslib.mail;
 import gslib.mail.sasl;
+import gslib.ntlm;
+import gslib.ntlm.server;
 
 var failures = 0;
 
@@ -32,7 +35,37 @@ fn scram(mech: i64, nonce: const u8[:], first: const u8[:], server_first: const 
     check(str(name, " done"), mail::sasl_done(s));
 }
 
+// AUTH NTLM: the NEGOTIATE as the initial response, the AUTHENTICATE for
+// the CHALLENGE; a second challenge is refused.
+fn ntlm_exchange(password: const u8[:]) -> bool {
+    var s = mail::sasl_new(mail::AUTH_NTLM, "EXAMPLE\\carol", password);
+    var t1: u8[>..] = [];
+    if !mail::sasl_initial(s, t1) { return false; }
+    var srv = ntlm::acceptor("MAIL", "EXAMPLE", "", "");
+    var t2: u8[>..] = [];
+    let now = time_ns() / 1000000000;
+    if ntlm::accept_negotiate(srv, t1, now, t2) != ntlm::OK { return false; }
+    var t3: u8[>..] = [];
+    if mail::sasl_step(s, t2, t3) != mail::OK || !mail::sasl_done(s) { return false; }
+    var again: u8[>..] = [];
+    check("ntlm: one challenge only", mail::sasl_step(s, t2, again) == mail::ERR_AUTH);
+    let e = ntlm::accept_authenticate(srv, t3, now) { user, domain, h =>
+        let nt, ok = ntlm::nt_hash("pencil");
+        for i in 16 { h[i] = nt[i]; }
+        user == "carol" && domain == "EXAMPLE"
+    };
+    return e == ntlm::OK;
+}
+
 fn main() {
+    check("ntlm: name", mail::auth_name(mail::AUTH_NTLM) == "NTLM" && !mail::auth_plaintext(mail::AUTH_NTLM));
+    check("ntlm: not chosen unasked", mail::auth_choose("NTLM") == mail::AUTH_AUTO);
+    check("ntlm: exchange", ntlm_exchange("pencil"));
+    check("ntlm: wrong password", !ntlm_exchange("crayon"));
+    var bad = mail::sasl_new(mail::AUTH_NTLM, "carol", "pencil");
+    var o: u8[>..] = [];
+    mail::sasl_initial(bad, o);
+    check("ntlm: a challenge that is not one", mail::sasl_step(bad, "garbage", o) == mail::ERR_AUTH && o.len == 0);
     scram(mail::AUTH_SCRAM_SHA1, "fyko+d2lbbFgONRv9qkxdawL", "n,,n=user,r=fyko+d2lbbFgONRv9qkxdawL",
           "r=fyko+d2lbbFgONRv9qkxdawL3rfcNHYJY1ZVvWVs7j,s=QSXCR+Q6sek8bf92,i=4096",
           "c=biws,r=fyko+d2lbbFgONRv9qkxdawL3rfcNHYJY1ZVvWVs7j,p=v0X8v3Bz2T0CJGbJQyF0X+HI4Ts=",

@@ -14,15 +14,15 @@ PYTHON  ?= python3
 GOOSE   ?= $(or $(shell command -v goose 2>/dev/null),$(abspath $(ROOT)/../goose.git/build/goose))
 export GOOSE
 
-LIBS    := asn1 bignum x509 tls ssh ldap yaml http compress mime krb5 jwx pkcs11 dns mail openpgp acme oauth tsp xml est scep
+LIBS    := asn1 bignum x509 tls ssh ldap yaml http compress mime krb5 jwx pkcs11 dns mail openpgp acme oauth tsp xml est scep saml cbor webauthn ntlm tpm2
 
 # ------------------------------------------------------------------------------
 # Derived values
 # ------------------------------------------------------------------------------
 
 # A program is rebuilt when any of the package's sources changes.
-SOURCES := $(ROOT)/gslib.goose $(ROOT)/gslib.build $(ROOT)/net.goose $(ROOT)/compress.goose $(ROOT)/mime.goose $(ROOT)/krb5.goose $(ROOT)/jwx.goose $(ROOT)/pkcs11.goose $(ROOT)/dns.goose $(ROOT)/mail.goose $(ROOT)/acme.goose $(ROOT)/oauth.goose $(ROOT)/tsp.goose $(ROOT)/est.goose $(ROOT)/scep.goose \
-	$(shell find $(ROOT)/crypto $(ROOT)/encoding $(ROOT)/net $(ROOT)/compress $(ROOT)/mime $(ROOT)/krb5 $(ROOT)/jwx $(ROOT)/pkcs11 $(ROOT)/dns $(ROOT)/mail $(ROOT)/acme $(ROOT)/oauth $(ROOT)/tsp $(ROOT)/est $(ROOT)/scep \
+SOURCES := $(ROOT)/gslib.goose $(ROOT)/gslib.build $(ROOT)/net.goose $(ROOT)/compress.goose $(ROOT)/mime.goose $(ROOT)/krb5.goose $(ROOT)/jwx.goose $(ROOT)/pkcs11.goose $(ROOT)/dns.goose $(ROOT)/mail.goose $(ROOT)/acme.goose $(ROOT)/oauth.goose $(ROOT)/tsp.goose $(ROOT)/est.goose $(ROOT)/scep.goose $(ROOT)/saml.goose $(ROOT)/webauthn.goose $(ROOT)/ntlm.goose $(ROOT)/tpm2.goose \
+	$(shell find $(ROOT)/crypto $(ROOT)/encoding $(ROOT)/net $(ROOT)/compress $(ROOT)/mime $(ROOT)/krb5 $(ROOT)/jwx $(ROOT)/pkcs11 $(ROOT)/dns $(ROOT)/mail $(ROOT)/acme $(ROOT)/oauth $(ROOT)/tsp $(ROOT)/est $(ROOT)/scep $(ROOT)/saml $(ROOT)/webauthn $(ROOT)/ntlm $(ROOT)/tpm2 \
 		\( -name '*.goose' -o -name '*.c' -o -name '*.build' \) \
 		-not -path '*/test/*' -not -path '*/examples/*')
 
@@ -52,7 +52,11 @@ PROGRAMS := \
 	goose-oauth:oauth/tools/oauth.goose \
 	goose-ts:tsp/tools/ts.goose \
 	goose-est:est/tools/est.goose \
-	goose-scep:scep/tools/scep.goose
+	goose-scep:scep/tools/scep.goose \
+	goose-ntlm:ntlm/tools/ntlm.goose \
+	goose-saml:saml/tools/saml.goose \
+	goose-webauthn:webauthn/tools/webauthn.goose \
+	goose-tpm:tpm2/tools/tpm.goose
 
 prog_name   = $(word 1,$(subst :, ,$(1)))
 prog_source = $(word 2,$(subst :, ,$(1)))
@@ -60,7 +64,7 @@ BINARIES    := $(foreach p,$(PROGRAMS),$(BIN)/$(call prog_name,$(p))) $(BIN)/goo
 
 # Every tool and example with a main, for check.
 CHECKED := $(shell cd $(ROOT) && grep -l '^fn main' */*/tools/*.goose examples/*/*.goose \
-	compress/tools/*.goose mime/tools/*.goose krb5/tools/*.goose jwx/tools/*.goose pkcs11/tools/*.goose dns/tools/*.goose mail/tools/*.goose acme/tools/*.goose oauth/tools/*.goose tsp/tools/*.goose est/tools/*.goose scep/tools/*.goose)
+	compress/tools/*.goose mime/tools/*.goose krb5/tools/*.goose jwx/tools/*.goose pkcs11/tools/*.goose dns/tools/*.goose mail/tools/*.goose acme/tools/*.goose oauth/tools/*.goose tsp/tools/*.goose est/tools/*.goose scep/tools/*.goose saml/tools/*.goose webauthn/tools/*.goose ntlm/tools/*.goose tpm2/tools/*.goose)
 
 # ------------------------------------------------------------------------------
 # Helpers
@@ -149,7 +153,7 @@ test-native: ## Run the unit tests, also built with the C compiler
 
 # test-asn1, test-bignum, ... (scripts/run_all.py refuses a name not in
 # LIBS). Not .PHONY: make looks for no pattern rule for a phony target.
-test-%: ## Run one library's unit tests: test-asn1 test-bignum test-x509 test-tls test-ssh test-ldap test-yaml test-http test-compress test-mime test-krb5 test-jwx test-pkcs11 test-dns test-mail test-openpgp test-acme test-oauth test-tsp test-xml test-est test-scep
+test-%: ## Run one library's unit tests: test-asn1 test-bignum test-x509 test-tls test-ssh test-ldap test-yaml test-http test-compress test-mime test-krb5 test-jwx test-pkcs11 test-dns test-mail test-openpgp test-acme test-oauth test-tsp test-xml test-est test-scep test-saml test-cbor test-webauthn test-ntlm test-tpm2
 	$(call echo,"Running $* unit tests")
 	cd $(ROOT) && $(PYTHON) scripts/run_all.py --only $*
 
@@ -157,7 +161,7 @@ test-%: ## Run one library's unit tests: test-asn1 test-bignum test-x509 test-tl
 # needs installed is in its library's README; a missing tool is skipped.
 
 .PHONY: interop
-interop: interop-http interop-h2spec interop-tls interop-ssh interop-ldap interop-krb5 interop-pkcs11 interop-dns interop-mail interop-openpgp interop-acme interop-oauth interop-tsp interop-xml interop-est interop-scep ## Run every live interop test
+interop: interop-http interop-h2spec interop-tls interop-ssh interop-ldap interop-krb5 interop-pkcs11 interop-dns interop-mail interop-openpgp interop-acme interop-oauth interop-tsp interop-xml interop-est interop-scep interop-saml interop-webauthn interop-ntlm interop-tpm2 ## Run every live interop test
 
 .PHONY: interop-http
 interop-http: ## HTTP against curl, Go's net/http, Python, nghttp2
@@ -243,7 +247,7 @@ interop-krb5: ## Kerberos against MIT's KDC, kinit/kvno/klist, gss-client/gss-se
 	cd $(ROOT)/krb5 && $(PYTHON) scripts/interop.py
 
 .PHONY: differential
-differential: differential-http differential-x509 differential-compress differential-mime differential-jwx differential-dns differential-xml ## Run every differential
+differential: differential-http differential-x509 differential-compress differential-mime differential-jwx differential-dns differential-xml differential-cbor differential-tpm2 ## Run every differential
 
 .PHONY: differential-http
 differential-http: ## HTTP/1.1 parsing, URLs and HPACK against Go; gzip and deflate decoding against zlib
@@ -290,6 +294,53 @@ XML_PYTHON ?= $(PYTHON)
 interop-xml: ## xml signatures and encryption against signxml and xmlsec, both ways, and wrapping attacks (XML_PYTHON with lxml, signxml, xmlsec)
 	$(call echo,"XML Signature and Encryption against signxml and xmlsec")
 	cd $(ROOT)/encoding/xml && $(XML_PYTHON) scripts/interop.py
+
+# NTLM_PYTHON: a Python with pyspnego (and impacket, optional) (a venv;
+# ntlm/README.md says how to make one). curl, and Go for go-ntlmssp.
+NTLM_PYTHON ?= $(PYTHON)
+
+.PHONY: interop-ntlm
+interop-ntlm: ## goose-ntlm against pyspnego (NTLM and SPNEGO, both ways, channel bindings, sealing), curl --ntlm and Azure/go-ntlmssp against goose-ntlm serve, goose-ntlm get against a pyspnego HTTP server (NTLM_PYTHON with pyspnego; curl; Go)
+	$(call echo,"NTLM against pyspnego, curl and go-ntlmssp")
+	cd $(ROOT)/ntlm && $(NTLM_PYTHON) scripts/interop.py
+
+# SAML_PYTHON: a Python with requests, python3-saml and lxml (a venv;
+# saml/README.md says how to make one). Go, for crewjam/saml.
+SAML_PYTHON ?= $(PYTHON)
+
+.PHONY: interop-saml
+interop-saml: ## goose-saml against itself, python3-saml (SP, and Responses signed by xmlsec) and crewjam/saml's SP and IdP, both ways (SAML_PYTHON with requests, python3-saml, lxml; Go)
+	$(call echo,"SAML against python3-saml and crewjam/saml")
+	cd $(ROOT)/saml && $(SAML_PYTHON) scripts/interop.py
+
+# WEBAUTHN_PYTHON: a Python with fido2 (python-fido2 2.x), webauthn (Duo's
+# py_webauthn), cbor2 and cryptography (a venv; webauthn/README.md says how
+# to make one). Go, for go-webauthn.
+WEBAUTHN_PYTHON ?= $(PYTHON)
+
+.PHONY: interop-webauthn
+interop-webauthn: ## goose-webauthn against python-fido2's Fido2Server, py_webauthn and go-webauthn, both ways, with a software authenticator (WEBAUTHN_PYTHON with fido2, webauthn, cbor2; Go)
+	$(call echo,"WebAuthn against python-fido2 and py_webauthn and go-webauthn")
+	cd $(ROOT)/webauthn && $(WEBAUTHN_PYTHON) scripts/interop.py
+
+# CBOR_PYTHON: a Python with cbor2 (encoding/cbor/README.md).
+CBOR_PYTHON ?= $(PYTHON)
+
+.PHONY: differential-cbor
+differential-cbor: ## cbor against Python's cbor2 on random items written every way, and mutated (CBOR_PYTHON with cbor2)
+	$(call echo,"CBOR against cbor2")
+	cd $(ROOT)/encoding/cbor && $(CBOR_PYTHON) scripts/differential.py -n 3000
+
+# TPMEMU: the Sail TPM's tpmemu (else tpmemu on PATH); swtpm on PATH.
+.PHONY: interop-tpm2
+interop-tpm2: ## tpm2 and goose-tpm against tpmemu (raw TCP and mssim; TPMEMU) and swtpm (with EK certificates when swtpm_setup provisions them), and a fake TPM whose responses lie
+	$(call echo,"TPM 2.0 against tpmemu and swtpm")
+	cd $(ROOT)/tpm2 && $(PYTHON) scripts/interop.py
+
+.PHONY: differential-tpm2
+differential-tpm2: ## tpm2 against go-tpm on random cases: KDFa, KDFe, Names of random public areas and NV indices, policy digests (needs Go)
+	$(call echo,"tpm2 against go-tpm")
+	cd $(ROOT)/tpm2 && $(PYTHON) scripts/differential.py -n 3000
 
 .PHONY: differential-xml
 differential-xml: ## xml canonicalization against lxml (libxml2) on a corpus and random documents (XML_PYTHON with lxml)

@@ -18,7 +18,7 @@
 //   --port N          the port (default: the TLS mode's usual)
 //   --tls MODE        mandatory (default), opportunistic, none, implicit
 //   --insecure        do not check the server's certificate
-//   --auth MECH       auto, plain, login, cram-md5, scram-sha-1, scram-sha-256, xoauth2;
+//   --auth MECH       auto, plain, login, cram-md5, scram-sha-1, scram-sha-256, xoauth2, ntlm;
 //                     for pop3 also user (USER/PASS) and apop; for imap also user (the
 //                     LOGIN command); none: no login (default when MAIL_USER is not set).
 //                     IMAP, unset with MAIL_USER: AUTHENTICATE auto when the server lists
@@ -153,7 +153,7 @@ fn fail(what: const u8[:], e: i64, code: i64, text: const u8[:]) {
 
 fn mech_of(name: const u8[:]) -> i64 {
     for m in [mail::AUTH_PLAIN, mail::AUTH_LOGIN, mail::AUTH_CRAM_MD5, mail::AUTH_SCRAM_SHA1,
-              mail::AUTH_SCRAM_SHA256, mail::AUTH_XOAUTH2] {
+              mail::AUTH_SCRAM_SHA256, mail::AUTH_XOAUTH2, mail::AUTH_NTLM] {
         if mail::eq_fold(name, mail::auth_name(m)) { return m; }
     }
     return mail::AUTH_AUTO;

@@ -93,10 +93,13 @@ struct ClientOptions {
 
 // How a client's credentials (set_credentials) go to servers: Basic before
 // any challenge (as Go sends a URL's userinfo), or only in answer to a 401
-// with the scheme it asks for (Digest, or Basic), or Digest only.
+// with the scheme it asks for (Digest, then NTLM, then Basic, as curl's
+// --anyauth ranks them), or Digest only, or NTLM only (gslib's ntlm,
+// NTLMv2: "NTLM", or "Negotiate" carrying NTLMSSP; over HTTP/1.1).
 let AUTH_BASIC: u8 = 1;
 let AUTH_ANY: u8 = 2;
 let AUTH_DIGEST: u8 = 3;
+let AUTH_NTLM: u8 = 4;
 
 fn client_options() -> ClientOptions {
     var o = ClientOptions {
