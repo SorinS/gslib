@@ -1,0 +1,135 @@
+== systemd, system, plain
+[Unit]
+Description=goose-plain
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/goose-plain
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+
+== systemd, system, awkward
+[Unit]
+Description=A test service & <more>, 100%%
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart="/opt/goose tools/bin/goose-test" --config "/etc/goose test/a.yaml" "" 100%% $$HOME "say \"hi\"" "C:\\dir with space\\"
+WorkingDirectory=/var/lib/goose data
+Restart=on-failure
+RestartSec=2.5
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target
+
+== systemd, user, no restart
+[Unit]
+Description=A test service & <more>, 100%%
+
+[Service]
+Type=simple
+ExecStart="/opt/goose tools/bin/goose-test" --config "/etc/goose test/a.yaml" "" 100%% $$HOME "say \"hi\"" "C:\\dir with space\\"
+WorkingDirectory=/var/lib/goose data
+TimeoutStopSec=10
+
+[Install]
+WantedBy=default.target
+
+== launchd agent, awkward
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>goose-test</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/opt/goose tools/bin/goose-test</string>
+		<string>--config</string>
+		<string>/etc/goose test/a.yaml</string>
+		<string></string>
+		<string>100%</string>
+		<string>$HOME</string>
+		<string>say &quot;hi&quot;</string>
+		<string>C:\dir with space\</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>/var/lib/goose data</string>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>ThrottleInterval</key>
+	<integer>3</integer>
+	<key>ExitTimeOut</key>
+	<integer>10</integer>
+	<key>StandardOutPath</key>
+	<string>/tmp/goose-test.log</string>
+	<key>StandardErrorPath</key>
+	<string>/tmp/goose-test.log</string>
+</dict>
+</plist>
+
+== launchd, manual, no restart
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>dev.goose.manual</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/local/bin/x</string>
+	</array>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>ExitTimeOut</key>
+	<integer>30</integer>
+</dict>
+</plist>
+
+== windows command line
+"C:\Program Files\Goose\goose-test.exe" --config "/etc/goose test/a.yaml" "" 100% $HOME "say \"hi\"" "C:\dir with space\\"
+"C:\x.exe"
+"C:\x.exe" a\\b "a\\\"b" "tab	here"
+== names
+'goose-test' true
+'dev.goose.heartbeat' true
+'a_b' true
+'' false
+'-x' false
+'.x' false
+'a b' false
+'a/b' false
+'ä' false
+81 letters false
+== words
+not installed
+stopped
+running
+starting
+stopping
+paused
+unknown
+ok
+service: bad name or argument
+service: no supported service manager
+service: already installed
+service: not installed
+service: access denied (administrator or root needed)
+service: timed out
+service: already in that state
+service: the service manager's command failed
+service: system error

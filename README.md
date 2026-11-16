@@ -36,10 +36,11 @@ later.
 | `webauthn` | WebAuthn Level 3 and passkeys for a relying party: registration and authentication options as the L3 JSON has them; registrations checked whole (clientDataJSON, the attestation object, authenticator data and its flags, the algorithm) with every attestation format but SafetyNet: none, packed, fido-u2f, tpm, android-key, apple, chained to the RP's roots by x509; authentications against the stored credential record (signature, user handle, counter, backup flags); FIDO MDS3 BLOBs verified and searched; goose-webauthn (options, verify, MDS, a demo RP for a real browser) | [README](webauthn/README.md) |
 | `net/http` | HTTP/1.1 and HTTP/2, server and client: a client with Go's policy (redirects, cookies, credentials, proxies, gzip, TLS session resumption, streaming uploads, several responses at once), URLs, cookies, HPACK; goose-http and goose-httpd | [README](net/http/README.md) |
 | `net` | TCP client sockets, as the client half of Go's net: `net::dial` with a deadline, `net::read` and `net::write` with timeouts, `net::readable`, `net::close`; what http, dns, krb5 and the examples connect with (POSIX and Winsock) | [net.goose](net.goose) |
+| `service` | Programs as system services, as Go's kardianos/service: one API for Windows services (the service control manager: dispatcher, control handler, stop, shutdown, pause, parameter changes; installing with a description, delayed start and restart on failure; the Application event log), systemd units (a user's or the system's) and launchd agents and daemons; begin, wait for the system's requests, end; install, uninstall, start, stop, restart, status, and those as a program's verbs | [README](service/README.md) |
 
-## dns, pkcs11, jwx, mail, openpgp, acme, oauth, tsp, xml, est, scep, saml, ntlm, tpm2 and webauthn
+## dns, pkcs11, jwx, mail, openpgp, acme, oauth, tsp, xml, est, scep, saml, ntlm, tpm2, webauthn and service
 
-These fifteen have the most to say beyond their table rows: what each
+These sixteen have the most to say beyond their table rows: what each
 module does, how it was built and how it was tested. Each README has the
 full API.
 
@@ -650,6 +651,49 @@ refuses the same tampered responses, each one's options are answered
 and checked by the others, and goose-webauthn's options are read by all
 three. The real FIDO MDS3 BLOB verifies too.
 
+### service: system services
+
+`service` makes a Goose program a system service on the three platforms
+gslib runs on, with one API, after Go's kardianos/service: a Windows
+service of the service control manager, a systemd unit on Linux (a
+user's, with `systemctl --user`, or the system's), or a launchd agent or
+daemon on macOS. A program calls `service::begin` first thing, then takes
+the system's requests from `service::wait` while it works (stop, system
+shutdown, reload, pause and continue), and calls `service::end` when it is
+done. From a console the same program runs as it is, with Ctrl+C,
+SIGTERM and the console closing as a stop, so a service is tried out by
+running it. `service::install`, `uninstall`, `start`, `stop`, `restart` and
+`status` manage one from a `Config` (its name, description, arguments,
+working directory, start type, restart delay and stop timeout), and
+`service::command` gives a program those as its first argument's verbs.
+On Windows install registers the service with its description, delayed
+automatic start if asked, restart on failure (a non-zero exit counting as
+one), and an Application event log source, so `service::log` writes
+readable entries there; elsewhere the log is stderr, with systemd's
+priority prefixes under the journal. The systemd unit and the launchd
+property list are made in Goose (quoted for systemd's and Windows'
+command lines, escaped for XML) and checked byte for byte by the tests.
+
+Goose has no function pointers and its code must not be entered from
+threads it did not start, while the service control manager runs a
+service's ServiceMain and control handler on threads of its own. So the
+C half, service/src/service.c, keeps all of that to itself: it starts the
+dispatcher on a thread, reports the service running, and turns every
+control (and on POSIX every SIGTERM, SIGINT and SIGHUP, through a
+self-pipe) into an event in one queue, which Goose waits on from its own
+thread. ServiceMain does not return, and the service is not reported
+stopped, until the program calls `end`. It also runs systemctl and
+launchctl, since os has no way to start a process.
+
+Tested with unit tests of the generated texts, the event queue and the
+signals; and live (`make live-service`): examples/service/heartbeat is
+built, installed, started, killed (and restarted by the service manager),
+stopped (writing its last line on the way out), restarted and
+uninstalled through its own verbs on Windows Server 2022 (the program
+built by MSVC, clang-cl and clang, and by MinGW's gcc with
+libwinpthread beside it), on Linux with systemd 245 (a user's unit) and
+on macOS (a launchd agent).
+
 ## Post-quantum cryptography
 
 The NIST post-quantum standards are in crypto/bignum, and the protocols
@@ -803,6 +847,7 @@ saml.goose, saml/                     saml, the same
 ntlm.goose, ntlm/                     ntlm, the same
 tpm2.goose, tpm2/, tpm2/src/          tpm2, the same, and its TPM device's C
 webauthn.goose, webauthn/             webauthn, the same
+service.goose, service/, service/src/ service, the same, and its C
 examples/<lib>/                       each library's examples (excluded too)
 scripts/run_all.py            every library's unit tests
 scripts/split.py              the standalone repositories, synced from here
@@ -897,6 +942,8 @@ make interop              # live: OpenSSL, Go, OpenSSH, OpenLDAP, curl, nghttp2,
                           # pyspnego, impacket, go-ntlmssp, swtpm, tpmemu, python-fido2, py_webauthn, go-webauthn
 make differential         # against Go (net/http, net/url, hpack, compress, mime, jwx, miekg/dns), zlib, openssl,
                           # libxml2 (lxml, xmlsec), go-tpm, cbor2
+make live-service         # installs, starts, kills, stops and uninstalls a real service (a user's
+                          # systemd unit or launchd agent; on Windows, as an administrator)
 make test-all             # check, test, interop and differential
 python3 scripts/run_all.py [--native] [--only http,tls]   # what make test runs
 ```

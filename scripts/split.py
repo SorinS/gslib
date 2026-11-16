@@ -82,6 +82,7 @@ LIBRARIES = {
     "pkcs11": "pkcs11", "dns": "dns", "mail": "mail", "acme": "acme",
     "oauth": "oauth", "tsp": "tsp", "est": "est", "scep": "scep",
     "saml": "saml", "webauthn": "webauthn", "ntlm": "ntlm", "tpm2": "tpm2",
+    "service": "service",
 }
 
 # The repositories, one row each:
@@ -160,6 +161,7 @@ SPLITS = {
             "// linker script, so name the library itself.\n"
             "dylibs_linux = [\"c=libc.so.6\"];\n"),
         fixups=[
+            ("README.md", "gslib's `examples/factorial.goose`", "`examples/factorial.goose`"),
             ("scripts/ct_audit.py", 'os.path.join(ROOT, "..", "bignum.goose")', 'os.path.join(ROOT, "bignum.goose")'),
         ],
     ),
@@ -213,6 +215,23 @@ SPLITS = {
             "and http needs ntlm. They are in gslib (`ntlm/tools`, `ntlm/scripts`,\n"
             "`examples/ntlm`).\n"),
     ),
+    "service": dict(
+        repo="servicegoose", new=True,
+        sidecar=(
+            "// service's sidecar: src/service.c, the service managers' side (the\n"
+            "// Windows service control manager, POSIX signals, systemctl and\n"
+            "// launchctl), compiled only into programs that call it.\n"
+            "c_sources = [\"src/service.c\"];\n"
+            "c_libs_windows = [\"advapi32\"];\n"
+            "\n"
+            "// Programs, not the package's modules.\n"
+            "exclude = [\"examples\", \"test\", \"scripts\"];\n"),
+        gitignore=["__pycache__/"],
+        fixups=[
+            ("README.md", "python3 service/scripts/", "python3 scripts/"),
+            ("README.md", "# live (make live-service)", "# live"),
+        ],
+    ),
     "ldap": dict(repo="ldapgoose"),
     "http": dict(
         repo="httpgoose",
@@ -235,6 +254,13 @@ SPLITS = {
              "            rc, out, err = 1, \"\", \"net_check.py still running after 120 s\"\n"
              "        check(\"net/scripts/net_check.py\", rc, out, err, None)\n",
              ""),
+            # The README names gslib's modules where they are separate packages here.
+            ("README.md",
+             "Sockets from gslib's `net` module (`net.goose`, C in `net/src/net.c`)",
+             "Sockets from [netgoose](https://github.com/SorinS/netgoose)"),
+            ("README.md",
+             "(gslib's ntlm: `NTLM`",
+             "([ntlmgoose](https://github.com/SorinS/ntlmgoose): `NTLM`"),
         ],
     ),
 }

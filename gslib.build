@@ -3,13 +3,15 @@
 // (mime/src/path.c), krb5's UDP, private files
 // and host names (krb5/src/krb5sys.c), pkcs11's module loading
 // (pkcs11/src/p11.c), and dns's UDP and listening sockets
-// (dns/src/dnsnet.c), and tpm2's TPM device (tpm2/src/tpmdev.c), built only into programs that call them.
+// (dns/src/dnsnet.c), tpm2's TPM device (tpm2/src/tpmdev.c), and service's
+// service managers (service/src/service.c), built only into programs that call them.
 // crypto/bignum's entropy module opens libc through an extern "c" block;
 // on Linux libc.so is a linker script, so the library itself is named.
-c_sources = ["net/src/net.c", "mime/src/path.c", "krb5/src/krb5sys.c", "pkcs11/src/p11.c", "dns/src/dnsnet.c", "tpm2/src/tpmdev.c"];
+c_sources = ["net/src/net.c", "mime/src/path.c", "krb5/src/krb5sys.c", "pkcs11/src/p11.c", "dns/src/dnsnet.c", "tpm2/src/tpmdev.c", "service/src/service.c"];
 // pkcs11/src/p11.c loads PKCS#11 modules: dlopen, in libdl before glibc 2.34.
 c_libs_linux = ["dl"];
-c_libs_windows = ["ws2_32"];
+// service/src/service.c: the service control manager and the event log.
+c_libs_windows = ["ws2_32", "advapi32"];
 dylibs_linux = ["c=libc.so.6"];
 
 // The examples, the fuzz targets, and programs of each library (tests, tools), not the package's own

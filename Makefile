@@ -153,7 +153,7 @@ test-native: ## Run the unit tests, also built with the C compiler
 
 # test-asn1, test-bignum, ... (scripts/run_all.py refuses a name not in
 # LIBS). Not .PHONY: make looks for no pattern rule for a phony target.
-test-%: ## Run one library's unit tests: test-asn1 test-bignum test-x509 test-tls test-ssh test-ldap test-yaml test-http test-compress test-mime test-krb5 test-jwx test-pkcs11 test-dns test-mail test-openpgp test-acme test-oauth test-tsp test-xml test-est test-scep test-saml test-cbor test-webauthn test-ntlm test-tpm2
+test-%: ## Run one library's unit tests: test-asn1 test-bignum test-x509 test-tls test-ssh test-ldap test-yaml test-http test-compress test-mime test-krb5 test-jwx test-pkcs11 test-dns test-mail test-openpgp test-acme test-oauth test-tsp test-xml test-est test-scep test-saml test-cbor test-webauthn test-ntlm test-tpm2 test-service
 	$(call echo,"Running $* unit tests")
 	cd $(ROOT) && $(PYTHON) scripts/run_all.py --only $*
 
@@ -336,6 +336,13 @@ differential-cbor: ## cbor against Python's cbor2 on random items written every 
 interop-tpm2: ## tpm2 and goose-tpm against tpmemu (raw TCP and mssim; TPMEMU) and swtpm (with EK certificates when swtpm_setup provisions them), and a fake TPM whose responses lie
 	$(call echo,"TPM 2.0 against tpmemu and swtpm")
 	cd $(ROOT)/tpm2 && $(PYTHON) scripts/interop.py
+
+# Not part of interop: it installs a real service (a user's systemd unit or
+# launchd agent; on Windows, as an administrator, the system's).
+.PHONY: live-service
+live-service: ## service live: examples/service/heartbeat installed, started, killed and restarted by the service manager, stopped, uninstalled
+	$(call echo,"service against the platform's service manager")
+	cd $(ROOT) && $(PYTHON) service/scripts/service_check.py
 
 .PHONY: differential-tpm2
 differential-tpm2: ## tpm2 against go-tpm on random cases: KDFa, KDFe, Names of random public areas and NV indices, policy digests (needs Go)
