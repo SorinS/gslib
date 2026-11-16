@@ -82,7 +82,7 @@ LIBRARIES = {
     "pkcs11": "pkcs11", "dns": "dns", "mail": "mail", "acme": "acme",
     "oauth": "oauth", "tsp": "tsp", "est": "est", "scep": "scep",
     "saml": "saml", "webauthn": "webauthn", "ntlm": "ntlm", "tpm2": "tpm2",
-    "service": "service",
+    "service": "service", "sys": "sys", "sspi": "sspi",
 }
 
 # The repositories, one row each:
@@ -231,6 +231,55 @@ SPLITS = {
             ("README.md", "python3 service/scripts/", "python3 scripts/"),
             ("README.md", "# live (make live-service)", "# live"),
         ],
+    ),
+    "sys": dict(
+        repo="osgoose", new=True,
+        sidecar=(
+            "// sys's sidecar: src/, the system calls (posix.c and unix.c on POSIX,\n"
+            "// win.c, winreg.c and winmgmt.c on Windows, and the stubs for what a\n"
+            "// platform lacks), compiled only into programs that call them.\n"
+            "c_sources = [\"src/posix.c\", \"src/unix.c\", \"src/win.c\", \"src/winreg.c\", \"src/winmgmt.c\", \"src/gssys_stubs.c\"];\n"
+            "// Accounts, groups and shares (netapi32), sessions (wtsapi32).\n"
+            "c_libs_windows = [\"advapi32\", \"netapi32\", \"wtsapi32\"];\n"
+            "\n"
+            "// Programs, not the package's modules.\n"
+            "exclude = [\"examples\", \"test\", \"scripts\"];\n"),
+        gitignore=["__pycache__/"],
+        fixups=[
+            ("README.md", "python3 sys/scripts/", "python3 scripts/"),
+            ("README.md", "`sys/src/api.def`", "`src/api.def`"),
+            ("README.md", "`sys/scripts/gen_ffi.py`", "`scripts/gen_ffi.py`"),
+            ("README.md", "(`sys/ffi.goose`)", "(`ffi.goose`)"),
+            ("README.md", "(`sys/src/gssys_api.h`", "(`src/gssys_api.h`"),
+            ("README.md", "(`sys/src/gssys_stubs.c`)", "(`src/gssys_stubs.c`)"),
+            ("README.md", "The C is in `sys/src`", "The C is in `src`"),
+            ("scripts/gen_ffi.py", "sys/src/", "src/"),
+            ("scripts/gen_ffi.py", "sys/ffi.goose", "ffi.goose"),
+            ("scripts/gen_ffi.py", "python3 sys/scripts/", "python3 scripts/"),
+            ("src/api.def", "sys/scripts/gen_ffi.py makes sys/ffi.goose", "scripts/gen_ffi.py makes ffi.goose"),
+            ("scripts/run_tests.py", "run sys/scripts/gen_ffi.py", "run scripts/gen_ffi.py"),
+        ],
+    ),
+    "sspi": dict(
+        repo="sspigoose", new=True,
+        sidecar=(
+            "// sspi's sidecar: src/sspi.c, SSPI's handles and buffers (secur32 and\n"
+            "// crypt32 are loaded at run time: nothing to link), compiled only into\n"
+            "// programs that call it.\n"
+            "c_sources = [\"src/sspi.c\"];\n"
+            "\n"
+            "// Programs, not the package's modules.\n"
+            "exclude = [\"examples\", \"test\", \"scripts\"];\n"),
+        exclude=[
+            # The live check builds gslib's TLS server (crypto/tls/tools) and goose-ntlm.
+            "sspi/scripts/sspi_check.py",
+        ],
+        gitignore=["__pycache__/"],
+        fixups=[("README.md", "python3 sspi/scripts/", "python3 scripts/")],
+        note=(
+            "This repository is gslib's sspi on its own. Its live check\n"
+            "(sspi/scripts/sspi_check.py), which drives gslib's TLS server and\n"
+            "goose-ntlm, is in gslib.\n"),
     ),
     "ldap": dict(repo="ldapgoose"),
     "http": dict(

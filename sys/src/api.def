@@ -1,0 +1,170 @@
+# sys's C functions: sys/scripts/gen_ffi.py makes sys/ffi.goose,
+# src/gssys_api.h and src/gssys_stubs.c from this table.
+#
+#   struct Name: fields...                (every field an i64)
+#   TAG ret name(param: type, ...)        TAG: all win posix linux apple bsd
+#
+# Results >= 0 are successes; < 0 is -errno on POSIX, -(Win32 error) on
+# Windows, a failed HRESULT as itself, or GSSYS_ENOTSUP.
+#
+# A u8[>..]& out is appended to. Lists and records are fields, each a
+# 4-byte little-endian length and its bytes; a number is an 8-byte
+# little-endian field (sys.goose's Fields reads them).
+
+struct Stat: kind mode size nlink uid gid dev ino atime_ns mtime_ns ctime_ns btime_ns attrs
+struct MemInfo: total available swap_total swap_free
+struct Rlimit: cur max
+struct WinSize: rows cols xpixels ypixels
+
+# --- Errors and the platform ------------------------------------------------
+all   i32 platform_id()
+all   i64 error_text(code: i64, out: u8[>..]&)
+all   i32 error_is(code: i64, class: i32)
+all   i64 last_error()
+
+# --- The host -----------------------------------------------------------------
+all   i64 hostname(out: u8[>..]&)
+all   i64 uname(out: u8[>..]&)
+all   i64 cpu_count()
+all   i64 page_size()
+all   i64 mem_info(out: MemInfo&)
+all   i64 uptime_ms()
+posix i64 load_avg(out: f64[:])
+all   i64 temp_dir(out: u8[>..]&)
+all   i64 home_dir(out: u8[>..]&)
+
+# --- This process -------------------------------------------------------------
+all   i64 getpid()
+all   i64 getppid()
+all   i64 exe_path(out: u8[>..]&)
+all   i64 getcwd(out: u8[>..]&)
+all   i64 chdir(path: const u8[:])
+all   i64 environ(out: u8[>..]&)
+all   i64 setenv(name: const u8[:], value: const u8[:])
+all   i64 unsetenv(name: const u8[:])
+all   i64 kill(pid: i64, sig: i32)
+all   i64 processes(out: u8[>..]&)
+all   i64 process_exe(pid: i64, out: u8[>..]&)
+all   i64 is_elevated()
+
+# --- Users and groups ---------------------------------------------------------
+posix i64 getuid()
+posix i64 geteuid()
+posix i64 getgid()
+posix i64 getegid()
+posix i64 getgroups(out: u8[>..]&)
+all   i64 current_user(out: u8[>..]&)
+all   i64 lookup_user(name: const u8[:], out: u8[>..]&)
+all   i64 lookup_user_id(uid: const u8[:], out: u8[>..]&)
+all   i64 lookup_group(name: const u8[:], out: u8[>..]&)
+all   i64 lookup_group_id(gid: const u8[:], out: u8[>..]&)
+all   i64 user_group_ids(name: const u8[:], out: u8[>..]&)
+
+# --- Files by path --------------------------------------------------------------
+all   i64 stat(path: const u8[:], out: Stat&)
+all   i64 lstat(path: const u8[:], out: Stat&)
+all   i64 chmod(path: const u8[:], mode: i64)
+posix i64 chown(path: const u8[:], uid: i64, gid: i64)
+posix i64 lchown(path: const u8[:], uid: i64, gid: i64)
+all   i64 symlink(target: const u8[:], newpath: const u8[:])
+all   i64 readlink(path: const u8[:], out: u8[>..]&)
+all   i64 link(existing: const u8[:], newpath: const u8[:])
+all   i64 truncate(path: const u8[:], size: i64)
+all   i64 utimes(path: const u8[:], atime_ns: i64, mtime_ns: i64)
+all   i64 realpath(path: const u8[:], out: u8[>..]&)
+all   i64 mkdir(path: const u8[:], mode: i64)
+all   i64 rmdir(path: const u8[:])
+all   i64 unlink(path: const u8[:])
+all   i64 rename(from: const u8[:], to: const u8[:])
+all   i64 read_dir(path: const u8[:], out: u8[>..]&)
+
+# --- Files by descriptor (a Windows HANDLE on Windows) --------------------------
+all   i64 open(path: const u8[:], flags: i64, mode: i64)
+all   i64 close(fd: i64)
+all   i64 read(fd: i64, buf: u8[:])
+all   i64 write(fd: i64, data: const u8[:])
+all   i64 pread(fd: i64, buf: u8[:], offset: i64)
+all   i64 pwrite(fd: i64, data: const u8[:], offset: i64)
+all   i64 seek(fd: i64, offset: i64, whence: i32)
+all   i64 fsync(fd: i64)
+all   i64 ftruncate(fd: i64, size: i64)
+all   i64 fstat(fd: i64, out: Stat&)
+all   i64 lock(fd: i64, how: i32)
+all   i64 pipe(fds: i64[:])
+all   i64 std_fd(n: i32)
+all   i64 isatty(fd: i64)
+
+# --- The Windows registry (registry.goose) --------------------------------------
+win   i64 reg_open(root: i64, path: const u8[:], access: i64)
+win   i64 reg_create(root: i64, path: const u8[:], access: i64, existed: i64[:])
+win   i64 reg_close(key: i64)
+win   i64 reg_delete_key(root: i64, path: const u8[:], access: i64)
+win   i64 reg_delete_tree(root: i64, path: const u8[:])
+win   i64 reg_value_type(key: i64, name: const u8[:], size: i64[:])
+win   i64 reg_get_string(key: i64, name: const u8[:], out: u8[>..]&)
+win   i64 reg_get_strings(key: i64, name: const u8[:], out: u8[>..]&)
+win   i64 reg_get_int(key: i64, name: const u8[:], out: i64[:])
+win   i64 reg_get_binary(key: i64, name: const u8[:], out: u8[>..]&)
+win   i64 reg_set_string(key: i64, name: const u8[:], value: const u8[:], vtype: i32)
+win   i64 reg_set_strings(key: i64, name: const u8[:], values: const u8[:])
+win   i64 reg_set_int(key: i64, name: const u8[:], value: i64, vtype: i32)
+win   i64 reg_set_binary(key: i64, name: const u8[:], value: const u8[:])
+win   i64 reg_delete_value(key: i64, name: const u8[:])
+win   i64 reg_subkeys(key: i64, out: u8[>..]&)
+win   i64 reg_value_names(key: i64, out: u8[>..]&)
+win   i64 reg_info(key: i64, out: i64[:])
+all   i64 expand_env(s: const u8[:], out: u8[>..]&)
+
+# --- Processes, wider (unix.goose and sys.goose) ---------------------------------
+all   i64 process_args(pid: i64, out: u8[>..]&)
+posix i64 signal_notify(sig: i32)
+posix i64 signal_ignore(sig: i32)
+posix i64 signal_reset(sig: i32)
+posix i64 signal_wait(timeout_ms: i64)
+posix i64 getrlimit(resource: i32, out: Rlimit&)
+posix i64 setrlimit(resource: i32, lim: Rlimit&)
+posix i64 umask(mask: i64)
+posix i64 setsid()
+posix i64 getsid(pid: i64)
+posix i64 getpgid(pid: i64)
+posix i64 setpgid(pid: i64, pgid: i64)
+posix i64 rusage(who: i32, out: i64[:])
+posix i64 sysctl_string(name: const u8[:], out: u8[>..]&)
+posix i64 sysctl_int(name: const u8[:], out: i64[:])
+posix i64 all_users(out: u8[>..]&)
+posix i64 all_groups(out: u8[>..]&)
+
+# --- Memory maps ----------------------------------------------------------------
+all   i64 mmap(fd: i64, offset: i64, length: i64, writable: i32)
+all   i64 munmap(addr: i64, length: i64)
+all   i64 msync(addr: i64, length: i64)
+all   i64 mem_read(addr: i64, offset: i64, buf: u8[:])
+all   i64 mem_write(addr: i64, offset: i64, data: const u8[:])
+
+# --- Terminals (term.goose) -----------------------------------------------------
+all   i64 term_size(fd: i64, out: WinSize&)
+all   i64 term_get_state(fd: i64, out: u8[>..]&)
+all   i64 term_set_state(fd: i64, state: const u8[:])
+all   i64 term_make_raw(fd: i64)
+all   i64 term_set_echo(fd: i64, on: i32)
+
+# --- Windows management, as go-win64api (windows.goose) -----------------------------
+win   i64 net_users(out: u8[>..]&)
+win   i64 net_user_add(name: const u8[:], password: const u8[:], full_name: const u8[:], comment: const u8[:], flags: i64)
+win   i64 net_user_delete(name: const u8[:])
+win   i64 net_user_set_password(name: const u8[:], password: const u8[:])
+win   i64 net_user_set_flags(name: const u8[:], set: i64, clear: i64)
+win   i64 net_user_set_full_name(name: const u8[:], full_name: const u8[:])
+win   i64 net_groups(out: u8[>..]&)
+win   i64 net_group_add(name: const u8[:], comment: const u8[:])
+win   i64 net_group_delete(name: const u8[:])
+win   i64 net_group_members(name: const u8[:], out: u8[>..]&)
+win   i64 net_group_add_member(group: const u8[:], member: const u8[:])
+win   i64 net_group_remove_member(group: const u8[:], member: const u8[:])
+win   i64 sessions(out: u8[>..]&)
+win   i64 services(out: u8[>..]&)
+win   i64 shares(out: u8[>..]&)
+win   i64 share_add(name: const u8[:], path: const u8[:], remark: const u8[:])
+win   i64 share_delete(name: const u8[:])
+win   i64 process_owner(pid: i64, out: u8[>..]&)
+win   i64 process_memory(pid: i64, out: i64[:])

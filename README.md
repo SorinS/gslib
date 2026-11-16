@@ -37,10 +37,12 @@ later.
 | `net/http` | HTTP/1.1 and HTTP/2, server and client: a client with Go's policy (redirects, cookies, credentials, proxies, gzip, TLS session resumption, streaming uploads, several responses at once), URLs, cookies, HPACK; goose-http and goose-httpd | [README](net/http/README.md) |
 | `net` | TCP client sockets, as the client half of Go's net: `net::dial` with a deadline, `net::read` and `net::write` with timeouts, `net::readable`, `net::close`; what http, dns, krb5 and the examples connect with (POSIX and Winsock) | [net.goose](net.goose) |
 | `service` | Programs as system services, as Go's kardianos/service: one API for Windows services (the service control manager: dispatcher, control handler, stop, shutdown, pause, parameter changes; installing with a description, delayed start and restart on failure; the Application event log), systemd units (a user's or the system's) and launchd agents and daemons; begin, wait for the system's requests, end; install, uninstall, start, stop, restart, status, and those as a program's verbs | [README](service/README.md) |
+| `sys` | The operating system's own calls, as Go's golang.org/x/sys, os/user and x/term with go-win64api's Windows management, on Windows, Linux and macOS: the host, processes (list, arguments, executable, kill), users and groups, files by path and by descriptor (stat, links, locks, pipes, memory maps), errors sorted portably; the Windows registry; local accounts and groups, sessions, services, shares and installed software; signals as values, limits, usage and sysctl; terminals and consoles; its FFI generated from one table, as mksyscall | [README](sys/README.md) |
+| `sspi` | Windows' SSPI, as Go's alexbrainman/sspi: security packages, credentials (the login's or a password's), contexts a token at a time, sign/verify/seal/unseal; a TLS client on Windows' own Schannel (the system's roots, policy and TLS 1.3, peer certificate for x509, manual validation for test servers); HTTP Negotiate (RFC 4559) from the Windows login, Kerberos in a domain and NTLM otherwise, or as a user by password | [README](sspi/README.md) |
 
-## dns, pkcs11, jwx, mail, openpgp, acme, oauth, tsp, xml, est, scep, saml, ntlm, tpm2, webauthn and service
+## dns, pkcs11, jwx, mail, openpgp, acme, oauth, tsp, xml, est, scep, saml, ntlm, tpm2, webauthn, service, sys and sspi
 
-These sixteen have the most to say beyond their table rows: what each
+These eighteen have the most to say beyond their table rows: what each
 module does, how it was built and how it was tested. Each README has the
 full API.
 
@@ -694,6 +696,68 @@ built by MSVC, clang-cl and clang, and by MinGW's gcc with
 libwinpthread beside it), on Linux with systemd 245 (a user's unit) and
 on macOS (a launchd agent).
 
+### sys: the operating system's calls
+
+`sys` is what Go keeps in golang.org/x/sys and os/user, for the three
+platforms gslib runs on, with one API where they agree and a module each
+where they do not. The `sys` module has the host (name, `uname`, CPUs,
+memory, uptime, load), this process and others (the process list, another
+process's executable and arguments, `kill`), the environment, users and
+groups looked up by name or id (SIDs on Windows, as Go's os/user has them),
+files by path (`stat` with birth times, modes, links and symbolic links,
+`readlink` of junctions too, `utimes`, `realpath`, `read_dir` with kinds)
+and by descriptor (a HANDLE on Windows: `pread`, `pwrite`, `seek`, whole-file
+locks, pipes), and memory maps. `sys.registry` is x/sys/windows/registry:
+keys, every value type, enumeration, deletion. `sys.windows` manages a
+Windows machine as iamacarpet/go-win64api does: local accounts (added,
+deleted, passwords, enabled, disabled, unlocked), local groups and their
+members, Remote Desktop sessions, services with their configuration,
+shares, installed software and a process's owner and memory. `sys.unix` has
+signals as values a loop waits for, resource limits and usage, sessions and
+process groups, sysctl (on Linux read from /proc/sys) and every user and
+group; `sys.term` is x/term: terminal size, raw mode, passwords without
+echo, on POSIX terminals and Windows consoles alike.
+
+Errors are the system's, negated (errno, or the Win32 code), with
+`sys::ENOTSUP` for a call a platform does not have, so a program calls
+anything anywhere and asks `is_not_exist`, `is_permission` and the like what
+it got. Every function the Goose side declares has to exist on every
+platform, since gslib's JIT library resolves all of a package's externs; so,
+as Go generates its syscall stubs with mksyscall, sys/scripts/gen_ffi.py
+makes the declarations, the C prototypes and a not-supported stub for each
+platform a function is not for, all from one table (sys/src/api.def), and
+the prototypes keep the C honest. Strings and lists come back through a
+builder the C appends to, as length-prefixed fields; text is UTF-8 in Goose
+and UTF-16 in the Windows C.
+
+Tested by five programs whose output is the same on every platform: the
+host and process calls, users and groups found three ways, files and
+descriptors in a directory of their own (locks between two descriptors,
+pipes, hard and symbolic links, file and anonymous maps), the registry
+under a key of its own, signals sent to the test itself, and, as an
+administrator on Windows, an account, a group and a share made, changed and
+deleted. They pass on macOS, Linux and Windows Server 2022, under the JIT
+and built with MSVC. Six examples go with it: sysinfo, an `ls -l`, a `reg
+query`, a Windows admin view, a password prompt and a signal-driven daemon
+loop. Not yet there from go-win64api: firewall rules and Windows Update
+history (COM) and the WMI hardware inventory.
+
+### sspi: Windows' security packages
+
+On Windows, sspi reaches the system's own authentication and TLS through
+SSPI, as Go's alexbrainman/sspi does. sspi.schannel is a TLS client that
+uses Windows' TLS stack over gslib's sockets. It uses the system's roots,
+revocation checks and protocol policy, TLS 1.3 included, and hands over
+the server's certificate for x509 to check. sspi.negotiate makes HTTP's
+Authorization: Negotiate header from the Windows login (Kerberos in a
+domain, NTLM otherwise) or from a user's name and password, so the server
+never sees a password. Underneath, the core layer gets credentials,
+builds client and server contexts a token at a time, and signs and seals
+messages. Off Windows every call says SEC_E_UNSUPPORTED_FUNCTION, so
+programs build everywhere. The live check (`make live-sspi`,
+sspi/scripts/sspi_check.py) runs Schannel against gslib's own TLS server
+and public sites, and Negotiate against gslib's NTLM acceptor.
+
 ## Post-quantum cryptography
 
 The NIST post-quantum standards are in crypto/bignum, and the protocols
@@ -848,6 +912,8 @@ ntlm.goose, ntlm/                     ntlm, the same
 tpm2.goose, tpm2/, tpm2/src/          tpm2, the same, and its TPM device's C
 webauthn.goose, webauthn/             webauthn, the same
 service.goose, service/, service/src/ service, the same, and its C
+sys.goose, sys/, sys/src/             sys and its modules (registry, windows, unix, term), the same, and its C
+sspi.goose, sspi/, sspi/src/          sspi, the same, and its C
 examples/<lib>/                       each library's examples (excluded too)
 scripts/run_all.py            every library's unit tests
 scripts/split.py              the standalone repositories, synced from here
@@ -944,6 +1010,8 @@ make differential         # against Go (net/http, net/url, hpack, compress, mime
                           # libxml2 (lxml, xmlsec), go-tpm, cbor2
 make live-service         # installs, starts, kills, stops and uninstalls a real service (a user's
                           # systemd unit or launchd agent; on Windows, as an administrator)
+make live-sspi            # Windows: Schannel against gslib's TLS server and public sites, Negotiate
+                          # against gslib's NTLM acceptor
 make test-all             # check, test, interop and differential
 python3 scripts/run_all.py [--native] [--only http,tls]   # what make test runs
 ```

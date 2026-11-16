@@ -1,0 +1,11 @@
+packages: Negotiate NTLM Kerberos Schannel
+NTLM max token > 0
+no such package refused
+bad credential use refused
+loopback: made
+loopback: package and user known
+sign, verify, tampering found
+seal, unseal, tampering found
+schannel credentials
+schannel versions checked
+bad ids refused

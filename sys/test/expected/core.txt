@@ -1,0 +1,36 @@
+ok   platform
+ok   hostname
+ok   uname sysname
+ok   uname release, machine, nodename
+ok   cpu_count
+ok   page_size
+ok   mem_info
+ok   uptime_ms
+ok   load_avg
+ok   temp_dir
+ok   home_dir
+ok   getpid, getppid
+ok   exe_path
+ok   process_exe of this process
+ok   processes lists this one, with its parent
+ok   kill 0: this process exists
+ok   kill 0: no such process
+ok   getcwd, chdir
+ok   chdir there and back
+ok   is_elevated
+ok   setenv
+ok   env sees setenv
+ok   environ has it
+ok   unsetenv
+ok   setenv refuses a name with =
+ok   current_user
+ok   lookup_user finds the current user
+ok   lookup_user_id finds the current user
+ok   lookup_user: no such user
+ok   user_group_ids
+ok   lookup_group_id of one of them
+ok   lookup_group by its name
+ok   getuid, geteuid, getgid, getegid, getgroups
+ok   stat: not found
+ok   error_text
+all passed

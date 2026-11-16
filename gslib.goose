@@ -19,11 +19,14 @@
 // authentication, both sides, with SPNEGO, HTTP and SASL (ntlm), and
 // TPM 2.0: sessions, keys, sealing, NV and attestation, its checks in
 // software (tpm2), and WebAuthn and passkeys for a relying party, with
-// every attestation format and FIDO MDS3 (webauthn), and programs as
-// Windows services, systemd units and launchd jobs (service). A program
+// every attestation format and FIDO MDS3 (webauthn), programs as
+// Windows services, systemd units and launchd jobs (service), and the
+// operating system's own calls: processes, users, files, the Windows
+// registry and management, signals, terminals (sys), and Windows' SSPI:
+// Schannel TLS and Negotiate (Kerberos/NTLM) from the login (sspi). A program
 // declares the package once and imports the
 // modules it uses, grouped as Go groups them (compress, crypto/,
-// encoding/, mime, net/; krb5, jwx, pkcs11, dns, mail, acme, oauth, tsp, est, scep, saml, ntlm, tpm2, webauthn, service and
+// encoding/, mime, net/; krb5, jwx, pkcs11, dns, mail, acme, oauth, tsp, est, scep, saml, ntlm, tpm2, webauthn, service, sys, sspi and
 // net's sockets at the top too);
 // each keeps its own namespace:
 //

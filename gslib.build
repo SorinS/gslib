@@ -7,11 +7,14 @@
 // service managers (service/src/service.c), built only into programs that call them.
 // crypto/bignum's entropy module opens libc through an extern "c" block;
 // on Linux libc.so is a linker script, so the library itself is named.
-c_sources = ["net/src/net.c", "mime/src/path.c", "krb5/src/krb5sys.c", "pkcs11/src/p11.c", "dns/src/dnsnet.c", "tpm2/src/tpmdev.c", "service/src/service.c"];
+c_sources = ["net/src/net.c", "mime/src/path.c", "krb5/src/krb5sys.c", "pkcs11/src/p11.c", "dns/src/dnsnet.c", "tpm2/src/tpmdev.c", "service/src/service.c",
+             "sys/src/posix.c", "sys/src/unix.c", "sys/src/win.c", "sys/src/winreg.c", "sys/src/winmgmt.c", "sys/src/gssys_stubs.c", "sspi/src/sspi.c"];
 // pkcs11/src/p11.c loads PKCS#11 modules: dlopen, in libdl before glibc 2.34.
 c_libs_linux = ["dl"];
-// service/src/service.c: the service control manager and the event log.
-c_libs_windows = ["ws2_32", "advapi32"];
+// service/src/service.c: the service control manager and the event log;
+// sys/src: accounts, groups and shares (netapi32), sessions (wtsapi32);
+// sspi/src/sspi.c loads secur32 and crypt32 itself.
+c_libs_windows = ["ws2_32", "advapi32", "netapi32", "wtsapi32"];
 dylibs_linux = ["c=libc.so.6"];
 
 // The examples, the fuzz targets, and programs of each library (tests, tools), not the package's own
@@ -46,4 +49,6 @@ exclude = [
     "saml/test", "saml/tools",
     "webauthn/test", "webauthn/tools",
     "tpm2/test", "tpm2/tools", "tpm2/scripts",
+    "sys/test", "sys/scripts",
+    "sspi/test", "sspi/scripts",
 ];

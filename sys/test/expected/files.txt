@@ -1,0 +1,55 @@
+ok   mkdir
+ok   mkdir: it exists
+ok   open: create
+ok   open: O_EXCL on an existing file
+ok   write
+ok   seek: where it is
+ok   seek: to the start
+ok   read
+ok   pwrite
+ok   pread
+ok   seek: to the end; pread and pwrite left it be
+ok   fstat
+ok   ftruncate
+ok   fsync
+ok   open: a second descriptor
+ok   lock: exclusive
+ok   lock: the other cannot have it
+ok   unlock
+ok   lock: shared once it is free
+ok   unlock, close
+ok   close
+ok   open: append
+ok   appended at the end
+ok   read_all
+ok   open: O_TRUNC
+ok   open: not found
+ok   pipe
+ok   pipe: write, close
+ok   pipe: read to the end
+ok   std_fd
+ok   isatty: a closed pipe is not a terminal
+ok   a file to work on
+ok   stat
+ok   truncate
+ok   utimes
+ok   chmod: read-only
+ok   chmod: writable
+ok   stat: mode bits and owner
+ok   link
+ok   link: the same file
+ok   unlink
+ok   rename
+ok   rename over a file
+ok   symlink, readlink
+ok   lstat, stat of a link
+ok   realpath through a link
+ok   unlink a link
+ok   readlink of a file: nothing
+ok   a directory with a file
+ok   read_dir: names and kinds, no . or ..
+ok   rmdir: not empty
+ok   read_dir: not found
+ok   rmdir
+ok   cleaned up
+all passed
