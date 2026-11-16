@@ -90,8 +90,11 @@ answered.
 | `http_package(a)`, `http_close(a)` | The package agreed; the end |
 
 The authentication is the connection's: every request of the exchange
-goes on one kept-alive HTTP/1.1 connection. Channel bindings over HTTPS
-are not sent.
+goes on one kept-alive HTTP/1.1 connection. Mutual authentication is
+asked for, so with Kerberos the context is made only by the 200's
+WWW-Authenticate token, the server's AP-REP: give it to
+`http_authorization` and a server without the service's key is found
+out. Channel bindings over HTTPS are not sent.
 
 ## How it works
 
@@ -151,3 +154,13 @@ MinGW gcc. gslib's TLS server and NTLM acceptor take their keys' entropy
 from bignum's `getentropy`, which Windows does not have, so on Windows the
 check needs bignum's entropy from `os::random_bytes` (a Goose change under
 review).
+
+Kerberos was tried by hand against an Active Directory domain
+(Windows Server 2022): a service account with the SPN
+`HTTP/<name>` (`setspn -S`), its keytab from `ktpass` (AES256), the name
+in DNS, and krb5's `examples/krb5/negotiate_server.goose` serving with the
+keytab. `negotiate_get` was authenticated as a domain user by password
+(Negotiate, and Kerberos alone) and as the machine account (the
+logged-on credentials, run as SYSTEM); the server verified each ticket's
+PAC and the client the server's AP-REP. A wrong password was refused
+(`SEC_E_LOGON_DENIED`).

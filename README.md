@@ -756,7 +756,11 @@ builds client and server contexts a token at a time, and signs and seals
 messages. Off Windows every call says SEC_E_UNSUPPORTED_FUNCTION, so
 programs build everywhere. The live check (`make live-sspi`,
 sspi/scripts/sspi_check.py) runs Schannel against gslib's own TLS server
-and public sites, and Negotiate against gslib's NTLM acceptor.
+and public sites, and Negotiate against gslib's NTLM acceptor. Kerberos
+was tried against an Active Directory domain: SSPI's tickets went to a
+Goose server (examples/krb5/negotiate_server.goose) holding only the
+service's keytab, which verified them and their PACs, and SSPI verified
+the server's reply in turn.
 
 ## Post-quantum cryptography
 

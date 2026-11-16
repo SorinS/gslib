@@ -20,8 +20,9 @@ import sys
 import tempfile
 
 ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
-# None: the example needs a live KDC, so it is only type-checked.
-EXAMPLE_ARGS = {"kinit": None, "service_ticket": None}
+# None: the example needs a live KDC (or, a server, its clients), so it is
+# only type-checked.
+EXAMPLE_ARGS = {"kinit": None, "service_ticket": None, "negotiate_server": None}
 
 
 def find_goose(arg):

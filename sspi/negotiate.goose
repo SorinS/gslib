@@ -33,7 +33,9 @@ struct HttpAuth {
     target: u8[..512],       // HTTP/host
 }
 
-let HTTP_FLAGS: i64 = 0x00000810;   // ISC_REQ_CONFIDENTIALITY | ISC_REQ_CONNECTION, curl's
+// Mutual authentication: Kerberos then waits for the server's AP-REP, in
+// the 200's WWW-Authenticate, rather than finishing on its first token.
+let HTTP_FLAGS: i64 = ISC_REQ_MUTUAL_AUTH | ISC_REQ_CONFIDENTIALITY | ISC_REQ_CONNECTION;
 
 fn http_auth_with(cred: i64, host: const u8[:], package: const u8[:]) -> HttpAuth, i64 {
     var a = HttpAuth { cred: cred, ctx: 0, status: 0, done: false, scheme: [], target: [] };
@@ -107,8 +109,8 @@ fn http_authorization(a: HttpAuth&, challenge: const u8[:]) -> u8[>..], i64 {
         input.append(tok);
     }
     if a.done {
-        // A context made already: the server's last token is mutual
-        // authentication's, which only Kerberos sends; SSPI checks it.
+        // A context made already (NTLM's third leg): the server has
+        // nothing more for it.
         return value, OK;
     }
     var out: u8[>..] = [];

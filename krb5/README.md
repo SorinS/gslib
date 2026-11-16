@@ -89,6 +89,7 @@ In gslib's `examples/krb5/`, run from gslib's top as `goose examples/krb5/<name>
 - `messages.goose`: a password login's messages built and decoded on both sides: AS-REQ, PREAUTH_REQUIRED, PA-ENC-TIMESTAMP.
 - `gss_context.goose`: a client and a service authenticating each other in memory: AP-REQ/AP-REP, a GSS-API context, Wrap and MIC.
 - `http_negotiate.goose`: SPNEGO over HTTP Negotiate in memory, with mutual authentication.
+- `negotiate_server.goose`: an HTTP server whose every path needs Kerberos by Negotiate, keys from a keytab (ktpass's), answering with the client and its PAC's SIDs and its own token for mutual authentication: `--keytab FILE [--listen ADDR] [--port N]`. Browsers, `curl --negotiate` and `examples/sspi/negotiate_get` are its clients; `run_tests.py` only type-checks it.
 - `read_pac.goose`: an AD PAC from the test vectors: its signature, the user, the groups and claims.
 - `kinit.goose`: a TGT into a cache: password, keytab, PKINIT or FAST: `KRB5_CONF CCACHE ...`. Needs a live KDC; `run_tests.py` only type-checks it.
 - `service_ticket.goose`: a service ticket from the cached TGT, and its Negotiate header: `KRB5_CONF CCACHE ...`. Needs a live KDC; `run_tests.py` only type-checks it.
