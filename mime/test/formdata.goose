@@ -15,6 +15,7 @@ import gslib.mime.textproto;
 import gslib.mime.multipart;
 import gslib.mime.formdata;
 import gslib.entropy;
+import gslib.sys;
 import tv;
 
 let MAX_INT64: i64 = 9223372036854775807;
@@ -322,6 +323,15 @@ fn endless_header_line() {
     }
 }
 
+// Whether only this user can reach path's file: sys::is_private.
+fn is_private(path: const u8[:]) -> bool {
+    let fd = sys::open(path, sys::O_RDONLY, 0);
+    if fd < 0 { return false; }
+    let p = sys::is_private(fd);
+    sys::close(fd);
+    return p == 1;
+}
+
 // Temporary files: new (O_EXCL), mode 0600; a name that is there is not
 // written through.
 fn private_temp_files() {
@@ -332,9 +342,9 @@ fn private_temp_files() {
     for b in rnd { dir.push(mime::LOWERHEX[b >> 4]); dir.push(mime::LOWERHEX[b & 15]); }
     tv::check("temp dir", ::make_dir(dir));
     let p = str(dir, "/x");
-    tv::check_int("create", mime::mime_create_private(p, "secret"), 0);
-    if !mime::is_windows() { tv::check_int("  mode 0600", mime::mime_file_mode(p), 0x180); }   // 0600
-    tv::check_int("  again: refused, there already", mime::mime_create_private(p, "other"), 1);
+    tv::check_int("create", sys::create_file(p, "secret", 384), 0);
+    tv::check("  private (0600; Windows: its DACL)", is_private(p));
+    tv::check("  again: refused, there already", sys::is_exist(sys::create_file(p, "other", 384)));
     var c: u8[>..] = [];
     ::read_file(p, c);
     tv::check_eq("  not written through", c, "secret");
@@ -355,7 +365,7 @@ fn private_temp_files() {
     tv::check_int("spilled form", multipart::read_form(r, f), 0);
     let k = multipart::form_file(f, "f");
     tv::check("  on disk", k >= 0 && multipart::file_on_disk(f, k));
-    if k >= 0 && !mime::is_windows() { tv::check_int("  mode 0600", mime::mime_file_mode(multipart::file_tmpfile(f, k)), 0x180); }   // 0600
+    if k >= 0 { tv::check("  private (0600; Windows: its DACL)", is_private(multipart::file_tmpfile(f, k))); }
     multipart::remove_all(f);
     ::delete_dir(dir);
 }

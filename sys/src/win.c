@@ -764,10 +764,11 @@ int64_t gssys_realpath(gssys_slice path, gs_rref out) {
 }
 
 int64_t gssys_mkdir(gssys_slice path, int64_t mode) {
-    (void)mode;
     wchar_t *w = wstr(path);
     if (!w) return EARG;
-    int64_t r = CreateDirectoryW(w, NULL) ? 0 : WERR();
+    SECURITY_ATTRIBUTES sa = { sizeof sa, private_sd(mode, 1), FALSE };
+    int64_t r = CreateDirectoryW(w, &sa) ? 0 : WERR();
+    if (sa.lpSecurityDescriptor) LocalFree(sa.lpSecurityDescriptor);
     free(w);
     return r;
 }
@@ -855,9 +856,19 @@ int64_t gssys_open(gssys_slice path, int64_t flags, int64_t mode) {
     DWORD attrs = FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS;
     if ((flags & GO_CREATE) && !(mode & 0200)) attrs |= FILE_ATTRIBUTE_READONLY;
     if (flags & GO_SYNC) attrs |= FILE_FLAG_WRITE_THROUGH;
-    HANDLE h = CreateFileW(w, access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, disp, attrs, NULL);
+    if (flags & GO_NOFOLLOW) attrs |= FILE_FLAG_OPEN_REPARSE_POINT;
+    SECURITY_ATTRIBUTES sa = { sizeof sa, (flags & GO_CREATE) ? private_sd(mode, 0) : NULL, FALSE };
+    HANDLE h = CreateFileW(w, access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, &sa, disp, attrs, NULL);
+    DWORD err = GetLastError();
+    if (sa.lpSecurityDescriptor) LocalFree(sa.lpSecurityDescriptor);
     free(w);
-    if (h == INVALID_HANDLE_VALUE) return WERR();
+    if (h == INVALID_HANDLE_VALUE) return -(int64_t)err;
+    /* O_NOFOLLOW: a link (or junction) there is opened as itself, and refused. */
+    BY_HANDLE_FILE_INFORMATION fi;
+    if ((flags & GO_NOFOLLOW) && GetFileInformationByHandle(h, &fi) && (fi.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
+        CloseHandle(h);
+        return -(int64_t)ERROR_CANT_RESOLVE_FILENAME;
+    }
     return (int64_t)(intptr_t)h;
 }
 

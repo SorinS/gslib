@@ -1,5 +1,5 @@
 // sysinfo: what the system says about itself, the same on Windows, Linux
-// and macOS: the host, the OS, CPUs and memory, how long it has been up,
+// and macOS: the host, the OS and its kernel, CPUs and memory, how long it has been up,
 // who this runs as, and the processes: how many, this one and its parent.
 //
 //   goose run sysinfo.goose
@@ -13,7 +13,10 @@ fn mib(bytes: i64) -> i64 { bytes / (1024 * 1024) }
 fn main() {
     let u = sys::uname();
     print("host     ", sys::hostname());
-    print("system   ", u.sysname, " ", u.release, " (", u.version, ") on ", u.machine);
+    let info = sys::os_info();
+    let edition: u8[>..] = if info.edition.len > 0 { str(", ", info.edition) } else { "" };
+    print("os       ", info.pretty, " [", info.id, edition, "]");
+    print("kernel   ", u.sysname, " ", u.release, " (", u.version, ") on ", u.machine);
     print("cpus     ", sys::cpu_count(), ", pages of ", sys::page_size(), " bytes");
     let m = sys::mem_info();
     print("memory   ", mib(m.available), " MiB free of ", mib(m.total), " MiB; swap ",

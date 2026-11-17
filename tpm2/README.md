@@ -5,8 +5,9 @@ attestation checks: commands to a TPM (a chip through Linux's resource
 manager, swtpm, the Microsoft simulator's protocol) and everything a
 verifier does without one. Six modules, all in namespace `tpm2`:
 `tpm2.goose` at gslib's top, `tpm2/transport.goose`, `tpm2/session.goose`,
-`tpm2/commands.goose`, `tpm2/policy.goose`, `tpm2/attest.goose`; the C of
-the device transport in `tpm2/src/tpmdev.c`; and a tool, `goose-tpm`.
+`tpm2/commands.goose`, `tpm2/policy.goose`, `tpm2/attest.goose`; and a
+tool, `goose-tpm`. The device transport reads and writes the TPM's
+character device through gslib's `sys`; tpm2 has no C of its own.
 
 Hashes, HMAC, AES-CFB, RSA-OAEP and ECDH are gslib's `crypto/bignum`;
 signatures are checked by `crypto/x509` (`verify_digest`, the key turned
@@ -349,7 +350,7 @@ needs Linux; elsewhere it is ERR_TRANSPORT.
   shared with pkcs11's tokens. For now `sign` and `rsa_decrypt` take a
   handle and a session, and the caller wires them in.
 - Windows' TBS (`tbs:` is ERR_UNSUPPORTED; Tbsi_Context_Create and
-  Tbsip_Submit_Command would go in tpm2/src/tpmdev.c). The device
+  Tbsip_Submit_Command, which an `extern "tbs"` block can bind without C). The device
   transport is type-checked here, not run: no Linux machine with a TPM was
   at hand.
 - Duplicate, Import, Rewrap, ObjectChangeAuth, HierarchyChangeAuth,

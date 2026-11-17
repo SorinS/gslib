@@ -53,10 +53,13 @@ ROOT = os.path.dirname(FUZZ)
 TARGETS = os.path.join(FUZZ, "targets")
 DRIVER = os.path.join(FUZZ, "driver")
 BUILD = os.environ.get("FUZZ_BUILD") or os.path.join(FUZZ, "build")
-# gslib's own C, from gslib.build (pkcs11's p11.c needs the runtime's
-# header, and no target loads modules). Linked into every target; only the
-# symbols a target calls are pulled in.
-NATIVE = ["entropy/src/entropy.c", "net/src/net.c", "mime/src/path.c", "tpm2/src/tpmdev.c"]
+# gslib's own C, from gslib.build (not pkcs11's: no target loads modules).
+# Linked into every target; only the symbols a target calls are pulled in.
+# sys's C (mime and tpm2 use it) takes the runtime's goose.h, from
+# runtime_include().
+NATIVE = ["entropy/src/entropy.c", "net/src/net.c",
+          "sys/src/posix.c", "sys/src/unix.c", "sys/src/spawn.c", "sys/src/win.c", "sys/src/winreg.c",
+          "sys/src/winmgmt.c", "sys/src/winspawn.c", "sys/src/gssys_stubs.c"]
 
 GOOSE_RE = re.compile(r"goose runtime error: (.*?)(?: \(([^()]*:\d+)\))?$", re.M)
 FRAME_RE = re.compile(r"#\d+ 0x[0-9a-f]+ in (\S+) (\S+)")
@@ -149,8 +152,21 @@ def sha(*parts):
     return h.hexdigest()
 
 
+def runtime_include():
+    """The directory of the runtime's goose.h: beside a goose built from its
+    source (src/runtime), or in an installed one's include directory."""
+    g = os.path.realpath(goose())
+    for d in (os.path.join(os.path.dirname(g), "..", "src", "runtime"),
+              os.path.join(os.path.dirname(g), "..", "include"),
+              os.path.join(os.path.dirname(g), "include")):
+        if os.path.exists(os.path.join(d, "goose.h")):
+            return os.path.normpath(d)
+    sys.exit("fuzz: cannot find the runtime's goose.h beside " + g)
+
+
 def native_objects(cc, cflags, outdir):
     objs = []
+    cflags = [*cflags, "-I", runtime_include()]
     os.makedirs(outdir, exist_ok=True)
     for src in NATIVE:
         path = os.path.join(ROOT, src)

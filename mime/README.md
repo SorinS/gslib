@@ -283,9 +283,9 @@ Deliberate, or where Go's own result depends on how its input is read:
 * **ReadForm's temporary files**: one per spilled file (Go's
   `GODEBUG=multipartfiles=distinct`), named `multipart-` and 16 random hex
   digits in `Form.tmp_dir`, else Go's `os.TempDir` (`$TMPDIR` or `/tmp`; `%TMP%` or `%TEMP%` on Windows); created with
-  `O_CREAT|O_EXCL|O_NOFOLLOW`, mode 0600 (`src/path.c`): never a file or
-  a symbolic link that is there (another random name is tried), never
-  readable by other users. File contents are read whole
+  gslib's `sys::create_file`: `O_CREAT|O_EXCL|O_NOFOLLOW`, mode 0600 (an
+  owner-only DACL on Windows): never a file or a symbolic link that is
+  there (another random name is tried), never readable by other users. File contents are read whole
   (`file_content`), not through Go's `File` (`ReaderAt`, `Seeker`).
 * **FileName** is Go's `filepath.Base` of the parameter, and then safer
   than Go's: a backslash is a separator on every system (browsers send
@@ -307,7 +307,7 @@ Deliberate, or where Go's own result depends on how its input is read:
 * **mime.types**: `bufio.Scanner` stops (and Go panics) on a line of more
   than 64 KiB in a system file; such lines are read here.
 * **Windows**: the registry is not read (the built-in table only);
-  `FileName` follows Windows' `filepath.Base` there (`src/path.c`). The
+  `FileName` follows Windows' `filepath.Base` there (`sys::is_windows`). The
   tests pass on Windows Server 2022.
 
 ## Not done

@@ -1,0 +1,30 @@
+ok   output: stdout, the exit code, a variable set
+ok   stderr where stdout goes
+ok   stderr on a pipe of its own
+ok   wait, release
+ok   a waited child's pid is negated
+ok   stdin: written
+ok   stdin: sorted and back
+ok   env: this process's is inherited
+ok   env: clear_env leaves only what is set
+ok   mkdir_temp for a working directory
+ok   dir: the child runs there
+ok   look_path: not found is start's error
+ok   exec's failure is start's error, not a child that exits 127
+ok   wait: still running after 50 ms
+ok   kill 0: it is there
+ok   kill
+ok   killed: by SIGTERM (Windows: terminated)
+ok   available: nothing yet
+ok   poll: not readable yet
+ok   poll: readable once written
+ok   collect: output read while it runs
+ok   pty: started
+ok   pty: its size
+ok   pty: typed at
+ok   pty: resized
+ok   pty: collected to the end
+ok   pty: the child read the line and answered
+ok   pty: a terminal
+ok   pty: released
+all passed

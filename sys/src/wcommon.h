@@ -51,6 +51,21 @@ static inline int64_t put_w(gs_rref out, const wchar_t *w, int n, int as_field) 
     return len;
 }
 
+/* --- Private files ------------------------------------------------------------------- */
+
+/* For a file or directory made with a mode that gives the group and others
+   nothing: a protected DACL letting in only SYSTEM, Administrators and the
+   owner (OWNER RIGHTS), as Python's os.mkdir(path, 0o700) makes. NULL for
+   any other mode; LocalFree it. */
+static inline PSECURITY_DESCRIPTOR private_sd(int64_t mode, int dir) {
+    PSECURITY_DESCRIPTOR sd = NULL;
+    if (mode & 077) return NULL;
+    const wchar_t *sddl = dir ? L"D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;OW)"
+                              : L"D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;OW)";
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, SDDL_REVISION_1, &sd, NULL)) return NULL;
+    return sd;
+}
+
 static inline int64_t put_wraw(gs_rref out, const wchar_t *w) { return put_w(out, w, -1, 0); }
 static inline void put_wstr(gs_rref out, const wchar_t *w) { put_w(out, w, -1, 1); }
 

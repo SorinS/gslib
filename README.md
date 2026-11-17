@@ -771,6 +771,39 @@ process groups, sysctl (on Linux read from /proc/sys) and every user and
 group; `sys.term` is x/term: terminal size, raw mode, passwords without
 echo, on POSIX terminals and Windows consoles alike.
 
+`sys.process` is Go's os/exec, with a pseudo-terminal as well: a child
+started from its words (found on PATH as `exec.LookPath` finds it, with
+PATHEXT on Windows), its environment inherited or not and its directory,
+each of stdin, stdout and stderr inherited, piped, sent to the null device,
+given a descriptor or (stderr) sent where stdout goes; a new session or
+process group, so that a signal reaches all of it; waiting with a timeout,
+killing, and `output` and `run` for the simple cases. A program that cannot
+be run is `start`'s error, not a child that exits 127: on POSIX the child
+reports exec's errno through a pipe that the exec closes, as Go does. With
+`pty` the child gets a terminal of its own, a POSIX pty or, on Windows 10 and
+later, a ConPTY pseudo-console, which `resize` changes; `collect` reads its
+output while waiting for it, the order Windows' pseudo-console needs. Only
+the child's own three handles are inherited on Windows
+(`PROC_THREAD_ATTRIBUTE_HANDLE_LIST`), and on POSIX every other descriptor is
+closed in the child. `poll` waits on several descriptors (POSIX) and
+`available` says what a pipe holds (both).
+
+The `sys` module also makes files that are only their owner's: a mode that
+gives the group and others nothing (0600, 0700) is honoured on Windows too,
+as an owner-only DACL (SYSTEM, Administrators and the owner, as Python's
+`os.mkdir(path, 0o700)`). On top of that are `create_file` (new only, never
+through a symbolic link: `O_EXCL` and `O_NOFOLLOW`, which sys now has
+everywhere), `replace_file` (a new file beside the old, renamed over it),
+`read_private` (opened without following a link, then checked on the
+descriptor: a regular file that only this user can reach, as ssh checks its
+keys; `is_private` asks the same of any descriptor), and Go's
+`os.CreateTemp` and `os.MkdirTemp`. `os_info` says what the system is:
+os-release's name, id and version on Linux, macOS's version and build, and
+Windows' product name (Windows 11 told from Windows 10 by its build, which
+the registry's ProductName does not), display version, build and edition;
+`boot_time` when it started. mime's spilled form files and tpm2's device go
+through these, so neither has C of its own any more.
+
 Errors are the system's, negated (errno, or the Win32 code), with
 `sys::ENOTSUP` for a call a platform does not have, so a program calls
 anything anywhere and asks `is_not_exist`, `is_permission` and the like what
@@ -789,10 +822,13 @@ descriptors in a directory of their own (locks between two descriptors,
 pipes, hard and symbolic links, file and anonymous maps), the registry
 under a key of its own, signals sent to the test itself, and, as an
 administrator on Windows, an account, a group and a share made, changed and
-deleted. They pass on macOS, Linux and Windows Server 2022, under the JIT
-and built with MSVC. Six examples go with it: sysinfo, an `ls -l`, a `reg
-query`, a Windows admin view, a password prompt and a signal-driven daemon
-loop. Not yet there from go-win64api: firewall rules and Windows Update
+deleted; then child processes on pipes and on a pseudo-terminal (the
+environment, the directory, a timeout, kill, a program that cannot be run),
+and private and temporary files with the system's name. They pass on macOS,
+Linux and Windows Server 2022, under the JIT and built with MSVC. Seven
+examples go with it: sysinfo, an `ls -l`, a `reg query`, a Windows admin
+view, a password prompt, a signal-driven daemon loop and a command run on a
+pipe and on a terminal. Not yet there from go-win64api: firewall rules and Windows Update
 history (COM) and the WMI hardware inventory.
 
 ### sspi: Windows' security packages
@@ -937,14 +973,13 @@ modules a program imports are compiled. The libraries need one another (http nee
 tls, x509, asn1 and bignum), and since they are one package, a program
 declares only gslib.
 
-The C is net's sockets (`net/src/net.c`, behind `net.goose`:
-`import gslib.net;`, then `net::dial`), mime's platform constant
-(`mime/src/path.c`), pkcs11's module loading (`pkcs11/src/p11.c`),
-tpm2's TPM device, service's service managers, sys's system calls and
-sspi's SSPI, named in `gslib.build` and compiled only into programs that
-call them. Libraries and tools reach the system through net and sys
-rather than C of their own. bignum reaches the OS's random bytes through
-libc, by an `extern "c"` block; mime's multipart takes them from there.
+The C is the OS's random bytes (`entropy/src/entropy.c`), net's sockets
+(`net/src/net.c`, behind `net.goose`: `import gslib.net;`, then
+`net::dial`), sys's system calls (`sys/src`, which mime and tpm2 use
+too), pkcs11's module loading (`pkcs11/src/p11.c`), service's service
+managers and sspi's SSPI, named in `gslib.build` and compiled only into
+programs that call them. Libraries and tools reach the system through net
+and sys rather than C of their own.
 
 ## Layout
 
@@ -967,10 +1002,10 @@ est.goose, est/                       est, the same
 scep.goose, scep/                     scep, the same
 saml.goose, saml/                     saml, the same
 ntlm.goose, ntlm/                     ntlm, the same
-tpm2.goose, tpm2/, tpm2/src/          tpm2, the same, and its TPM device's C
+tpm2.goose, tpm2/                     tpm2, the same
 webauthn.goose, webauthn/             webauthn, the same
 service.goose, service/, service/src/ service, the same, and its C
-sys.goose, sys/, sys/src/             sys and its modules (registry, windows, unix, term), the same, and its C
+sys.goose, sys/, sys/src/             sys and its modules (registry, windows, unix, term, process), the same, and its C
 sspi.goose, sspi/, sspi/src/          sspi, the same, and its C
 examples/<lib>/                       each library's examples (excluded too)
 scripts/run_all.py            every library's unit tests

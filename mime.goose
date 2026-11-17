@@ -15,6 +15,7 @@ namespace mime;
 
 import std;
 import dictionary;
+import sys;
 import mime.unicode;
 
 // --- Errors ------------------------------------------------------------------
@@ -110,17 +111,9 @@ fn error_text(code: i64) -> const u8[:] {
     }
 }
 
-// Whether the program is built for Windows (mime/src/path.c): multipart's
-// file names and mime.types depend on it.
-extern fn mime_path_windows() -> i64;
-fn is_windows() -> bool { mime_path_windows() != 0 }
-
-// Creates path, which must not exist (O_EXCL, a symbolic link not
-// followed), readable and writable by its owner only (0600), holding
-// data (mime/src/path.c): 0, 1 when something is there, -1 otherwise.
-extern fn mime_create_private(path: const u8[:], data: const u8[:]) -> i32;
-// The permission bits of path (a symbolic link not followed), -1 for none.
-extern fn mime_file_mode(path: const u8[:]) -> i64;
+// Whether the program runs on Windows: multipart's file names and
+// mime.types depend on it.
+fn is_windows() -> bool { sys::is_windows() }
 
 // --- Grammar (RFC 2045 §5.1) -------------------------------------------------
 

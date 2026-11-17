@@ -1,12 +1,13 @@
 // gslib's sidecar. Its C is entropy's random bytes (entropy/src/entropy.c),
 // which bignum and every library that makes keys or nonces use, net's
 // sockets (net/src/net.c: TCP, UDP, listening, Unix-domain, the resolver),
-// which http, ldap, dns, krb5 and the tools use, mime's platform constant (mime/src/path.c), pkcs11's
-// module loading (pkcs11/src/p11.c), tpm2's TPM device (tpm2/src/tpmdev.c),
-// service's service managers (service/src/service.c), sys's system calls
-// and sspi's SSPI, built only into programs that call them.
-c_sources = ["entropy/src/entropy.c", "net/src/net.c", "mime/src/path.c", "pkcs11/src/p11.c", "tpm2/src/tpmdev.c", "service/src/service.c",
-             "sys/src/posix.c", "sys/src/unix.c", "sys/src/win.c", "sys/src/winreg.c", "sys/src/winmgmt.c", "sys/src/gssys_stubs.c", "sspi/src/sspi.c"];
+// which http, ldap, dns, krb5 and the tools use, pkcs11's module loading
+// (pkcs11/src/p11.c), service's service managers (service/src/service.c),
+// sys's operating system calls (sys/src: files, processes and terminals,
+// which mime and tpm2 use too) and sspi's SSPI, built only into programs
+// that call them.
+c_sources = ["entropy/src/entropy.c", "net/src/net.c", "pkcs11/src/p11.c", "service/src/service.c",
+             "sys/src/posix.c", "sys/src/unix.c", "sys/src/win.c", "sys/src/winreg.c", "sys/src/winmgmt.c", "sys/src/spawn.c", "sys/src/winspawn.c", "sys/src/gssys_stubs.c", "sspi/src/sspi.c"];
 // pkcs11/src/p11.c loads PKCS#11 modules: dlopen, in libdl before glibc 2.34.
 c_libs_linux = ["dl"];
 // service/src/service.c: the service control manager and the event log;

@@ -3,7 +3,9 @@
 // and others, users and groups, and files by path and by descriptor, with
 // the errors the system gives. The Windows registry, Windows' users,
 // groups, sessions, services, software and shares, and Unix's signals,
-// limits, sysctl and terminals are in sys's other modules.
+// limits, sysctl and terminals, and child processes, are in sys's other
+// modules. Here too: what the operating system is (os_info), private and
+// temporary files, and waiting on descriptors.
 //
 //   import gslib.sys;          // from a program; `import sys;` inside gslib
 //
@@ -20,13 +22,15 @@
 // one in words; is_not_exist, is_exist, is_permission and the others ask
 // what kind it is on any platform, as Go's os.IsNotExist does.
 //
-// The C is sys's src/: posix.c and unix.c, win.c, winreg.c and winmgmt.c,
+// The C is sys's src/: posix.c, unix.c and spawn.c, win.c, winreg.c,
+// winmgmt.c and winspawn.c,
 // and the prototypes and stubs that scripts/gen_ffi.py makes from
 // src/api.def along with ffi.goose.
 
 namespace sys;
 
 import std;
+import os;
 import sys.ffi;
 
 let PLATFORM_WINDOWS: i64 = 1;
@@ -54,6 +58,12 @@ let O_CREATE: i64 = 0x40;
 let O_EXCL:   i64 = 0x80;
 let O_TRUNC:  i64 = 0x200;
 let O_SYNC:   i64 = 0x1000;
+let O_NOFOLLOW: i64 = 0x2000;  // fail on a symbolic link (Windows: any reparse point) rather than follow it
+let O_NONBLOCK: i64 = 0x4000;  // POSIX: a FIFO opens at once, without waiting for its other end
+
+// A file or directory made with a mode that gives the group and others
+// nothing (0600, 0700) is private on Windows too: its DACL lets in only
+// its owner, SYSTEM and Administrators, as Python's os.mkdir does for 0700.
 
 // seek's whence.
 let SEEK_SET: i32 = 0;
@@ -77,10 +87,20 @@ let SIGTERM: i32 = 15;
 // --- Errors ---------------------------------------------------------------------
 
 fn error_text(e: i64) -> u8[>..] {
+    if e == ERR_RANGE { return "out of range"; }
+    if e == ERR_NOT_PRIVATE { return "the file can be read or written by others"; }
+    if e == ERR_NOT_REGULAR { return "not a regular file"; }
+    if e == ERR_TOO_LARGE { return "too large"; }
     var s: u8[>..] = [];
     error_text(e, s);
     return s;
 }
+
+// sys's own errors: map_read's and map_write's ERR_RANGE (below), and
+// read_private's.
+let ERR_NOT_PRIVATE: i64 = -1000003;
+let ERR_NOT_REGULAR: i64 = -1000004;
+let ERR_TOO_LARGE:   i64 = -1000005;
 
 let ERRC_NOT_EXIST:     i32 = 1;
 let ERRC_EXIST:         i32 = 2;
@@ -176,6 +196,42 @@ fn home_dir() -> u8[>..] {
     home_dir(s);
     return s;
 }
+
+// What the operating system is, as os-release(5) has it on Linux, from
+// sysctl on macOS and from the registry's CurrentVersion on Windows:
+//
+//   name          "Ubuntu", "macOS", "Windows Server 2022 Datacenter", "Windows 11 Pro"
+//   id            "ubuntu", "macos", "windows"
+//   id_like       "debian" (Linux)
+//   version       "22.04", "15.1", "10.0.20348"
+//   version_name  "jammy", "", "21H2" (Windows' DisplayVersion)
+//   build         "", "24B83", "20348.2527"
+//   edition       os-release's VARIANT, Windows' EditionID ("ServerDatacenter")
+//   pretty        "Ubuntu 22.04.4 LTS", "macOS 15.1 (24B83)", "Windows Server 2022 Datacenter 21H2 (20348.2527)"
+//
+// The kernel is uname()'s; boot_time() is when the system started, in
+// seconds since 1970.
+struct OsInfo {
+    name: u8[], id: u8[], id_like: u8[], version: u8[], version_name: u8[], build: u8[], edition: u8[], pretty: u8[]
+}
+
+fn os_info() -> OsInfo {
+    var b: u8[>..] = [];
+    os_info(b);
+    var pos: i64 = 0;
+    let name = field(b, pos);
+    let id = field(b, pos);
+    let like = field(b, pos);
+    let version = field(b, pos);
+    let vname = field(b, pos);
+    let build = field(b, pos);
+    let edition = field(b, pos);
+    let pretty = field(b, pos);
+    return OsInfo { name: name, id: id, id_like: like, version: version, version_name: vname, build: build,
+                    edition: edition, pretty: pretty };
+}
+
+fn is_windows() -> bool { platform_id() == 1 }
 
 // --- This process and others ------------------------------------------------------------
 
@@ -366,27 +422,142 @@ fn read_all(fd: i64, out: u8[>..]&) -> i64 {
     return total;
 }
 
-// Writes data to path, readable and writable by its owner only (0600),
-// all or nothing: a new file beside it, synced and renamed over it, as
-// credential caches, keytabs and private keys are kept. 0, or the error.
-fn write_private(path: const u8[:], data: const u8[:]) -> i64 {
-    var attempt = 0;
-    var taken: i64 = 0;
-    while attempt < 100 {
-        let tmp = str(path, ".", getpid(), ".", attempt, ".tmp");
-        let fd = open(tmp, O_WRONLY | O_CREATE | O_EXCL, 384);
-        if is_exist(fd) { taken = fd; attempt++; continue; }
-        if fd < 0 { return fd; }
-        var e = write_all(fd, data);
-        if e == 0 { e = fsync(fd); }
-        let ce = close(fd);
-        if e == 0 { e = ce; }
-        if e == 0 { e = rename(tmp, path); }
-        if e != 0 { unlink(tmp); }
-        return e;
-    }
-    return taken;
+// --- Whole files ---------------------------------------------------------------------------
+
+fn is_sep(c: u8) -> bool { c == '/' || (c == '\\' && is_windows()) }
+
+// path's directory ("." when it has none) and its last element.
+fn split_path(path: const u8[:]) -> const u8[:], const u8[:] {
+    var i = path.len;
+    while i > 0 && !is_sep(path[i - 1]) { i -= 1; }
+    if i == 0 { return ".", path; }
+    return path[..max(i - 1, 1)], path[i..];
 }
+
+// A new file at path holding data, made with mode (0600: private, on
+// Windows too). Nothing may be there yet, a symbolic link included, which
+// is never followed: a file another user put there first is refused, not
+// written. If writing fails the file is removed. 0, or the error
+// (is_exist when something was there).
+fn create_file(path: const u8[:], data: const u8[:], mode: i64) -> i64 {
+    let fd = open(path, O_WRONLY | O_CREATE | O_EXCL | O_NOFOLLOW, mode);
+    if fd < 0 { return fd; }
+    var e = write_all(fd, data);
+    if e == 0 { e = fsync(fd); }
+    let c = close(fd);
+    if e == 0 { e = c; }
+    if e != 0 { unlink(path); }
+    return e;
+}
+
+// path replaced by data in one step: written to a new file beside it
+// (create_temp, with mode) and renamed over it, so that a reader sees the
+// old file or all of the new one, never part, and a failure leaves the old
+// one. 0, or the error.
+fn replace_file(path: const u8[:], data: const u8[:], mode: i64) -> i64 {
+    let dir, name = split_path(path);
+    var tmp: u8[>..] = [];
+    let fd = create_temp(dir, str(".", name, ".*"), tmp, mode);
+    if fd < 0 { return fd; }
+    var e = write_all(fd, data);
+    if e == 0 { e = fsync(fd); }
+    let c = close(fd);
+    if e == 0 { e = c; }
+    if e == 0 { e = rename(tmp, path); }
+    if e != 0 { unlink(tmp); }
+    return e;
+}
+
+// Writes data to path, readable and writable by its owner only (0600),
+// all or nothing, as credential caches, keytabs and private keys are kept:
+// replace_file with mode 0600. 0, or the error.
+fn write_private(path: const u8[:], data: const u8[:]) -> i64 { replace_file(path, data, 384) }
+
+// A secret file read whole, as ssh reads its keys: opened without following
+// a symbolic link, then checked on the descriptor itself, so nothing can be
+// swapped in between. It must be a regular file that only this user can
+// reach (is_private: on POSIX owned by the effective user with no group or
+// other bits; on Windows owned by the user, SYSTEM or Administrators, whose
+// DACL lets in no one else), of at most max bytes. Appends it to out: its
+// length, or the error (ERR_NOT_REGULAR, ERR_NOT_PRIVATE, ERR_TOO_LARGE),
+// with nothing appended.
+fn read_private(path: const u8[:], out: u8[>..]&, max: i64) -> i64 {
+    let fd = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK, 0);
+    if fd < 0 { return fd; }
+    var st = Stat { .. };
+    var e = fstat(fd, st);
+    if e == 0 && st.kind != KIND_FILE { e = ERR_NOT_REGULAR; }
+    if e == 0 {
+        let p = is_private(fd);
+        if p < 0 { e = p; } else if p == 0 { e = ERR_NOT_PRIVATE; }
+    }
+    if e == 0 && st.size > max { e = ERR_TOO_LARGE; }
+    let start = out.len;
+    if e == 0 {
+        let n = read_all(fd, out);
+        if n < 0 { e = n; } else if n > max { e = ERR_TOO_LARGE; }
+    }
+    close(fd);
+    if e != 0 { out.resize(start); return e; }
+    return out.len - start;
+}
+
+var temp_rng = rng { 0 };
+
+// The next random part of a temporary name: 10 digits.
+fn temp_part() -> u8[>..] {
+    if temp_rng.s == 0 { temp_rng = rng { ::random_seed() ^ (getpid() as! u64) }; }
+    var s: u8[>..] = [];
+    format_uint(s, temp_rng.rand_u64() % 10000000000, 10, 10, '0');
+    return s;
+}
+
+// The name of a temporary in dir ("": temp_dir()) from pattern, whose last
+// '*' is replaced by a random string, or which has one added at its end.
+fn temp_name(dir: const u8[:], pattern: const u8[:]) -> u8[>..] {
+    var d: u8[>..] = [];
+    if dir.len == 0 { d = temp_dir(); } else { d.append(dir); }
+    if d.len > 0 && !is_sep(d[d.len - 1]) { d.push(if is_windows() { '\\' } else { '/' }); }
+    var star = pattern.len;
+    for i in pattern.len { if pattern[i] == '*' { star = i; } }
+    if star == pattern.len { return str(d, pattern, temp_part()); }
+    return str(d, pattern[..star], temp_part(), pattern[star + 1..]);
+}
+
+// A new file to read and write, as Go's os.CreateTemp: in dir (""
+// for temp_dir()), named from pattern ("upload-*.tmp"), made with mode
+// (0600 unless given: private, on Windows too), never one that was there.
+// Its path into path; the descriptor, or the error.
+fn create_temp(dir: const u8[:], pattern: const u8[:], path: u8[>..]&, mode: i64 = 384) -> i64 {
+    var fd: i64 = 0;
+    for _ in 10000 {
+        let name = temp_name(dir, pattern);
+        fd = open(name, O_RDWR | O_CREATE | O_EXCL | O_NOFOLLOW, mode);
+        if fd >= 0 { path.clear(); path.append(name); return fd; }
+        if !is_exist(fd) { break; }
+    }
+    return fd;
+}
+
+// A new directory, as Go's os.MkdirTemp: mode 0700 (private, on Windows
+// too). Its path into path; 0, or the error.
+fn mkdir_temp(dir: const u8[:], pattern: const u8[:], path: u8[>..]&) -> i64 {
+    var e: i64 = 0;
+    for _ in 10000 {
+        let name = temp_name(dir, pattern);
+        e = mkdir(name, 448);
+        if e == 0 { path.clear(); path.append(name); return 0; }
+        if !is_exist(e) { break; }
+    }
+    return e;
+}
+
+// --- Waiting on descriptors -----------------------------------------------------------------
+
+// poll's events: what to wait for, and on return what each is ready for.
+// Readable includes the end of input and errors, which a read then tells.
+let POLL_READ:  i64 = 1;
+let POLL_WRITE: i64 = 2;
 
 // --- Another process's arguments ------------------------------------------------------------
 

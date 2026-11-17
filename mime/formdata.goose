@@ -24,6 +24,7 @@ import std;
 import os;
 import mime;
 import entropy;
+import sys;
 import mime.textproto;
 
 let NEED_MORE: i64 = -1;
@@ -167,12 +168,14 @@ fn start_spill(f: Form&) -> bool {
         var rnd: u8[8] = [0; 8];
         entropy::random_bytes(rnd);
         for b in rnd { f.spill.push(mime::LOWERHEX[b >> 4]); f.spill.push(mime::LOWERHEX[b & 15]); }
-        let rc = mime::mime_create_private(f.spill, f.text[f.part_start..]);
+        // New (O_EXCL, never through a link), owner-only: 0600, and an
+        // owner-only DACL on Windows.
+        let rc = sys::create_file(f.spill, f.text[f.part_start..], 384);
         if rc == 0 {
             f.text.resize(f.part_start);
             return true;
         }
-        if rc != 1 { break; }
+        if !sys::is_exist(rc) { break; }
     }
     f.spill.clear();   // not ours: never removed
     return false;
