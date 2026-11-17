@@ -14,7 +14,7 @@ import std;
 import os;
 import krb5.crypto;
 import krb5.messages;
-import krb5.sys;
+import sys;
 
 struct KeytabEntry { name_type: i32, name: u8[], realm: u8[], timestamp: u32, kvno: u32, key: Key }
 
@@ -228,5 +228,5 @@ fn keytab_entries_from_password(name_type: i32, name: const u8[:], realm: const 
 fn keytab_save_private(path: const u8[:], entries: const KeytabEntry[:]) -> i64 {
     var b: u8[>..] = [];
     keytab_encode(b, entries);
-    return if krb5sys_write_private(path, b) == 0 { OK } else { ERR_FILE };
+    return if sys::write_private(path, b) == 0 { OK } else { ERR_FILE };
 }

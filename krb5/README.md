@@ -28,7 +28,6 @@ reading theirs. Only `krb5.net`, the file functions and the tools do I/O.
 | `krb5.ndr` | NDR as MS-RPCE's type serialization: the reader the PAC's types use |
 | `krb5.pac` | The PAC: logon info (`LogonInfo`, `logon_sids`), client info, UPN/DNS info with its SAM-name and SID extension, S4U delegation info, device info, attributes, requestor, signatures; `pac_verify` (server signature with the service key, client info against the ticket), `pac_verify_kdc` |
 | `krb5.claims` | The PAC's claims (client and device): `decode_claims`, `pac_claims`, with MS-XCA's LZ77+Huffman decompression (`xpress_huff_decompress`) for the compressed ones |
-| `krb5.sys` | The C krb5 calls (`src/krb5sys.c`: UDP, files only their owner reads, the uid, host names; TCP is gslib's `net` module, `net::dial`) |
 
 ```goose
 import gslib from "SorinS/gslib@v0.7.0";   // or a path to gslib.git

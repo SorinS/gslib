@@ -19,11 +19,10 @@ import gslib.net.ldap.conn;
 import gslib.net.ldap.ldif;
 import gslib.net.ldap.dn;
 import gslib.net.ldap.filter;
-import .sysnet;
 import .cli;
 
 fn usage(o: const cli::Opts&) -> i32 {
-    sysnet::eprint(str("usage: ", o.prog, " [options] [user]\nPassword options:\n  -a old      the old password\n  -A          prompt for the old password\n  -t file     read the old password from file\n  -s new      the new password\n  -S          prompt for the new password\n  -T file     read the new password from file\n", cli::COMMON_USAGE));
+    write_stderr(str("usage: ", o.prog, " [options] [user]\nPassword options:\n  -a old      the old password\n  -A          prompt for the old password\n  -t file     read the old password from file\n  -s new      the new password\n  -S          prompt for the new password\n  -T file     read the new password from file\n", cli::COMMON_USAGE));
     return 2;
 }
 
@@ -61,16 +60,16 @@ fn run() -> i32 {
         i++;
     }
     if ask_old {
-        let p, ok = sysnet::secret("Old password: ");
+        let p, ok = cli::secret("Old password: ");
         if !ok { return cli::fail(o, "cannot read the password"); }
         old.clear();
         old.append(p);
     }
     if ask_new {
-        let p, ok = sysnet::secret("New password: ");
-        let q, ok2 = sysnet::secret("Re-enter new password: ");
+        let p, ok = cli::secret("New password: ");
+        let q, ok2 = cli::secret("Re-enter new password: ");
         if !ok || !ok2 { return cli::fail(o, "cannot read the password"); }
-        if p != q { sysnet::eprint("passwords do not match\n"); return 1; }
+        if p != q { write_stderr("passwords do not match\n"); return 1; }
         new.clear();
         new.append(p);
     }

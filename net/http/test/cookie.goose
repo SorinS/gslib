@@ -9,6 +9,8 @@ import gslib from "../../..";
 import gslib.net.http;
 import gslib.net.http.url;
 import gslib.net.http.cookie;
+import gslib.net.ip;
+import gslib.net.idna;
 
 var failures = 0;
 
@@ -366,7 +368,7 @@ fn psl_official() {
                 } else {
                     var wl: u8[>..] = [];
                     for ch in want { wl.push(http::lower(ch)); }
-                    let wa, wok = http::to_ascii_host(wl);
+                    let wa, wok = net::to_ascii_host(wl);
                     if !ok || got[..] != wa[..] { print("FAIL psl ", input, ": got ", got, " ok ", ok, ", want ", wa); failures++; }
                 }
             }

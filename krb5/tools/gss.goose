@@ -23,6 +23,7 @@ import std;
 import os;
 import gslib from "../..";
 import gslib.krb5;
+import gslib.net;
 import gslib.krb5.crypto;
 import gslib.krb5.messages;
 import gslib.krb5.config;
@@ -39,14 +40,22 @@ import gslib.krb5.claims;
 import gslib.net.ldap;
 import gslib.net.ldap.conn;
 
-extern fn gssnet_listen(port: i32) -> i32;
-extern fn gssnet_port(s: i32) -> i32;
-extern fn gssnet_accept(s: i32) -> i32;
-extern fn gssnet_connect(host: const u8[:], port: i32) -> i32;
-extern fn gssnet_read_full(s: i32, buf: u8[:]) -> i32;
-extern fn gssnet_read(s: i32, buf: u8[:]) -> i64;
-extern fn gssnet_write(s: i32, data: const u8[:]) -> i32;
-extern fn gssnet_close(s: i32);
+// Sockets are net's; servers listen on 127.0.0.1 only.
+fn tcp_listen(port: i64) -> i64 { net::listen("127.0.0.1", port) }
+fn tcp_connect(host: const u8[:], port: i64) -> i64 { net::dial(host, port as! i32, 10000) }
+
+// All of buf, or false at the end of the stream or an error.
+fn tcp_read_full(s: i64, buf: u8[:]) -> bool {
+    var off = 0;
+    while off < buf.len {
+        let n = net::read(s, buf[off..], 0);
+        if n <= 0 { return false; }
+        off += n;
+    }
+    return true;
+}
+
+fn tcp_write(s: i64, data: const u8[:]) -> bool { net::write(s, data, 0) == data.len }
 
 // gss-sample's token flags.
 let TOKEN_NOOP: u8 = 1;
@@ -70,7 +79,7 @@ fn now_secs() -> i64, i64 {
     return ns / 1000000000, ns / 1000 % 1000000;
 }
 
-fn send_token(s: i32, flags: u8, tok: const u8[:]) -> bool {
+fn send_token(s: i64, flags: u8, tok: const u8[:]) -> bool {
     var b: u8[>..] = [flags];
     let n = tok.len;
     b.push((n >> 24) as! u8);
@@ -78,17 +87,17 @@ fn send_token(s: i32, flags: u8, tok: const u8[:]) -> bool {
     b.push((n >> 8) as! u8);
     b.push(n as! u8);
     b.append(tok);
-    return gssnet_write(s, b) == 0;
+    return tcp_write(s, b);
 }
 
-fn recv_token(s: i32, tok: u8[>..]&) -> u8, bool {
+fn recv_token(s: i64, tok: u8[>..]&) -> u8, bool {
     var h: u8[5] = [0; 5];
-    if gssnet_read_full(s, h) != 1 { return 0, false; }
+    if !tcp_read_full(s, h) { return 0, false; }
     let n: i64 = (h[1] as i64) << 24 | (h[2] as i64) << 16 | (h[3] as i64) << 8 | h[4];
     if n < 0 || n > 1 << 24 { return 0, false; }
     tok.clear();
     tok.resize(n, 0);
-    if n > 0 && gssnet_read_full(s, tok) != 1 { return 0, false; }
+    if n > 0 && !tcp_read_full(s, tok) { return 0, false; }
     return h[0], true;
 }
 
@@ -147,7 +156,7 @@ fn client(a: u8[:][>..]&) {
         let merr = krb5::make_krb_cred(fwd, cred.key, kc);
         if merr != krb5::OK { die_err("KRB-CRED", merr); }
     }
-    let s = gssnet_connect(a[2], port as! i32);
+    let s = tcp_connect(a[2], port);
     if s < 0 { die("cannot connect"); }
     var flags: u32 = krb5::GSS_REPLAY;
     if mutual { flags = flags | krb5::GSS_MUTUAL; }
@@ -203,12 +212,12 @@ fn client(a: u8[:][>..]&) {
         print("Signature verified.");
     }
     send_token(s, TOKEN_NOOP, "");
-    gssnet_close(s);
+    net::close(s);
 }
 
 // --- The server (acceptor) ------------------------------------------------------------
 
-fn serve_one(c: i32, kt: const krb5::KeytabEntry[:], any: bool, rc: krb5::ReplayEntry[>..]&) {
+fn serve_one(c: i64, kt: const krb5::KeytabEntry[:], any: bool, rc: krb5::ReplayEntry[>..]&) {
     var tok: u8[>..] = [];
     let f0, ok0 = recv_token(c, tok);
     if !ok0 || f0 & TOKEN_NOOP == 0 || f0 & TOKEN_CONTEXT_NEXT == 0 { print("error: expected NOOP|CONTEXT_NEXT"); return; }
@@ -289,12 +298,12 @@ fn print_claims(raw: const u8[:], p: const krb5::Pac&, buffer_type: u32, what: c
     }
 }
 
-fn listen_on(port_text: const u8[:]) -> i32 {
+fn listen_on(port_text: const u8[:]) -> i64 {
     let port, ok = parse_int(port_text);
     if !ok { die("bad port"); }
-    let l = gssnet_listen(port as! i32);
+    let l = tcp_listen(port);
     if l < 0 { die("cannot listen"); }
-    if port == 0 { print("port ", gssnet_port(l)); }
+    if port == 0 { print("port ", net::local_port(l)); }
     flush_stdout();
     return l;
 }
@@ -316,11 +325,11 @@ fn server(a: u8[:][>..]&) {
     let l = listen_on(a[2]);
     var rc: krb5::ReplayEntry[>..] = [];
     loop {
-        let c = gssnet_accept(l);
+        let c = net::accept(l, 0);
         if c < 0 { continue; }
         serve_one(c, kt, any, rc);
         flush_stdout();
-        gssnet_close(c);
+        net::close(c);
         if once { break; }
     }
 }
@@ -328,7 +337,7 @@ fn server(a: u8[:][>..]&) {
 // --- HTTP Negotiate -------------------------------------------------------------------
 
 // The request or response head (up to the blank line), and what came after.
-fn read_head(c: i32, head: u8[>..]&, rest: u8[>..]&) -> bool {
+fn read_head(c: i64, head: u8[>..]&, rest: u8[>..]&) -> bool {
     var buf: u8[>..] = [];
     var chunk: u8[4096] = [0; 4096];
     loop {
@@ -340,7 +349,7 @@ fn read_head(c: i32, head: u8[>..]&, rest: u8[>..]&) -> bool {
             }
         }
         if buf.len > 65536 { return false; }
-        let n = gssnet_read(c, chunk);
+        let n = net::read(c, chunk, 0);
         if n <= 0 { return false; }
         buf.append(chunk[..n]);
     }
@@ -364,7 +373,7 @@ fn header(head: const u8[:], name: const u8[:]) -> u8[>..], bool {
     return out, false;
 }
 
-fn respond(c: i32, status: const u8[:], extra: const u8[:], body: const u8[:]) {
+fn respond(c: i64, status: const u8[:], extra: const u8[:], body: const u8[:]) {
     var r: u8[>..] = [];
     r.append("HTTP/1.1 ");
     r.append(status);
@@ -374,7 +383,7 @@ fn respond(c: i32, status: const u8[:], extra: const u8[:], body: const u8[:]) {
     format_int(r, body.len, 10, 0, ' ');
     r.append("\r\n\r\n");
     r.append(body);
-    gssnet_write(c, r);
+    tcp_write(c, r);
 }
 
 fn http_server(a: u8[:][>..]&) {
@@ -393,7 +402,7 @@ fn http_server(a: u8[:][>..]&) {
     var rc: krb5::ReplayEntry[>..] = [];
     var served = 0;
     loop {
-        let c = gssnet_accept(l);
+        let c = net::accept(l, 0);
         if c < 0 { continue; }
         var head: u8[>..] = [];
         var rest: u8[>..] = [];
@@ -429,7 +438,7 @@ fn http_server(a: u8[:][>..]&) {
             }
         }
         flush_stdout();
-        gssnet_close(c);
+        net::close(c);
         if once && served > 0 { break; }
     }
 }
@@ -457,7 +466,7 @@ fn http_client(a: u8[:][>..]&) {
     var tok: u8[>..] = [];
     var sp, ierr = krb5::spnego_init(cred, krb5::GSS_MUTUAL | krb5::GSS_SEQUENCE, "", false, kc, now, usec, tok);
     if ierr != krb5::OK { die_err("spnego", ierr); }
-    let s = gssnet_connect(a[2], port as! i32);
+    let s = tcp_connect(a[2], port);
     if s < 0 { die("cannot connect"); }
     var req: u8[>..] = [];
     req.append("GET ");
@@ -467,17 +476,17 @@ fn http_client(a: u8[:][>..]&) {
     req.append("\r\nAuthorization: ");
     req.append(krb5::negotiate_header(tok));
     req.append("\r\nConnection: close\r\n\r\n");
-    gssnet_write(s, req);
+    tcp_write(s, req);
     var head: u8[>..] = [];
     var body: u8[>..] = [];
     if !read_head(s, head, body) { die("no response"); }
     var chunk: u8[4096] = [0; 4096];
     loop {
-        let n = gssnet_read(s, chunk);
+        let n = net::read(s, chunk, 0);
         if n <= 0 { break; }
         body.append(chunk[..n]);
     }
-    gssnet_close(s);
+    net::close(s);
     var line_end = 0;
     while line_end < head.len && head[line_end] != '\r' { line_end++; }
     print(head[..line_end]);
@@ -496,13 +505,13 @@ fn http_client(a: u8[:][>..]&) {
 
 // --- LDAP (SASL GSSAPI) ---------------------------------------------------------------
 
-struct LdapIo { s: i32, pending: u8[>..] }
+struct LdapIo { s: i64, pending: u8[>..] }
 
 fn ldap_send(io: LdapIo&, sasl: krb5::SaslGssapi&, req: const u8[:]) {
     var wire: u8[>..] = [];
     let err = krb5::sasl_out(sasl, req, wire);
     if err != krb5::OK { die_err("wrap", err); }
-    if gssnet_write(io.s, wire) != 0 { die("write failed"); }
+    if !tcp_write(io.s, wire) { die("write failed"); }
 }
 
 // Reads until the response to `id` that ends it (a search's done, or the
@@ -516,7 +525,7 @@ fn ldap_wait(io: LdapIo&, sasl: krb5::SaslGssapi&, c: ldap::Conn&, id: i64, msgs
             if !ok { break; }
             if m.id == id && m.op != ldap::OP_SEARCH_ENTRY && m.op != 0x73 { return; }
         }
-        let n = gssnet_read(io.s, chunk);
+        let n = net::read(io.s, chunk, 0);
         if n <= 0 { die("connection closed"); }
         io.pending.append(chunk[..n]);
         var plain: u8[>..] = [];
@@ -553,7 +562,7 @@ fn ldap_cmd(a: u8[:][>..]&) {
     if cerr != krb5::OK { die_err("krb5.conf", cerr); }
     let cred, err = krb5::get_service_ticket_cached(cfg, krb5::default_ccache_name(), service, true);
     if err != krb5::OK { die_err("service ticket", err); }
-    let s = gssnet_connect(a[2], port as! i32);
+    let s = tcp_connect(a[2], port);
     if s < 0 { die("cannot connect"); }
     var io = LdapIo { s: s, pending: [] };
     var c = ldap::client();
@@ -562,7 +571,7 @@ fn ldap_cmd(a: u8[:][>..]&) {
     var sasl, serr = krb5::sasl_gssapi_start(c, cred, want, "", now, usec, out);
     if serr != krb5::OK { die_err("sasl start", serr); }
     loop {
-        gssnet_write(s, out);
+        tcp_write(s, out);
         out.clear();
         var msgs: u8[>..] = [];
         ldap_wait(io, sasl, c, sasl.bind_id, msgs);
@@ -632,7 +641,7 @@ fn ldap_cmd(a: u8[:][>..]&) {
     req.clear();
     ldap::unbind(c, req);
     ldap_send(io, sasl, req);
-    gssnet_close(s);
+    net::close(s);
 }
 
 fn print_sid(io: LdapIo&, sasl: krb5::SaslGssapi&, c: ldap::Conn&, base: const u8[:], sid: const u8[:]) {

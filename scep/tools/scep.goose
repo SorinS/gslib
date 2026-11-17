@@ -49,9 +49,7 @@ import gslib.crypto.x509.keys;
 import gslib.crypto.x509.create;
 import gslib.crypto.x509.pool;
 import gslib.encoding.asn1;
-import gslib.dns;
-import gslib.dns.server;
-import gslib.krb5.sys;
+import gslib.sys;
 
 struct Options {
     url:           u8[..1024] = [],
@@ -101,7 +99,7 @@ fn why(c: const scep::Client&, e: i64) -> u8[>..] {
     return out;
 }
 
-fn write_private(path: const u8[:], data: const u8[:]) -> bool { krb5::krb5sys_write_private(path, data) == 0 }
+fn write_private(path: const u8[:], data: const u8[:]) -> bool { sys::write_private(path, data) == 0 }
 
 // The key in a PEM file, or a new RSA 2048 key written there (0600).
 fn load_or_make_key(path: const u8[:]) -> x509::PrivateKey, bool {
@@ -337,15 +335,15 @@ fn serve(o: const Options&) -> i32 {
     s.pending = o.pending;
     s.legacy = o.legacy;
     let addr = if o.listen.len > 0 { o.listen[..] } else { "127.0.0.1" };
-    let lfd = dns::dnsnet_listen(addr, o.port as! i32, 1);
+    let lfd = net::listen(addr, o.port);
     if lfd < 0 { return fail("cannot listen"); }
-    print("listening on ", addr, ":", dns::dnsnet_local_port(lfd));
+    print("listening on ", addr, ":", net::local_port(lfd));
     flush_stdout();
     var method: u8[>..] = [];
     var target: u8[>..] = [];
     var body:   u8[>..] = [];
     loop {
-        let fd = dns::dnsnet_accept(lfd, 1000);
+        let fd = net::accept(lfd, 1000);
         if fd < 0 { continue; }
         body.clear();
         if read_request(fd, method, target, body) {

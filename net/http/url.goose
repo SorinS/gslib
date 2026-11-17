@@ -20,6 +20,8 @@ namespace http;
 
 import std;
 import net.http;
+import net.ip;
+import net.idna;
 
 struct Url {
     scheme: Span,                   // lowercase; empty for a relative reference
@@ -363,7 +365,7 @@ fn parse_host(t: const u8[:], a: i64, b: i64, scheme: const u8[:], p: UrlParts&)
             if e1 != URL_OK { return e1; }
             unescape_to(addr, name, false);
         }
-        let ip, kind = parse_ip_zone(addr);
+        let ip, kind = net::parse_ip_zone(addr);
         if kind != 6 { return URL_ERR_IP_LITERAL; }
         p.ipv6 = true;
         p.host = span(a + 1, a + close);
@@ -617,7 +619,7 @@ fn url_ascii_host(u: const Url&) -> u8[>..], bool {
         out.append(if z >= 0 { h[..z] } else { h[..] });
         return out, true;
     }
-    return to_ascii_host(h);
+    return net::to_ascii_host(h);
 }
 
 // Bytes RFC 9112 allows in a request target as they are: pchar, "/", and
@@ -724,242 +726,4 @@ fn query_value(q: const u8[:], name: const u8[:]) -> u8[>..], bool {
         }
     };
     return out, found;
-}
-
-// --- IP addresses ----------------------------------------------------------
-
-// An IPv4 address in dotted decimal, Go's netip way: four parts, no
-// leading zeros, each at most 255.
-fn parse_ip4(s: const u8[:], out: u8[:]) -> bool {
-    var part = 0;
-    var digits = 0;
-    var v: i64 = 0;
-    for i in s.len {
-        let c = s[i];
-        if c >= '0' && c <= '9' {
-            if digits == 1 && v == 0 { return false; }
-            v = v * 10 + (c - '0');
-            digits++;
-            if v > 255 { return false; }
-        } else if c == '.' {
-            if digits == 0 || part == 3 { return false; }
-            out[part] = v as! u8;
-            part++;
-            digits = 0;
-            v = 0;
-        } else {
-            return false;
-        }
-    }
-    if digits == 0 || part != 3 { return false; }
-    out[3] = v as! u8;
-    return true;
-}
-
-// An IP address: 4 for IPv4, 6 for IPv6 (an IPv4 tail allowed), 0 for
-// neither; the 16 bytes (IPv4 as ::ffff:a.b.c.d). No zone. Go's netip
-// rules: up to four hex digits a group, "::" for at least one group.
-fn parse_ip(s: const u8[:]) -> u8[16], i64 {
-    var ip: u8[16] = [0; 16];
-    var v4: u8[4] = [0; 4];
-    if parse_ip4(s, v4) {
-        ip[10] = 0xff; ip[11] = 0xff;
-        for i in 4 { ip[12 + i] = v4[i]; }
-        return ip, 4;
-    }
-    var ellipsis = -1;
-    var p = 0;                      // the next byte of s
-    if s.len >= 2 && s[0] == ':' && s[1] == ':' {
-        ellipsis = 0;
-        p = 2;
-        if p == s.len { return ip, 6; }
-    }
-    var i = 0;                      // bytes of ip written
-    while i < 16 {
-        var off = 0;
-        var acc: i64 = 0;
-        while p + off < s.len {
-            let v = url_hex(s[p + off]);
-            if v < 0 { break; }
-            if off > 3 { return ip, 0; }
-            acc = acc * 16 + v;
-            off++;
-        }
-        if off == 0 { return ip, 0; }
-        if p + off < s.len && s[p + off] == '.' {
-            if (ellipsis < 0 && i != 12) || i + 4 > 16 { return ip, 0; }
-            if !parse_ip4(s[p..], v4) { return ip, 0; }
-            for k in 4 { ip[i + k] = v4[k]; }
-            i += 4;
-            p = s.len;
-            break;
-        }
-        ip[i] = (acc >> 8) as! u8;
-        ip[i + 1] = (acc & 0xff) as! u8;
-        i += 2;
-        p += off;
-        if p == s.len { break; }
-        if s[p] != ':' || p + 1 == s.len { return ip, 0; }
-        p++;
-        if s[p] == ':' {
-            if ellipsis >= 0 { return ip, 0; }
-            ellipsis = i;
-            p++;
-            if p == s.len { break; }
-        }
-    }
-    if p != s.len { return ip, 0; }
-    if i < 16 {
-        if ellipsis < 0 { return ip, 0; }
-        let n = 16 - i;
-        var k = i - 1;
-        while k >= ellipsis { ip[k + n] = ip[k]; k--; }
-        for z in ellipsis..ellipsis + n { ip[z] = 0; }
-    } else if ellipsis >= 0 {
-        return ip, 0;
-    }
-    return ip, 6;
-}
-
-// An IP address with an IPv6 zone allowed ("fe80::1%en0"; the zone not empty).
-fn parse_ip_zone(s: const u8[:]) -> u8[16], i64 {
-    let z = position(s, '%');
-    if z < 0 { return parse_ip(s); }
-    let ip, kind = parse_ip(s[..z]);
-    if kind != 6 || z + 1 == s.len { return ip, 0; }
-    return ip, 6;
-}
-
-fn is_ip(s: const u8[:]) -> bool {
-    let ip, kind = parse_ip_zone(s);
-    return kind != 0;
-}
-
-fn ip_is_loopback(ip: const u8[:], kind: i64) -> bool {
-    if kind == 0 { return false; }
-    var v4mapped = true;
-    for i in 10 { if ip[i] != 0 { v4mapped = false; } }
-    if v4mapped && ip[10] == 0xff && ip[11] == 0xff { return ip[12] == 127; }
-    if kind != 6 { return false; }
-    for i in 15 { if ip[i] != 0 { return false; } }
-    return ip[15] == 1;
-}
-
-// --- ASCII host names (Punycode, RFC 3492) ---------------------------------
-
-let PUNY_BASE: i64 = 36;
-let PUNY_TMIN: i64 = 1;
-let PUNY_TMAX: i64 = 26;
-let PUNY_SKEW: i64 = 38;
-let PUNY_DAMP: i64 = 700;
-let PUNY_INITIAL_BIAS: i64 = 72;
-let PUNY_INITIAL_N: i64 = 128;
-
-fn puny_digit(d: i64) -> u8 { if d < 26 { ('a' + d) as! u8 } else { ('0' + d - 26) as! u8 } }
-
-fn puny_adapt(delta0: i64, num_points: i64, first: bool) -> i64 {
-    var delta = if first { delta0 / PUNY_DAMP } else { delta0 / 2 };
-    delta += delta / num_points;
-    var k: i64 = 0;
-    while delta > ((PUNY_BASE - PUNY_TMIN) * PUNY_TMAX) / 2 {
-        delta /= PUNY_BASE - PUNY_TMIN;
-        k += PUNY_BASE;
-    }
-    return k + (PUNY_BASE - PUNY_TMIN + 1) * delta / (delta + PUNY_SKEW);
-}
-
-// UTF-8 to code points; false for bytes that are not UTF-8.
-fn utf8_points(s: const u8[:], out: i64[>..]&) -> bool {
-    var i = 0;
-    while i < s.len {
-        let c = s[i];
-        var n = 0;
-        var cp: i64 = 0;
-        if c < 0x80 { cp = c; n = 1; }
-        else if c >= 0xc2 && c < 0xe0 { cp = c & 0x1f; n = 2; }
-        else if c >= 0xe0 && c < 0xf0 { cp = c & 0x0f; n = 3; }
-        else if c >= 0xf0 && c < 0xf5 { cp = c & 0x07; n = 4; }
-        else { return false; }
-        if i + n > s.len { return false; }
-        for k in 1..n {
-            let d = s[i + k];
-            if (d & 0xc0) != 0x80 { return false; }
-            cp = (cp << 6) | (d & 0x3f);
-        }
-        if (n == 3 && cp < 0x800) || (n == 4 && (cp < 0x10000 || cp > 0x10ffff)) || (cp >= 0xd800 && cp <= 0xdfff) {
-            return false;
-        }
-        out.push(cp);
-        i += n;
-    }
-    return true;
-}
-
-// One label's Punycode (RFC 3492 §6.3), without the "xn--" prefix.
-fn punycode_encode(out: u8[>..]&, label: const u8[:]) -> bool {
-    var cps: i64[>..] = [];
-    if !utf8_points(label, cps) { return false; }
-    var n = PUNY_INITIAL_N;
-    var delta: i64 = 0;
-    var bias = PUNY_INITIAL_BIAS;
-    var b: i64 = 0;
-    for cp in cps { if cp < 0x80 { out.push(cp as! u8); b++; } }
-    var h = b;
-    if b > 0 { out.push('-'); }
-    while h < cps.len {
-        var m: i64 = 0x7fffffff;
-        for cp in cps { if cp >= n && cp < m { m = cp; } }
-        delta += (m - n) * (h + 1);
-        if delta > 0x7fffffff { return false; }
-        n = m;
-        for cp in cps {
-            if cp < n { delta++; }
-            if cp == n {
-                var q = delta;
-                var k = PUNY_BASE;
-                while true {
-                    var t = k - bias;
-                    if t < PUNY_TMIN { t = PUNY_TMIN; } else if t > PUNY_TMAX { t = PUNY_TMAX; }
-                    if q < t { break; }
-                    out.push(puny_digit(t + (q - t) % (PUNY_BASE - t)));
-                    q = (q - t) / (PUNY_BASE - t);
-                    k += PUNY_BASE;
-                }
-                out.push(puny_digit(q));
-                bias = puny_adapt(delta, h + 1, h == b);
-                delta = 0;
-                h++;
-            }
-        }
-        delta++;
-        n++;
-    }
-    return true;
-}
-
-// A host name in ASCII: each label with a byte past 0x7f as "xn--" and its
-// Punycode, ASCII letters lowered in such labels only (Go's cookiejar
-// toASCII). Names already ASCII come back unchanged.
-fn to_ascii_host(h: const u8[:]) -> u8[>..], bool {
-    var out: u8[>..] = [];
-    var ascii = true;
-    for c in h { if c >= 0x80 { ascii = false; } }
-    if ascii { out.append(h); return out, true; }
-    var ok = true;
-    var first = true;
-    each_split(h, '.') {
-        if !first { out.push('.'); }
-        first = false;
-        var plain = true;
-        for c in it { if c >= 0x80 { plain = false; } }
-        if plain {
-            out.append(it);
-        } else {
-            var low: u8[>..] = [];
-            for c in it { low.push(lower(c)); }
-            out.append("xn--");
-            if !punycode_encode(out, low) { ok = false; }
-        }
-    };
-    return out, ok;
 }

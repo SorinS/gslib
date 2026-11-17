@@ -51,8 +51,6 @@ import gslib.net;
 import gslib.net.http;
 import gslib.net.http.conn1;
 import gslib.net.http.url;
-import gslib.dns;
-import gslib.dns.server;
 
 root struct Options {
     base:            u8[>..]   = [],
@@ -243,8 +241,8 @@ fn reason(status: i64) -> const u8[:] {
 
 fn listen(o: const Options&) -> i64 {
     let addr = if o.listen.len > 0 { o.listen[..] } else { "127.0.0.1" };
-    let fd = dns::dnsnet_listen(addr, o.port as! i32, 1);
-    if fd >= 0 { say(str("serving on ", addr, " port ", dns::dnsnet_local_port(fd))); }
+    let fd = net::listen(addr, o.port);
+    if fd >= 0 { say(str("serving on ", addr, " port ", net::local_port(fd))); }
     return fd;
 }
 
@@ -391,7 +389,7 @@ fn run_sp(o: const Options&) -> i32 {
     var last = saml::LogoutSubject { .. };
     var has_last = false;
     loop {
-        let c = dns::dnsnet_accept(fd, 1000);
+        let c = net::accept(fd, 1000);
         if c < 0 { continue; }
         var q = Req { .. };
         var r = Reply { .. };
@@ -551,7 +549,7 @@ fn run_idp(o: const Options&) -> i32 {
     var pending_logout: u8[>..] = [];
     var seen_logout: u8[][>..] = [];   // LogoutRequest IDs taken (a test tool: kept for the run)
     loop {
-        let c = dns::dnsnet_accept(fd, 1000);
+        let c = net::accept(fd, 1000);
         if c < 0 { continue; }
         var q = Req { .. };
         var r = Reply { .. };

@@ -22,8 +22,6 @@ import gslib.crypto.x509.keys;
 import gslib.net;
 import gslib.net.http;
 import gslib.net.http.conn1;
-import gslib.dns;
-import gslib.dns.server;
 
 fn answer(c: i64, status: i64, extra: const u8[:], ctype: const u8[:], body: const u8[:]) {
     var out: u8[>..] = [];
@@ -67,10 +65,10 @@ fn main() {
     // saml::new_id()s, no spaces), the session the browser's cookie.
     var pending: u8[][>..] = [];
     var seen: u8[][>..] = [];         // the assertions taken
-    let fd = dns::dnsnet_listen("127.0.0.1", 8001, 1);
+    let fd = net::listen("127.0.0.1", 8001);
     guard fd >= 0 else { print("cannot listen"); exit(1); }
     loop {
-        let c = dns::dnsnet_accept(fd, 1000);
+        let c = net::accept(fd, 1000);
         if c < 0 { continue; }
         // Read one request.
         var hc = http::server_conn(http::server_options());

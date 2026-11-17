@@ -1,2 +1,1 @@
-punycode vectors: 31
 url: all passed

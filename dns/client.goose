@@ -27,10 +27,6 @@ import dns.tsig;
 import dns.zone;
 import net;
 
-extern fn dnsnet_udp_open(host: const u8[:], port: i32) -> i64;
-extern fn dnsnet_send(fd: i64, data: const u8[:]) -> i64;
-extern fn dnsnet_recv(fd: i64, buf: u8[:], timeout_ms: i32) -> i64;
-extern fn dnsnet_close(fd: i64);
 
 let NET_UDP: u8 = 0;
 let NET_TCP: u8 = 1;
@@ -108,10 +104,10 @@ fn check_reply_tsig(c: const Client&, w: const u8[:], request_mac: const u8[:], 
 
 // One query over UDP: the raw reply into out.
 fn exchange_udp(c: const Client&, query: const u8[:], host: const u8[:], port: i32, bufsize: i64, out: u8[>..]&) -> i64 {
-    let fd = dnsnet_udp_open(host, port);
-    if fd < 0 { return if fd == -2 { ERR_IO } else { ERR_IO }; }
-    defer dnsnet_close(fd);
-    if dnsnet_send(fd, query) != query.len { return ERR_IO; }
+    let fd = net::dial_udp(host, port);
+    if fd < 0 { return ERR_IO; }
+    defer net::close(fd);
+    if net::send(fd, query) != query.len { return ERR_IO; }
     let deadline = clock_ns() + c.timeout_ms as i64 * 1000000;
     // Room for any datagram, whatever was asked for: one larger than
     // bufsize is not cut short (and misread) by the receive.
@@ -120,7 +116,7 @@ fn exchange_udp(c: const Client&, query: const u8[:], host: const u8[:], port: i
     while true {
         let left = (deadline - clock_ns()) / 1000000;
         if left <= 0 { return ERR_TIMEOUT; }
-        let n = dnsnet_recv(fd, buf, left as! i32);
+        let n = net::recv(fd, buf, left as! i32);
         if n < 0 { return net_error(n); }
         if reply_matches(query, buf[..n]) {
             out.append(buf[..n]);

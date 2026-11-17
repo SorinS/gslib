@@ -53,10 +53,8 @@ import gslib.crypto.x509;
 import gslib.crypto.x509.keys;
 import gslib.crypto.x509.pool;
 import gslib.encoding.asn1;
-import gslib.dns;
 import gslib.dns.client;
-import gslib.dns.server;
-import gslib.krb5.sys;
+import gslib.sys;
 
 struct Options {
     issuer:      u8[..512]  = [],
@@ -148,7 +146,7 @@ fn why(c: const oauth::Client&, e: i64) -> u8[>..] {
     return out;
 }
 
-fn write_private(path: const u8[:], data: const u8[:]) -> bool { krb5::krb5sys_write_private(path, data) == 0 }
+fn write_private(path: const u8[:], data: const u8[:]) -> bool { sys::write_private(path, data) == 0 }
 
 // A file's text, or stdin's for "-", without the line end.
 fn read_text(path: const u8[:]) -> u8[>..], bool {
@@ -259,7 +257,7 @@ fn wait_callback(fd: i64, timeout_s: i64) -> u8[>..], bool {
     let deadline = clock_ns() + timeout_s * 1000000000;
     var buf: u8[4096] = [0; 4096];
     while clock_ns() < deadline {
-        let conn = dns::dnsnet_accept(fd, 1000);
+        let conn = net::accept(fd, 1000);
         if conn < 0 { continue; }
         var req: u8[>..] = [];
         while find(req, "\r\n\r\n") < 0 && req.len < 16384 {
@@ -291,19 +289,19 @@ fn wait_callback(fd: i64, timeout_s: i64) -> u8[>..], bool {
 }
 
 fn login(c: oauth::Client&, hc: http::Client&, o: const Options&) -> i32 {
-    let fd = dns::dnsnet_listen("127.0.0.1", o.port, 1);
+    let fd = net::listen("127.0.0.1", o.port);
     if fd < 0 { return fail(str("cannot listen on 127.0.0.1 port ", o.port)); }
-    let port = dns::dnsnet_local_port(fd);
+    let port = net::local_port(fd);
     let redirect = str("http://127.0.0.1:", port, "/callback");
     var scope: u8[>..] = [];
     scope.append(if o.scope.len > 0 { o.scope[..] } else { "openid" });
     let ar, aerr = oauth::new_auth_request(c, redirect, scope);
-    if aerr != oauth::OK { dns::dnsnet_close(fd); return fail("the redirect URI or the scope is too long"); }
+    if aerr != oauth::OK { net::close(fd); return fail("the redirect URI or the scope is too long"); }
     let extra = resource_params(o);
     var url: u8[>..] = [];
     if o.par || c.meta.require_par {
         let u, err = oauth::push_authorization_request(c, hc, ar, extra);
-        if err != oauth::OK { dns::dnsnet_close(fd); return fail(str("the pushed authorization request failed: ", why(c, err))); }
+        if err != oauth::OK { net::close(fd); return fail(str("the pushed authorization request failed: ", why(c, err))); }
         url.append(u);
     } else {
         url.append(oauth::authorization_url(c, ar, extra));
@@ -311,7 +309,7 @@ fn login(c: oauth::Client&, hc: http::Client&, o: const Options&) -> i32 {
     say("open this URL in a browser to sign in:");
     say(url);
     let query, got = wait_callback(fd, o.timeout);
-    dns::dnsnet_close(fd);
+    net::close(fd);
     if !got { return fail("no redirect came back in time"); }
     let code, cerr = oauth::parse_callback(c, ar, query);
     if cerr != oauth::OK { return fail(str("the redirect: ", why(c, cerr))); }

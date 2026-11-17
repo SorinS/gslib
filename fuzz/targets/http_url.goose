@@ -9,6 +9,8 @@ import std;
 import gslib from "../..";
 import gslib.net.http;
 import gslib.net.http.url;
+import gslib.net.ip;
+import gslib.net.idna;
 
 fn probe(u: const http::Url&) {
     let _ = http::url_scheme(u);
@@ -29,11 +31,11 @@ fn probe(u: const http::Url&) {
     let _ = http::url_referer(u);
     let _ = http::url_redacted(u);
     let h = http::url_host(u);
-    let _ = http::parse_ip(h);
-    let _ = http::parse_ip_zone(h);
-    let ip, kind = http::parse_ip_zone(h);
-    let _ = http::ip_is_loopback(ip, kind);
-    let _ = http::to_ascii_host(h);
+    let _ = net::parse_ip(h);
+    let _ = net::parse_ip_zone(h);
+    let ip, kind = net::parse_ip_zone(h);
+    let _ = net::ip_is_loopback(ip, kind);
+    let _ = net::to_ascii_host(h);
     // The query as a form.
     let q = http::url_query(u);
     each_split(q, '&') {

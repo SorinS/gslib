@@ -54,6 +54,7 @@ import net.http.client;
 import net.http.fetch;
 import net.http.url;
 import net.http.auth;
+import net.ip;
 
 // --- Errors -------------------------------------------------------------------
 
@@ -294,8 +295,8 @@ fn url_allowed(c: const Client&, u: const u8[:]) -> bool {
     var host = http::url_host(p);
     if host.len >= 2 && host[0] == '[' && host[host.len - 1] == ']' { host = host[1..host.len - 1]; }
     if eq_fold(host, "localhost") { return true; }
-    let ip, kind = http::parse_ip(host);
-    return http::ip_is_loopback(ip, kind);
+    let ip, kind = net::parse_ip(host);
+    return net::ip_is_loopback(ip, kind);
 }
 
 fn now_s(c: const Client&) -> i64 { if c.now != 0 { c.now } else { time_ns() / 1000000000 } }

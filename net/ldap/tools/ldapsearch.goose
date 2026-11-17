@@ -21,11 +21,10 @@ import gslib.net.ldap.conn;
 import gslib.net.ldap.ldif;
 import gslib.net.ldap.dn;
 import gslib.net.ldap.filter;
-import .sysnet;
 import .cli;
 
 fn usage(o: const cli::Opts&) -> i32 {
-    sysnet::eprint(str("usage: ", o.prog, " [options] [filter [attributes...]]\nSearch options:\n  -b base     base DN\n  -s scope    base, one, sub (the default) or children\n  -a deref    never (the default), search, find or always\n  -z limit    size limit\n  -l limit    time limit, in seconds\n  -A          attribute names only\n  -L[L[L]]    LDIFv1; without comments; without the version\n  -E ext      search control: [!]pr=<size>[/noprompt], [!]sss=[-]attr[:rule][/...]\n", cli::COMMON_USAGE));
+    write_stderr(str("usage: ", o.prog, " [options] [filter [attributes...]]\nSearch options:\n  -b base     base DN\n  -s scope    base, one, sub (the default) or children\n  -a deref    never (the default), search, find or always\n  -z limit    size limit\n  -l limit    time limit, in seconds\n  -A          attribute names only\n  -L[L[L]]    LDIFv1; without comments; without the version\n  -E ext      search control: [!]pr=<size>[/noprompt], [!]sss=[-]attr[:rule][/...]\n", cli::COMMON_USAGE));
     return 2;
 }
 
@@ -261,7 +260,7 @@ fn run() -> i32 {
                         if matched.len > 0 { format(e, "Matched DN: ", matched, "\n"); }
                         if message.len > 0 { format(e, "Additional information: ", message, "\n"); }
                         for u in ldap::referrals(msgs, m) { format(e, "Referral: ", u, "\n"); }
-                        sysnet::eprint(e);
+                        write_stderr(e);
                     }
                     next_cookie.append(ldap::paging_cookie(msgs, m));
                     if page > 0 && level == 0 {

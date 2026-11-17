@@ -61,8 +61,6 @@ import gslib.net.http.conn1;
 import gslib.net.http.client;
 import gslib.net.http.fetch;
 import gslib.net.http.url;
-import gslib.dns;
-import gslib.dns.server;
 
 root struct Options {
     user:            u8[>..] = [],
@@ -525,8 +523,8 @@ fn run_accept(o: const Options&) -> i32 {
 
 fn listen_on(o: const Options&) -> i64 {
     let addr = if o.listen.len > 0 { o.listen[..] } else { "127.0.0.1" };
-    let fd = dns::dnsnet_listen(addr, o.port as! i32, 1);
-    if fd >= 0 { say(str("serving on ", addr, " port ", dns::dnsnet_local_port(fd))); }
+    let fd = net::listen(addr, o.port);
+    if fd >= 0 { say(str("serving on ", addr, " port ", net::local_port(fd))); }
     return fd;
 }
 
@@ -631,7 +629,7 @@ fn run_serve(o: const Options&) -> i32 {
     if fd < 0 { return fail("cannot listen"); }
     var total = 0;
     loop {
-        let c = dns::dnsnet_accept(fd, 1000);
+        let c = net::accept(fd, 1000);
         if c < 0 { continue; }
         total += serve_conn(c, o, users);
         net::close(c);

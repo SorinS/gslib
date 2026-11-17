@@ -39,15 +39,7 @@ import dns.edns;
 import dns.tsig;
 import dns.client;
 import net;
-
-extern fn dnsnet_listen(addr: const u8[:], port: i32, tcp: i32) -> i64;
-extern fn dnsnet_local_port(fd: i64) -> i32;
-extern fn dnsnet_recvfrom(fd: i64, buf: u8[:], from: u8[:], from_len: u8[:]) -> i64;
-extern fn dnsnet_peername(fd: i64, from: u8[:], from_len: u8[:]) -> i64;
-extern fn dnsnet_sendto(fd: i64, data: const u8[:], to: const u8[:]) -> i64;
-extern fn dnsnet_addr_text(sa: const u8[:], out: u8[:]) -> i64;
-extern fn dnsnet_accept(fd: i64, timeout_ms: i32) -> i64;
-extern fn dnsnet_wait2(a: i64, b: i64, timeout_ms: i32) -> i32;
+import net.ip;
 
 struct ServerConfig {
     addr:         u8[..64]  = "",   // "" for every address
@@ -79,18 +71,18 @@ fn server_open(cfg: const ServerConfig&) -> Server {
     for t in tries {
         s = Server { -1, -1, cfg.port, OK };
         if cfg.udp {
-            s.udp = dnsnet_listen(cfg.addr, cfg.port, 0);
+            s.udp = net::listen_udp(cfg.addr, cfg.port);
             if s.udp < 0 { s.err = ERR_IO; return s; }
-            s.port = dnsnet_local_port(s.udp);
+            s.port = net::local_port(s.udp) as! i32;
         }
         if cfg.tcp {
-            s.tcp = dnsnet_listen(cfg.addr, s.port, 1);
+            s.tcp = net::listen(cfg.addr, s.port);
             if s.tcp < 0 {
                 s.err = ERR_IO;
-                if s.udp >= 0 { dnsnet_close(s.udp); s.udp = -1; }
+                if s.udp >= 0 { net::close(s.udp); s.udp = -1; }
                 continue;
             }
-            s.port = dnsnet_local_port(s.tcp);
+            s.port = net::local_port(s.tcp) as! i32;
         }
         return s;
     }
@@ -98,8 +90,8 @@ fn server_open(cfg: const ServerConfig&) -> Server {
 }
 
 fn server_close(s: Server&) {
-    if s.udp >= 0 { dnsnet_close(s.udp); s.udp = -1; }
-    if s.tcp >= 0 { dnsnet_close(s.tcp); s.tcp = -1; }
+    if s.udp >= 0 { net::close(s.udp); s.udp = -1; }
+    if s.tcp >= 0 { net::close(s.tcp); s.tcp = -1; }
 }
 
 // The FORMERR or NOTIMP for a request the server will not hand on, or
@@ -269,16 +261,14 @@ fn more(cfg: const ServerConfig&, handled: i64) -> bool { cfg.max_requests == 0 
 
 // One datagram off the UDP socket, handled and answered; false if none was
 // there.
-fn serve_udp<F>(srv: const Server&, cfg: const ServerConfig&, buf: u8[:], from: u8[:], flen: u8[:], text: u8[:]) -> bool {
-    let n = dnsnet_recvfrom(srv.udp, buf, from, flen);
+fn serve_udp<F>(srv: const Server&, cfg: const ServerConfig&, buf: u8[:]) -> bool {
+    let n, to = net::recv_from(srv.udp, buf, -1);
     if n < 0 { return false; }
-    let to = from[..flen[0]];
     var peer = Peer { false, "", ERR_NO_SIG, false };
-    let tl = dnsnet_addr_text(to, text);
-    if tl > 0 { peer.addr.append(text[..tl]); }
+    peer.addr.append(net::addr_string(to.addr));
     let w = buf[..n];
     handle(cfg, w, peer, F) { out =>
-        if dnsnet_sendto(srv.udp, out, to) != out.len {
+        if net::send_to(srv.udp, out, to) != out.len {
             // Too large for the path, or a send error: a bare truncated
             // reply instead, which sends the client to TCP.
             var q = Msg { .. };
@@ -287,7 +277,7 @@ fn serve_udp<F>(srv: const Server&, cfg: const ServerConfig&, buf: u8[:], from: 
                 set_reply(r, q);
                 r.hdr.truncated = true;
                 var small: u8[>..] = [];
-                if pack(r, small) == OK { dnsnet_sendto(srv.udp, small, to); }
+                if pack(r, small) == OK { net::send_to(srv.udp, small, to); }
             }
         }
     };
@@ -317,29 +307,23 @@ fn serve<F>(srv: Server&, cfg: const ServerConfig&) {
     var handled = 0;
     var buf: u8[>..] = [];
     buf.resize(65535, 0);
-    var from: u8[>..] = [];
-    from.resize(256, 0);
-    var flen: u8[1] = [0];
     var peer = Peer { true, "", ERR_NO_SIG, false };
-    var text: u8[64] = [0; 64];
     var req: u8[>..] = [];
     var chunk: u8[>..] = [];
     chunk.resize(65537, 0);
     let idle_ns = cfg.idle_ms as i64 * 1000000;
     while more(cfg, handled) {
-        let ready = dnsnet_wait2(srv.udp, srv.tcp, 0);
+        let ready = net::wait2(srv.udp, srv.tcp, 0);
         if ready < 0 { continue; }
         if ready & 1 != 0 {
-            if serve_udp(srv, cfg, buf, from, flen, text, F) { handled++; }
+            if serve_udp(srv, cfg, buf, F) { handled++; }
         }
         if ready & 2 == 0 || !more(cfg, handled) { continue; }
-        let c = dnsnet_accept(srv.tcp, 1000);
+        let c = net::accept(srv.tcp, 1000);
         if c < 0 { continue; }
         peer.addr.clear();
-        if dnsnet_peername(c, from, flen) >= 0 {
-            let tl = dnsnet_addr_text(from[..flen[0]], text);
-            if tl > 0 { peer.addr.append(text[..tl]); }
-        }
+        let pa, pe = net::peer_addr(c);
+        if pe >= 0 { peer.addr.append(net::addr_string(pa.addr)); }
         // Queries on the connection until it closes, is slow, or has had
         // its tcp_queries. Each is read as its bytes come, by its deadline,
         // with datagrams served between.
@@ -352,10 +336,10 @@ fn serve<F>(srv: Server&, cfg: const ServerConfig&) {
             while req.len < need && more(cfg, handled) {
                 let left = ms_left(deadline);
                 if left == 0 { alive = false; break; }
-                let r = dnsnet_wait2(srv.udp, c, left);
+                let r = net::wait2(srv.udp, c, left);
                 if r < 0 { alive = false; break; }
                 if r & 1 != 0 && more(cfg, handled) {
-                    if serve_udp(srv, cfg, buf, from, flen, text, F) { handled++; }
+                    if serve_udp(srv, cfg, buf, F) { handled++; }
                 }
                 if r & 2 != 0 {
                     let n = net::read(c, chunk[.. need - req.len], 1);

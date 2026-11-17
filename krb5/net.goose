@@ -11,8 +11,8 @@ namespace krb5;
 import std;
 import krb5.config;
 import krb5.messages;
-import krb5.sys;
 import net;
+import net.ip;
 
 let MAX_TCP_REPLY: i64 = 1 << 24;
 
@@ -65,13 +65,26 @@ fn tcp_exchange(host: const u8[:], port: i64, req: const u8[:], out: u8[>..]&, t
     return OK;
 }
 
+// Sends req to host:port over UDP and waits up to timeout_ms for one
+// datagram back, from each of the host's addresses in turn. The socket is
+// connected, so only the KDC's own replies are taken.
 fn udp_exchange(host: const u8[:], port: i64, req: const u8[:], out: u8[>..]&, timeout_ms: i64) -> i64 {
+    let addrs, le = net::lookup_host(host);
+    if le < 0 { return ERR_KDC_UNREACHABLE; }
     var buf: u8[>..] = [];
     buf.resize(65536, 0);
-    let n = krb5sys_udp_exchange(host, port as! i32, req, buf, timeout_ms as! i32);
-    if n <= 0 { return ERR_KDC_UNREACHABLE; }
-    out.append(buf[..n]);
-    return OK;
+    for a in addrs {
+        let fd = net::dial_udp(net::addr_string(a), port);
+        if fd < 0 { continue; }
+        let sent = net::send(fd, req);
+        let n = if sent == req.len { net::recv(fd, buf, timeout_ms as! i32) } else { -1 };
+        net::close(fd);
+        if n > 0 {
+            out.append(buf[..n]);
+            return OK;
+        }
+    }
+    return ERR_KDC_UNREACHABLE;
 }
 
 // Whether a reply is KRB-ERROR KRB_ERR_RESPONSE_TOO_BIG.
