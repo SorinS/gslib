@@ -195,17 +195,7 @@ SPLITS = {
         ],
     ),
     "yaml": dict(repo="yamlgoose"),
-    "mime": dict(
-        repo="mimegoose",
-        sidecar=(
-            "// mime's sidecar: src/path.c, multipart's platform constant (file names\n"
-            "// follow the platform's path rules, as Go's filepath.Base does) and its\n"
-            "// forms' temporary files.\n"
-            "c_sources = [\"src/path.c\"];\n"
-            "\n"
-            "// Programs, not the package's modules.\n"
-            "exclude = [\"examples\", \"test\", \"tools\", \"scripts\"];\n"),
-    ),
+    "mime": dict(repo="mimegoose"),
     "x509": dict(
         repo="x509goose",
         gitignore=["!examples/*.pem", "!examples/*.p12"],
@@ -257,10 +247,10 @@ SPLITS = {
     "sys": dict(
         repo="osgoose", new=True,
         sidecar=(
-            "// sys's sidecar: src/, the system calls (posix.c and unix.c on POSIX,\n"
-            "// win.c, winreg.c and winmgmt.c on Windows, and the stubs for what a\n"
+            "// sys's sidecar: src/, the system calls (posix.c, unix.c and spawn.c on POSIX,\n"
+            "// win.c, winreg.c, winmgmt.c and winspawn.c on Windows, and the stubs for what a\n"
             "// platform lacks), compiled only into programs that call them.\n"
-            "c_sources = [\"src/posix.c\", \"src/unix.c\", \"src/win.c\", \"src/winreg.c\", \"src/winmgmt.c\", \"src/gssys_stubs.c\"];\n"
+            "c_sources = [\"src/posix.c\", \"src/unix.c\", \"src/spawn.c\", \"src/win.c\", \"src/winreg.c\", \"src/winmgmt.c\", \"src/winspawn.c\", \"src/gssys_stubs.c\"];\n"
             "// Accounts, groups and shares (netapi32), sessions (wtsapi32).\n"
             "c_libs_windows = [\"advapi32\", \"netapi32\", \"wtsapi32\"];\n"
             "\n"

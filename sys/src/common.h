@@ -42,6 +42,20 @@
 #define GO_EXCL   0x80
 #define GO_TRUNC  0x200
 #define GO_SYNC   0x1000
+#define GO_NOFOLLOW 0x2000
+#define GO_NONBLOCK 0x4000
+
+/* spawn's flags (process::SPAWN_*) and its stdio entries: a descriptor,
+   or one of the STDIO_* below. */
+#define SP_SETSID          0x1
+#define SP_PGROUP          0x2
+#define SP_PTY             0x4
+#define SP_DEFAULT_SIGNALS 0x8
+#define SP_NO_WINDOW       0x10
+#define STDIO_INHERIT (-1)
+#define STDIO_PIPE    (-2)
+#define STDIO_NULL    (-3)
+#define STDIO_STDOUT  (-4)
 
 /* lock's how (sys::LOCK_*). */
 #define LK_SHARED    1

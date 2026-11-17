@@ -11,12 +11,11 @@
 //                     TPM_SIGNAL_NV_ON (11) when opened, so the TPM then
 //                     needs Startup; TPM_SESSION_END (20) on both at close
 //   device:PATH       a TPM character device, Linux's /dev/tpmrm0 (the
-//                     kernel's resource manager) or /dev/tpm0: one write of
-//                     the command, one read of the response. Linux only;
-//                     elsewhere ERR_TRANSPORT
+//                     kernel's resource manager) or /dev/tpm0, through sys:
+//                     one write of the command, one read of the response.
+//                     Where there is none, ERR_TRANSPORT
 //   tbs:              Windows' TPM Base Services: not done (Tbsi_Context_Create
-//                     and Tbsip_Submit_Command would go in tpm2/src/tpmdev.c);
-//                     ERR_UNSUPPORTED
+//                     and Tbsip_Submit_Command, from tbs.dll); ERR_UNSUPPORTED
 //
 // A Tpm is a fixed-size handle: the transport, its sockets or file, the
 // last response code (rc) and what the transport said (io).
@@ -25,11 +24,8 @@ namespace tpm2;
 
 import std;
 import net;
+import sys;
 import tpm2;
-
-extern fn tpm2dev_open(path: const u8[:]) -> i64;
-extern fn tpm2dev_transmit(fd: i64, cmd: const u8[:], out: u8[:]) -> i64;
-extern fn tpm2dev_close(fd: i64);
 
 let TRANSPORT_TCP:    i64 = 1;
 let TRANSPORT_MSSIM:  i64 = 2;
@@ -110,7 +106,7 @@ fn open(spec: const u8[:], timeout_ms: i32 = 30000) -> Tpm, i64 {
         return t, OK;
     }
     if starts_with(spec, "device:") {
-        let fd = tpm2dev_open(spec[7..]);
+        let fd = sys::open(spec[7..], sys::O_RDWR, 0);
         if fd < 0 { t.io = fd; return t, ERR_TRANSPORT; }
         t.fd = fd;
         t.kind = TRANSPORT_DEVICE;
@@ -118,6 +114,15 @@ fn open(spec: const u8[:], timeout_ms: i32 = 30000) -> Tpm, i64 {
     }
     if starts_with(spec, "tbs:") { return t, ERR_UNSUPPORTED; }
     return t, ERR_ARG;
+}
+
+// The kernel takes one command per write and gives its response to the
+// next read: the response's length, or sys's error (a short write is EIO).
+fn device_transmit(fd: i64, cmd: const u8[:], out: u8[:]) -> i64 {
+    let w = sys::write(fd, cmd);
+    if w < 0 { return w; }
+    if w != cmd.len { return -5; }
+    return sys::read(fd, out);
 }
 
 // An mssim platform signal: false unless the simulator acknowledges it with 0.
@@ -133,7 +138,7 @@ fn close(t: Tpm&) {
         write_u32(t, t.fd, MSSIM_SESSION_END);
         write_u32(t, t.pfd, MSSIM_SESSION_END);
     }
-    if t.kind == TRANSPORT_DEVICE { tpm2dev_close(t.fd); }
+    if t.kind == TRANSPORT_DEVICE { sys::close(t.fd); }
     else {
         net::close(t.fd);
         net::close(t.pfd);
@@ -152,7 +157,7 @@ fn transmit(t: Tpm&, cmd: const u8[:]) -> u8[>..], i64 {
     if t.kind == 0 { return rsp, ERR_TRANSPORT; }
     if t.kind == TRANSPORT_DEVICE {
         rsp.resize(MAX_RESPONSE + 1, 0);
-        let n = tpm2dev_transmit(t.fd, cmd, rsp);
+        let n = device_transmit(t.fd, cmd, rsp);
         if n < 0 { t.io = n; rsp.clear(); return rsp, ERR_TRANSPORT; }
         rsp.resize(n);
         if n < 10 || n > MAX_RESPONSE || be32(rsp, 2) != n { return rsp, ERR_MALFORMED; }

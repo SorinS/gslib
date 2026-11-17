@@ -13,6 +13,11 @@ int64_t gssys_getegid(void) { return GSSYS_ENOTSUP; }
 int64_t gssys_getgroups(gs_rref out) { (void)out; return GSSYS_ENOTSUP; }
 int64_t gssys_chown(gssys_slice path, int64_t uid, int64_t gid) { (void)path; (void)uid; (void)gid; return GSSYS_ENOTSUP; }
 int64_t gssys_lchown(gssys_slice path, int64_t uid, int64_t gid) { (void)path; (void)uid; (void)gid; return GSSYS_ENOTSUP; }
+int64_t gssys_set_nonblock(int64_t fd, int32_t on) { (void)fd; (void)on; return GSSYS_ENOTSUP; }
+int64_t gssys_poll(gssys_i64s fds, gssys_i64s events, int64_t timeout_ms) { (void)fds; (void)events; (void)timeout_ms; return GSSYS_ENOTSUP; }
+int64_t gssys_fork(void) { return GSSYS_ENOTSUP; }
+int64_t gssys_exit_now(int32_t code) { (void)code; return GSSYS_ENOTSUP; }
+int64_t gssys_reap(void) { return GSSYS_ENOTSUP; }
 int64_t gssys_signal_notify(int32_t sig) { (void)sig; return GSSYS_ENOTSUP; }
 int64_t gssys_signal_ignore(int32_t sig) { (void)sig; return GSSYS_ENOTSUP; }
 int64_t gssys_signal_reset(int32_t sig) { (void)sig; return GSSYS_ENOTSUP; }

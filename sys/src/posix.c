@@ -673,6 +673,8 @@ int64_t gssys_open(gssys_slice path, int64_t flags, int64_t mode) {
     if (flags & GO_EXCL) f |= O_EXCL;
     if (flags & GO_TRUNC) f |= O_TRUNC;
     if (flags & GO_SYNC) f |= O_SYNC;
+    if (flags & GO_NOFOLLOW) f |= O_NOFOLLOW;
+    if (flags & GO_NONBLOCK) f |= O_NONBLOCK;
     f |= O_CLOEXEC;
     char *p = cstr(path);
     if (!p) return -EINVAL;

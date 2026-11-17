@@ -15,6 +15,7 @@ struct Stat: kind mode size nlink uid gid dev ino atime_ns mtime_ns ctime_ns bti
 struct MemInfo: total available swap_total swap_free
 struct Rlimit: cur max
 struct WinSize: rows cols xpixels ypixels
+struct Child: pid handle stdin_fd stdout_fd stderr_fd pty
 
 # --- Errors and the platform ------------------------------------------------
 all   i32 platform_id()
@@ -32,6 +33,8 @@ all   i64 uptime_ms()
 posix i64 load_avg(out: f64[:])
 all   i64 temp_dir(out: u8[>..]&)
 all   i64 home_dir(out: u8[>..]&)
+all   i64 os_info(out: u8[>..]&)
+all   i64 boot_time()
 
 # --- This process -------------------------------------------------------------
 all   i64 getpid()
@@ -93,6 +96,21 @@ all   i64 lock(fd: i64, how: i32)
 all   i64 pipe(fds: i64[:])
 all   i64 std_fd(n: i32)
 all   i64 isatty(fd: i64)
+all   i64 is_private(fd: i64)
+all   i64 available(fd: i64)
+posix i64 set_nonblock(fd: i64, on: i32)
+posix i64 poll(fds: i64[:], events: i64[:], timeout_ms: i64)
+
+# --- Child processes (process.goose) ------------------------------------------
+all   i64 spawn(path: const u8[:], args: const u8[:], env: const u8[:], dir: const u8[:], flags: i64, stdio: i64[:], size: i64[:], out: Child&)
+all   i64 child_wait(c: Child&, timeout_ms: i64, status: i64[:])
+all   i64 child_kill(c: Child&, sig: i32)
+all   i64 child_release(c: Child&)
+all   i64 pty_resize(c: Child&, cols: i64, rows: i64)
+all   i64 pty_close(c: Child&)
+posix i64 fork()
+posix i64 exit_now(code: i32)
+posix i64 reap()
 
 # --- The Windows registry (registry.goose) --------------------------------------
 win   i64 reg_open(root: i64, path: const u8[:], access: i64)

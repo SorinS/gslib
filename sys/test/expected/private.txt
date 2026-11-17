@@ -1,0 +1,26 @@
+ok   os_info: name, id, pretty
+ok   os_info: the id of this platform
+ok   os_info: a version
+ok   boot_time: before now, by the uptime
+ok   mkdir_temp
+ok   mkdir_temp: private
+ok   create_file
+ok   create_file: never over one that is there
+ok   read_private
+ok   read_private: longer than max, nothing appended
+ok   replace_file
+ok   replace_file: the new data, private
+ok   replace_file: no temporary left beside it
+ok   read_private: a file others can read is refused
+ok   error_text of sys's own errors
+ok   read_private: a directory is refused
+ok   create_file 0644
+ok   read_private: 0644 is refused
+ok   O_NOFOLLOW: a link is refused
+ok   create_file: never through a link
+ok   read_private: never through a link
+ok   create_temp: two new files
+ok   create_temp: the pattern's * replaced
+ok   create_temp: private
+ok   all removed
+all passed
