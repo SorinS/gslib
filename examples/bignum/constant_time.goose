@@ -12,7 +12,7 @@ import gslib.crypto.bignum;
 import gslib.crypto.bignum.ct;
 import gslib.crypto.bignum.mont;
 import gslib.crypto.bignum.ffdh;
-import gslib.crypto.bignum.entropy;
+import gslib.entropy;
 
 fn fail(what: const u8[:]) { print("constant_time: ", what); exit(1); }
 
@@ -46,7 +46,7 @@ fn main() {
     // prime (what bignum.ffdh does inside): g^e mod p.
     let p = bignum::ffdh_prime(14);
     var e: u8[32] = [0; 32];
-    bignum::random_bytes(e);
+    entropy::random_bytes(e);
     let pm = limbs(p, p.len);
     let gl = limbs("\x02", p.len);
     let el = limbs(e, e.len);

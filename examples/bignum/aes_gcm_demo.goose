@@ -7,7 +7,7 @@ import os;
 import gslib from "../..";
 import gslib.crypto.bignum;
 import gslib.crypto.bignum.gcm;
-import gslib.crypto.bignum.entropy;
+import gslib.entropy;
 
 fn hex(b: const u8[:]) -> u8[>..] {
     var out: u8[>..] = [];
@@ -18,8 +18,8 @@ fn hex(b: const u8[:]) -> u8[>..] {
 fn main() {
     var key:   u8[32] = [0; 32];
     var nonce: u8[12] = [0; 12];
-    bignum::random_bytes(key);
-    bignum::random_bytes(nonce);                         // never reuse one under a key
+    entropy::random_bytes(key);
+    entropy::random_bytes(nonce);                         // never reuse one under a key
     let header = "record 1";
     let sealed = bignum::aes_gcm_seal(key, nonce, header, "meet me at the usual place");
     print("sealed: ", hex(sealed));

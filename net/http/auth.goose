@@ -20,7 +20,7 @@ import crypto.bignum;
 import crypto.bignum.md5;
 import crypto.bignum.sha256;
 import crypto.bignum.sha512;
-import crypto.bignum.entropy;
+import entropy;
 
 // --- Challenges (§11.2, §11.6.1) -------------------------------------------
 
@@ -278,7 +278,7 @@ fn digest_credentials(out: u8[>..]&, params: const u8[:], user: const u8[:], pas
     var cnonce: u8[>..] = [];
     if cnonce0.len > 0 { cnonce.append(cnonce0); } else {
         var r: u8[16] = [0; 16];
-        bignum::random_bytes(r);
+        entropy::random_bytes(r);
         put_hex_lower(cnonce, r);
     }
     var ncs: u8[>..] = [];

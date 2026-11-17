@@ -41,7 +41,7 @@ import crypto.bignum.ed25519;
 import crypto.bignum.sha1;
 import crypto.bignum.sha256;
 import crypto.bignum.sha512;
-import crypto.bignum.entropy;
+import entropy;
 import krb5.crypto;
 import krb5.messages;
 
@@ -185,7 +185,7 @@ fn spake_private(g: const SpakeGroup&) -> u8[>..] {
     var out: u8[>..] = [];
     if g.curve_bits == 255 {
         var r: u8[64] = [0; 64];
-        bignum::random_bytes(r[..]);
+        entropy::random_bytes(r[..]);
         var s = bignum::ed_reduce(r[..]);
         var carry: u8 = 0;
         for i in 32 {
@@ -200,7 +200,7 @@ fn spake_private(g: const SpakeGroup&) -> u8[>..] {
     out.resize(g.mult_len, 0);
     let top_bits = c.bits - 8 * (g.mult_len - 1);
     while true {
-        bignum::random_bytes(out[..]);
+        entropy::random_bytes(out[..]);
         out[0] = out[0] & (((1 << top_bits) - 1) as! u8);
         var k = bignum::ec_zero(c);
         bignum::limbs_from_be(k[..], out[..]);

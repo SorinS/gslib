@@ -3,7 +3,8 @@
 //
 //   - at most max_memory bytes of file contents are kept in memory; a file
 //     that would pass what is left of that goes to a temporary file
-//     (TMPDIR, else /tmp; "multipart-" and 16 random hex digits), all its
+//     (Go's os.TempDir: TMPDIR, else /tmp, and TMP or TEMP on Windows;
+//     "multipart-" and 16 random hex digits), all its
 //     bytes;
 //   - names, values and the headers of files count against max_memory
 //     plus 10 MiB, with Go's overheads (200 bytes a name, 400 + 200 a key
@@ -22,7 +23,7 @@ namespace multipart;
 import std;
 import os;
 import mime;
-import crypto.bignum.entropy;
+import entropy;
 import mime.textproto;
 
 let NEED_MORE: i64 = -1;
@@ -62,7 +63,7 @@ root struct Form {
     // Go's limits, before read_form starts (form_init sets them from max_memory)
     max_parts: i64 = MAX_PARTS,
     max_headers: i64 = MAX_MIME_HEADERS,
-    tmp_dir: u8[>..] = [],               // "" for TMPDIR, else /tmp
+    tmp_dir: u8[>..] = [],               // "" for Go's os.TempDir
     // the reading
     started: bool = false,
     done: bool = false,
@@ -137,8 +138,20 @@ fn fail(f: Form&, code: i64) -> i64 {
     return code;
 }
 
+// Go's os.TempDir: TMPDIR, else /tmp; on Windows GetTempPath's order,
+// TMP, TEMP, USERPROFILE, else the Windows directory.
 fn temp_dir(f: const Form&, out: u8[>..]&) {
     if f.tmp_dir.len > 0 { out.append(f.tmp_dir); return; }
+    if mime::is_windows() {
+        if ::env("TMP", out) && out.len > 0 { return; }
+        out.clear();
+        if ::env("TEMP", out) && out.len > 0 { return; }
+        out.clear();
+        if ::env("USERPROFILE", out) && out.len > 0 { return; }
+        out.clear();
+        out.append("C:\\Windows");
+        return;
+    }
     if !::env("TMPDIR", out) || out.len == 0 { out.clear(); out.append("/tmp"); }
 }
 
@@ -152,7 +165,7 @@ fn start_spill(f: Form&) -> bool {
         if f.spill.len > 0 && f.spill[f.spill.len - 1] != '/' { f.spill.push('/'); }
         f.spill.append("multipart-");
         var rnd: u8[8] = [0; 8];
-        bignum::random_bytes(rnd);
+        entropy::random_bytes(rnd);
         for b in rnd { f.spill.push(mime::LOWERHEX[b >> 4]); f.spill.push(mime::LOWERHEX[b & 15]); }
         let rc = mime::mime_create_private(f.spill, f.text[f.part_start..]);
         if rc == 0 {

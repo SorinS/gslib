@@ -14,7 +14,7 @@ import crypto.bignum.x25519;
 import crypto.bignum.ed25519;
 import crypto.bignum.blake2;
 import crypto.bignum.hmac;
-import crypto.bignum.entropy;
+import entropy;
 
 let SECRETBOX_OVERHEAD: i64 = 16;
 let BOX_ANONYMOUS_OVERHEAD: i64 = 48;
@@ -64,7 +64,7 @@ fn secretbox_open(sealed: const u8[:], nonce: const u8[:], key: const u8[:]) -> 
 // box.GenerateKey: the public key, then the private key.
 fn box_keypair() -> u8[32], u8[32] {
     var sk: u8[32] = [0; 32];
-    random_bytes(sk);
+    entropy::random_bytes(sk);
     return x25519_base(sk), sk;
 }
 
@@ -108,7 +108,7 @@ fn box_seal_anonymous_with(msg: const u8[:], pk: const u8[:], esk: const u8[:]) 
 
 fn box_seal_anonymous(msg: const u8[:], pk: const u8[:]) -> u8[>..] {
     var esk: u8[32] = [0; 32];
-    random_bytes(esk);
+    entropy::random_bytes(esk);
     return box_seal_anonymous_with(msg, pk, esk);
 }
 

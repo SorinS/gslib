@@ -49,7 +49,7 @@ import crypto.x509.cms_env;
 import encoding.asn1;
 import crypto.bignum;
 import crypto.bignum.sha256;
-import crypto.bignum.entropy;
+import entropy;
 import crypto.bignum.ct;
 import net.http;
 import net.http.client;
@@ -357,7 +357,7 @@ fn read_attrs(sd: const x509::SignedData&) -> Attrs, bool {
 // A fresh senderNonce: 16 random bytes (§3.2.1.5).
 fn new_nonce() -> u8[16] {
     var n: u8[16] = [0; 16];
-    bignum::random_bytes(n);
+    entropy::random_bytes(n);
     return n;
 }
 

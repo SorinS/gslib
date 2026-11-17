@@ -34,7 +34,7 @@ import crypto.bignum.ec;
 import crypto.bignum.x25519;
 import crypto.bignum.x448;
 import crypto.bignum.sha256;
-import crypto.bignum.entropy;
+import entropy;
 import compress;
 import compress.flate;
 import compress.deflate;
@@ -262,7 +262,7 @@ fn ephemeral(like: const jwk::Key&) -> jwk::Key {
 fn random(n: i64) -> u8[>..] {
     var b: u8[>..] = [];
     b.resize(n, 0);
-    bignum::random_bytes(b);
+    entropy::random_bytes(b);
     return b;
 }
 

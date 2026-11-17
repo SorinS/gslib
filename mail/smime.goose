@@ -68,8 +68,7 @@ import crypto.x509.pool;
 import crypto.x509.verify;
 import crypto.x509.cms;
 import crypto.x509.cms_env;
-import crypto.bignum;
-import crypto.bignum.entropy;
+import entropy;
 import mail;
 import mail.address;
 import mail.message;
@@ -301,7 +300,7 @@ fn make_boundary(o: const Options&, entity: const u8[:]) -> u8[>..], bool {
     }
     loop {
         var raw: u8[24] = [0; 24];
-        bignum::random_bytes(raw);
+        entropy::random_bytes(raw);
         b.clear();
         b.append("smime-");
         for x in raw { b.push(mime::LOWERHEX[x >> 4]); b.push(mime::LOWERHEX[x & 15]); }

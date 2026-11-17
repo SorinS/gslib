@@ -49,7 +49,7 @@ import crypto.x509.pool;
 import crypto.bignum;
 import crypto.bignum.sha256;
 import crypto.bignum.ct;
-import crypto.bignum.entropy;
+import entropy;
 import jwx;
 
 // --- Names ----------------------------------------------------------------------
@@ -456,7 +456,7 @@ fn conveyance_name(c: i64) -> const u8[:] {
 // 32 random bytes, for a challenge or a user handle.
 fn new_random(out: u8[..64]&) {
     var b: u8[32] = [0; 32];
-    bignum::random_bytes(b);
+    entropy::random_bytes(b);
     out.clear();
     out.append(b);
 }

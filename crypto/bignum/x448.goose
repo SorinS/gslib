@@ -13,7 +13,7 @@ namespace bignum;
 
 import std;
 import crypto.bignum.ct;
-import crypto.bignum.entropy;
+import entropy;
 
 struct Fe448 { v: i64[16] }
 
@@ -388,7 +388,7 @@ fn x448_base(scalar: const u8[:]) -> u8[56] {
 // A fresh key pair from the OS's entropy: private, public.
 fn x448_keypair() -> u8[56], u8[56] {
     var sk: u8[56] = [0; 56];
-    random_bytes(sk);
+    entropy::random_bytes(sk);
     return sk, x448_base(sk);
 }
 

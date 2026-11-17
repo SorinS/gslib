@@ -42,7 +42,7 @@ import crypto.bignum.ed25519;
 import crypto.bignum.rsa;
 import crypto.bignum.mlkem;
 import crypto.bignum.hmac;
-import crypto.bignum.entropy;
+import entropy;
 import encoding.asn1;
 import crypto.x509;
 import crypto.x509.verify;
@@ -297,7 +297,7 @@ fn server_config(chain: const u8[:], key_der: const u8[:]) -> ServerConfig, bool
         suites12: [], alpn: [], seed: 0, now: 0, tickets: 1, ticket_key: [0; 32], chain: [],
         client_auth: NO_CLIENT_CERT, ech_keys: [], client_cas: x509::new_pool(),
     };
-    bignum::random_bytes(s.ticket_key);
+    entropy::random_bytes(s.ticket_key);
     s.suites12.append(DEFAULT_SUITES12);
     if chain.len > s.chain.cap { return s, false; }
     s.chain.append(chain);
@@ -381,7 +381,7 @@ fn new_conn(is_server: bool, seed: u64) -> Conn {
     };
     var seed_bytes: u8[32] = [0; 32];
     if seed == 0 {
-        bignum::random_bytes(seed_bytes);
+        entropy::random_bytes(seed_bytes);
     } else {
         for i in 8 { seed_bytes[i] = (seed >> (8 * i)) as! u8; }
     }

@@ -13,7 +13,7 @@ import gslib.crypto.bignum.aes;
 import gslib.crypto.bignum.camellia;
 import gslib.crypto.bignum.cmac;
 import gslib.crypto.bignum.chacha20;
-import gslib.crypto.bignum.entropy;
+import gslib.entropy;
 
 fn hex(b: const u8[:]) -> u8[>..] {
     var out: u8[>..] = [];
@@ -32,7 +32,7 @@ fn main() {
         exit(1);
     }
     var key: u8[32] = [0; 32];
-    bignum::random_bytes(key);
+    entropy::random_bytes(key);
     let tag = bignum::hmac(256, key, msg);
     print("hmac-sha256     ", hex(tag));
     print("hmac-sha3-256   ", hex(bignum::hmac(bignum::HASH_SHA3_256, key, msg)));
@@ -46,7 +46,7 @@ fn main() {
     // CMAC over a block cipher: the key is expanded once, and the tag may
     // be cut to its leading bytes (8 here).
     var k16: u8[16] = [0; 16];
-    bignum::random_bytes(k16);
+    entropy::random_bytes(k16);
     let aes = bignum::aes_init(k16);
     let full = bignum::cmac(aes, msg);
     let short = full[..8];
@@ -66,7 +66,7 @@ fn main() {
     // Poly1305 is a one-time MAC: a fresh 32-byte key for every message
     // (ChaCha20-Poly1305 derives one per nonce). It streams too.
     var otk: u8[32] = [0; 32];
-    bignum::random_bytes(otk);
+    entropy::random_bytes(otk);
     let p = bignum::poly1305(otk, msg);
     var st = bignum::poly1305_init(otk);
     bignum::poly1305_update(st, msg[..9]);

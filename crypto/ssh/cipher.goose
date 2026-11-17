@@ -22,7 +22,7 @@ import crypto.bignum.gcm;
 import crypto.bignum.chacha20;
 import crypto.bignum.hmac;
 import crypto.bignum.ct;
-import crypto.bignum.entropy;
+import entropy;
 
 let CIPHER_NONE: i64 = 0;
 let CIPHER_CHACHA20_POLY1305: i64 = 1;
@@ -166,7 +166,7 @@ fn seal_packet(c: PacketCipher&, payload: const u8[:]) -> u8[>..] {
     out.append(payload);
     let start = out.len;
     out.resize(start + npad, 0);
-    bignum::random_bytes(out[start..]);
+    entropy::random_bytes(out[start..]);
     if c.kind == CIPHER_CHACHA20_POLY1305 {
         let nonce = chacha_nonce(c.seq);
         bignum::chacha20_xor(c.key[32..64], 0, nonce, out[..4]);

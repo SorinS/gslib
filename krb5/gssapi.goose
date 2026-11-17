@@ -22,7 +22,7 @@ import crypto.bignum.md5;
 import crypto.bignum.rc4;
 import crypto.bignum.hmac;
 import crypto.bignum.ct;
-import crypto.bignum.entropy;
+import entropy;
 import krb5.crypto;
 import krb5.messages;
 import krb5.keytab;
@@ -610,7 +610,7 @@ fn rc4_wrap(ctx: GssContext&, msg: const u8[:], conf: bool, out: u8[>..]&) -> i6
     let header: u8[8] = [0x02, 0x01, 0x11, 0x00, s, s2, 0xff, 0xff];
     let seq = rc4_seq(ctx.send_seq, ctx.initiator);
     var data: u8[>..] = [0; 8];
-    bignum::random_bytes(data);
+    entropy::random_bytes(data);
     data.append(msg);
     // One byte of padding, of value 1 (§7.3).
     data.push(1);

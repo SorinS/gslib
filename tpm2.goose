@@ -38,7 +38,7 @@ import crypto.bignum.sha512;
 import crypto.bignum.hmac;
 import crypto.bignum.rsa;
 import crypto.bignum.ec;
-import crypto.bignum.entropy;
+import entropy;
 import crypto.x509;
 import encoding.asn1;
 

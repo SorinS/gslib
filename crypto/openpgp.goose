@@ -47,7 +47,7 @@ import crypto.bignum.hmac;
 import crypto.bignum.kdf;
 import crypto.bignum.argon2;
 import crypto.bignum.ec;
-import crypto.bignum.entropy;
+import entropy;
 
 // --- Errors -------------------------------------------------------------------
 
@@ -310,7 +310,7 @@ fn reversed(s: const u8[:]) -> u8[>..] {
 fn random(n: i64) -> u8[>..] {
     var out: u8[>..] = [];
     out.resize(n, 0);
-    bignum::random_bytes(out);
+    entropy::random_bytes(out);
     return out;
 }
 

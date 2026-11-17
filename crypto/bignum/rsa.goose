@@ -30,7 +30,7 @@ import crypto.bignum.ct;
 import crypto.bignum.mont;
 import crypto.bignum.sha256;
 import crypto.bignum.hmac;
-import crypto.bignum.entropy;
+import entropy;
 
 // Little-endian limbs, normalized: n, p and q have no zero top limb, and
 // each exponent and qinv is padded to its modulus' width (d to n's, dp and
@@ -280,7 +280,7 @@ fn small_primes() -> u32[>..] {
 fn random_bits_vartime(bits: i64) -> BigInt {
     var b: u8[>..] = [];
     b.resize((bits + 7) / 8, 0);
-    random_bytes(b);
+    entropy::random_bytes(b);
     let extra = 8 * b.len - bits;
     if extra > 0 { b[0] = b[0] & (255 >> extra) as! u8; }
     return from_bytes_be(b);
@@ -305,7 +305,7 @@ fn random_below(r: u32[:], m: const u32[:]) {
     var b: u8[>..] = [];
     b.resize(4 * m.len, 0);
     loop {
-        random_bytes(b);
+        entropy::random_bytes(b);
         limbs_from_be(r, b);
         if top < 32 { r[m.len - 1] = r[m.len - 1] & ((1 << top) - 1) as! u32; }
         if (ct_lt(r, m) & (ct_is_zero(r) ^ 1)) == 1 { return; }
@@ -394,7 +394,7 @@ fn rsa_random_prime(limbs: i64, e: const u32[:], primes: const u32[:]) -> u32[>.
     var t = zero_limbs(1);
     var inv = zero_limbs(1);
     loop {
-        random_bytes(b);
+        entropy::random_bytes(b);
         limbs_from_be(p, b);
         p[limbs - 1] = p[limbs - 1] | 0xc0000000;
         p[0] = p[0] | 3;
@@ -773,7 +773,7 @@ fn rsa_sign_pss(key: const RsaPrivateKey&, msg: const u8[:], salt_len: i64 = -1,
         -> u8[>..], bool {
     var salt: u8[>..] = [];
     salt.resize(if salt_len < 0 { hash_len(hash) } else { salt_len }, 0);
-    random_bytes(salt);
+    entropy::random_bytes(salt);
     return rsa_sign_pss_with_salt(key, msg, salt, hash);
 }
 
@@ -781,7 +781,7 @@ fn rsa_sign_pss_digest(key: const RsaPrivateKey&, digest: const u8[:], salt_len:
         -> u8[>..], bool {
     var salt: u8[>..] = [];
     salt.resize(if salt_len < 0 { hash_len(hash) } else { salt_len }, 0);
-    random_bytes(salt);
+    entropy::random_bytes(salt);
     return rsa_sign_pss_digest_with_salt(key, digest, salt, hash);
 }
 
@@ -849,7 +849,7 @@ fn rsa_encrypt_oaep_with_seed(key, msg: const u8[:], label: const u8[:], seed: c
 fn rsa_encrypt_oaep(key, msg: const u8[:], label: const u8[:] = "", hash: i64 = 256) -> u8[>..] {
     var seed: u8[>..] = [];
     seed.resize(hash_len(hash), 0);
-    random_bytes(seed);
+    entropy::random_bytes(seed);
     return rsa_encrypt_oaep_with_seed(key, msg, label, seed, hash);
 }
 
@@ -899,12 +899,12 @@ fn rsa_encrypt_pkcs1(key, msg: const u8[:]) -> u8[>..] {
     em.resize(k, 0);
     em[1] = 2;
     let ps = em[2..k - msg.len - 1];
-    random_bytes(ps);
+    entropy::random_bytes(ps);
     // The padding bytes must not be zero: redraw any that are.
     var one: u8[1] = [0; 1];
     for i in ps.len {
         while ps[i] == 0 {
-            random_bytes(one);
+            entropy::random_bytes(one);
             ps[i] = one[0];
         }
     }

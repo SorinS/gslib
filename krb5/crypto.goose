@@ -32,7 +32,7 @@ import crypto.bignum.sha1;
 import crypto.bignum.hmac;
 import crypto.bignum.kdf;
 import crypto.bignum.ct;
-import crypto.bignum.entropy;
+import entropy;
 
 // A key and its encryption type (RFC 4120 §5.2.9's EncryptionKey).
 struct Key { etype: i32, value: u8[..32] }
@@ -662,7 +662,7 @@ fn rc4_decrypt(key: Key, usage: i64, cipher: const u8[:], out: u8[>..]&) -> i64 
 // with the default cipher state), with a fresh random confounder.
 fn encrypt(key: Key, usage: i64, plain: const u8[:], out: u8[>..]&) -> i64 {
     var conf: u8[16] = [0; 16];
-    bignum::random_bytes(conf);
+    entropy::random_bytes(conf);
     return encrypt_with(key, usage, conf[..confounder_len(key.etype)], plain, out);
 }
 
@@ -817,7 +817,7 @@ fn verify_checksum(key: Key, ctype: i32, usage: i64, data: const u8[:], sum: con
 // A fresh random key of type e (a session key or subkey).
 fn random_key(e: i32) -> Key {
     var r: u8[32] = [0; 32];
-    bignum::random_bytes(r);
+    entropy::random_bytes(r);
     if e == ETYPE_RC4_HMAC { return make_key(e, r[..16]); }
     return random_to_key(e, r[..seed_len(e)]);
 }

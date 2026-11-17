@@ -8,6 +8,7 @@ later.
 
 | Library | What | |
 |---|---|---|
+| `entropy` | Random bytes for keys from the operating system, as Go's crypto/rand: getentropy, or BCryptGenRandom on Windows; what every library that makes keys, nonces or salts uses, and a program can swap for its own (a fixed generator for tests, a TPM, an HSM) | [README](entropy/README.md) |
 | `crypto/bignum` | Integers of any size, constant-time arithmetic, and cryptography: AES, Camellia, ChaCha20, the SHA-1/2/3 and BLAKE2 hashes, HMAC, CMAC, AES Key Wrap (RFC 3394 and 5649, used by jwx), HKDF, PBKDF2, scrypt, Argon2, bcrypt, RSA, DSA, ECDH and ECDSA (P-224 to P-521, brainpoolP256r1/384r1/512r1), X25519, Ed25519, X448, Ed448, ML-KEM, ML-DSA, SLH-DSA, HPKE, NaCl, the legacy ciphers | [README](crypto/bignum/README.md) |
 | `encoding/asn1` | DER and BER reading and writing, PEM | [README](encoding/asn1/README.md) |
 | `crypto/x509` | Certificates: parsing, path building and verification, name constraints, policies, system roots, creating certificates, CSRs and CRLs, OCSP, PKCS #12; brainpool, Ed448 and X448 keys and signatures; post-quantum ML-DSA and SLH-DSA keys and signatures, ML-KEM keys, CMS with ML-DSA, Ed448 and brainpool signers and ML-KEM, X448 and brainpool recipients | [README](crypto/x509/README.md) |
@@ -40,11 +41,35 @@ later.
 | `sys` | The operating system's own calls, as Go's golang.org/x/sys, os/user and x/term with go-win64api's Windows management, on Windows, Linux and macOS: the host, processes (list, arguments, executable, kill), users and groups, files by path and by descriptor (stat, links, locks, pipes, memory maps), errors sorted portably; the Windows registry; local accounts and groups, sessions, services, shares and installed software; signals as values, limits, usage and sysctl; terminals and consoles; its FFI generated from one table, as mksyscall | [README](sys/README.md) |
 | `sspi` | Windows' SSPI, as Go's alexbrainman/sspi: security packages, credentials (the login's or a password's), contexts a token at a time, sign/verify/seal/unseal; a TLS client on Windows' own Schannel (the system's roots, policy and TLS 1.3, peer certificate for x509, manual validation for test servers); HTTP Negotiate (RFC 4559) from the Windows login, Kerberos in a domain and NTLM otherwise, or as a user by password | [README](sspi/README.md) |
 
-## dns, pkcs11, jwx, mail, openpgp, acme, oauth, tsp, xml, est, scep, saml, ntlm, tpm2, webauthn, service, sys and sspi
+## entropy, dns, pkcs11, jwx, mail, openpgp, acme, oauth, tsp, xml, est, scep, saml, ntlm, tpm2, webauthn, service, sys and sspi
 
-These eighteen have the most to say beyond their table rows: what each
+These nineteen have the most to say beyond their table rows: what each
 module does, how it was built and how it was tested. Each README has the
 full API.
+
+### entropy: random bytes for secrets
+
+Every key, nonce, salt and token gslib makes comes from
+`entropy::random_bytes`, which reads the operating system's
+cryptographically secure generator: getentropy on macOS, Linux and the
+BSDs (with /dev/urandom for kernels that lack it) and BCryptGenRandom on
+Windows, linked the ordinary way so nothing is looked up at run time. It
+stops the program if the OS gives nothing, since carrying on with a key
+that is not random is worse; `try_random_bytes` reports instead. It used
+to be bignum's, which reached getentropy through the C library and so had
+no Windows at all; as a package of its own it works on all three
+platforms, and dns takes its message IDs from it too, where they used to
+come from the seed of std's generator.
+
+It is also the one place a program can change where randomness comes
+from. Goose has no interfaces, but a program's root file chooses its
+packages, and in the standalone repositories bignum, tls, x509 and the
+rest import `entropy` by name alone. A root that declares its own package
+named entropy, with a `random_bytes` of the same shape, gets that one
+everywhere: a fixed generator for tests that compare against recorded
+output, or a TPM's or an HSM's generator. Tested under the JIT and built
+natively on macOS, Linux and Windows Server 2022; a trial of the split
+repositories ran tls's tests with a replacement declared in their root.
 
 ### dns: the DNS
 
@@ -903,6 +928,7 @@ gslib.goose, gslib.build              the package's entry and its sidecar
 <group>/<lib>/scripts                 its test runners, differentials, interop
 <group>/<lib>/README.md               its documentation
 compress.goose, compress/             compress, laid out the same way at the top
+entropy.goose, entropy/src/           entropy and its C, the same
 net.goose, net/src/                   net's sockets and their C (net/ is also http's and ldap's group)
 mime.goose, mime/                     mime, the same
 mail.goose, mail/                     mail, the same
@@ -935,7 +961,10 @@ examples into its repository beside gslib.git and rewrites the imports
 for a package of its own (`import gslib.crypto.tls.handshake;` becomes
 `import tls.handshake;`, and a library that needs another declares it, as
 `import bignum from "SorinS/bigmongoose@v0.7.0";`). net and ntlm, which
-http needs, have repositories of their own too (netgoose, ntlmgoose). The
+http needs, have repositories of their own too (netgoose, ntlmgoose), and
+so does entropy (entropygoose), which the libraries import by name alone,
+with no requirement line, so that a program's root can declare another
+package in its place. The
 table at the top of the script maps each library to its repository and
 lists what is left out and why; the dependencies come from the imports,
 and a library needing one with no repository, or a cycle, stops it.
@@ -977,10 +1006,8 @@ its state in a `root struct`. The tests ran with master as it is,
 v2026.3-252-g2ed1a63d, on Linux, and on macOS with v2026.3-254-gd402d2c7,
 master and one fix of TinyCC's arm64 code (dfe35659, for `goose run`).
 
-On Windows, programs that need random bytes (keys, TLS, SSH) fail to
-start until the compiler offers them: bignum reaches `getentropy` through
-libc, which Windows does not have. Executables `goose build` writes there
-also get a 1 MB stack, which some tests overflow.
+On Windows, executables `goose build` writes get a 1 MB stack, which
+some tests overflow.
 
 `net/http/data/public_suffix_list.dat` is publicsuffix.org's list (MPL 2.0),
 built into programs that call `http::psl_builtin`.

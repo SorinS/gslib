@@ -35,8 +35,7 @@
 namespace ntlm;
 
 import std;
-import crypto.bignum;
-import crypto.bignum.entropy;
+import entropy;
 import ntlm.crypto;
 import ntlm.messages;
 import ntlm.session;
@@ -119,7 +118,7 @@ fn set_acceptor_spn(a: Acceptor&, spn: const u8[:], required: bool) -> i64 {
 // time `now` (seconds since 1970).
 fn accept_negotiate(a: Acceptor&, msg: const u8[:], now: i64, out: u8[>..]&) -> i64 {
     var sc: u8[8] = [0; 8];
-    bignum::random_bytes(sc);
+    entropy::random_bytes(sc);
     return accept_negotiate_with(a, msg, sc, filetime(now), out);
 }
 

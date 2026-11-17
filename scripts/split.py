@@ -12,7 +12,8 @@ rewrites what differs there:
   package's own (`import crypto.tls.record;` -> `import record;`), and
   other libraries become the dependency's package (`import
   crypto.bignum.hmac;` -> `import bignum.hmac;`), with a requirement line
-  in the entry file (`import bignum from "...";`);
+  in the entry file (`import bignum from "...";`), except for the
+  packages in SWAPPABLE, which are imported by name only;
 - root files (tests, tools, examples): `import gslib from "...";` becomes
   the declarations of the package itself and of every package it needs,
   directly or not, and `import gslib.crypto.tls.handshake;` becomes
@@ -73,6 +74,7 @@ TEMPLATE_COPYRIGHT = "Copyright [yyyy] [name of copyright owner]"
 # it is in gslib, the entry being <path>.goose. A library a split needs
 # must have a row in SPLITS too.
 LIBRARIES = {
+    "entropy": "entropy",
     "bignum": "crypto/bignum", "x509": "crypto/x509", "tls": "crypto/tls",
     "ssh": "crypto/ssh", "openpgp": "crypto/openpgp",
     "asn1": "encoding/asn1", "yaml": "encoding/yaml", "xml": "encoding/xml",
@@ -85,6 +87,14 @@ LIBRARIES = {
     "service": "service", "sys": "sys", "sspi": "sspi",
 }
 
+# Packages the libraries import by name only, with no requirement line:
+# whichever package the program's root declares under that name is the
+# one used. A requirement line would make any other source an error
+# ("declared from a different source"), and entropy is meant to be
+# replaced (a fixed generator for tests, a TPM, an HSM). Root files still
+# declare it, as they declare every package they need.
+SWAPPABLE = {"entropy"}
+
 # The repositories, one row each:
 #   repo      the directory beside gslib.git, without .git, and the GitHub name
 #   new       created (git init) when missing
@@ -96,6 +106,23 @@ LIBRARIES = {
 #   readme    the README, when gslib has none for the library ({tag}: the tag)
 #   note      a paragraph added to the README's end
 SPLITS = {
+    "entropy": dict(
+        repo="entropygoose", new=True, subdirs=["src", "scripts", "test", "README.md"],
+        sidecar=(
+            "// entropy's sidecar: the OS's random bytes (src/entropy.c), compiled\n"
+            "// only into programs that call them. Windows: BCryptGenRandom.\n"
+            "c_sources = [\"src/entropy.c\"];\n"
+            "c_libs_windows = [\"bcrypt\"];\n"
+            "\n"
+            "// Programs, not the package's modules.\n"
+            "exclude = [\"examples\", \"test\", \"scripts\"];\n"),
+        gitignore=["__pycache__/"],
+        fixups=[
+            ("entropy.goose", "The C is\n// entropy/src/entropy.c,", "The C is\n// src/entropy.c,"),
+            ("entropy.goose", "//   import entropy;        // from a program; `import entropy;` inside gslib",
+             "//   import entropy;        // in a program whose root declares entropy"),
+        ],
+    ),
     "net": dict(
         repo="netgoose", new=True, subdirs=["src", "scripts", "test"],
         sidecar=(
@@ -155,11 +182,6 @@ SPLITS = {
     ),
     "bignum": dict(
         repo="bigmongoose",
-        sidecar=(
-            "// bignum's sidecar: the C library that entropy.goose's extern \"c\" block\n"
-            "// opens. \"c\" is libc.dylib on macOS as it stands; Linux's libc.so is a\n"
-            "// linker script, so name the library itself.\n"
-            "dylibs_linux = [\"c=libc.so.6\"];\n"),
         fixups=[
             ("README.md", "gslib's `examples/factorial.goose`", "`examples/factorial.goose`"),
             ("scripts/ct_audit.py", 'os.path.join(ROOT, "..", "bignum.goose")', 'os.path.join(ROOT, "bignum.goose")'),
@@ -542,7 +564,7 @@ def rewrite_script(text, lib):
 def rewrite_library_module(text, ctx, lib, gpath):
     """A module of the library: package-relative imports, requirements in the entry."""
     is_entry = gpath == lib.path + ".goose"
-    deps = ctx.ordered(ctx.lib_deps[lib.name])
+    deps = ctx.ordered(ctx.lib_deps[lib.name] - SWAPPABLE)
     out, req_at, seen_req = [], None, set()
     for line in text.splitlines(True):
         m = IMPORT_RE.match(line.rstrip("\n"))
@@ -560,6 +582,9 @@ def rewrite_library_module(text, ctx, lib, gpath):
             continue
         if other not in SPLITS:
             die(f"{gpath}: import {mod}: {other} has no repository")
+        if other in SWAPPABLE:
+            out.append(f"{ind}import {rename(mod, other)};{tail}\n")
+            continue
         if is_entry and mod == dotted(LIBRARIES[other]):
             # The requirement imports the entry: this line becomes it.
             if req_at is None:

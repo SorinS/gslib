@@ -23,8 +23,7 @@ import gslib.tpm2.session;
 import gslib.tpm2.commands;
 import gslib.tpm2.policy;
 import gslib.tpm2.attest;
-import gslib.crypto.bignum;
-import gslib.crypto.bignum.entropy;
+import gslib.entropy;
 
 fn die(t: const tpm2::Tpm&, what: const u8[:], e: i64) {
     if e != tpm2::OK { print(what, ": ", tpm2::describe(t, e)); exit(1); }
@@ -50,7 +49,7 @@ fn main() {
 
     // Verifier: a secret for the AK's Name, to the EK.
     var secret: u8[32] = [0; 32];
-    bignum::random_bytes(secret);
+    entropy::random_bytes(secret);
     let cred, ec = tpm2::make_credential(ek.public, ak.name, secret);
     die(t, "MakeCredential", ec);
 
@@ -65,7 +64,7 @@ fn main() {
 
     // Verifier: a nonce. Attester: a quote of PCRs 0-7 and its PCR values.
     var nonce: u8[16] = [0; 16];
-    bignum::random_bytes(nonce);
+    entropy::random_bytes(nonce);
     let sel = [tpm2::PcrSel { hash: tpm2::ALG_SHA256, mask: 0xff }];
     let q, eq = tpm2::quote(t, tpm2::object_of(ak), pw, nonce, tpm2::ALG_NULL, tpm2::ALG_SHA256, sel);
     die(t, "Quote", eq);

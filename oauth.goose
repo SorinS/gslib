@@ -46,7 +46,7 @@ import jwx.jwt;
 import crypto.bignum;
 import crypto.bignum.sha256;
 import crypto.bignum.hmac;
-import crypto.bignum.entropy;
+import entropy;
 import crypto.tls;
 import crypto.tls.handshake;
 import net.http;
@@ -304,7 +304,7 @@ fn now_s(c: const Client&) -> i64 { if c.now != 0 { c.now } else { time_ns() / 1
 fn random_string(n: i64) -> u8[>..] {
     var b: u8[64] = [0; 64];
     let k = min(n, 64);
-    bignum::random_bytes(b[..k]);
+    entropy::random_bytes(b[..k]);
     return jwx::b64_encode(b[..k]);
 }
 

@@ -53,8 +53,7 @@ namespace pgp;
 
 import std;
 import mime;
-import crypto.bignum;
-import crypto.bignum.entropy;
+import entropy;
 import crypto.openpgp;
 import crypto.openpgp.armor;
 import crypto.openpgp.packet;
@@ -220,7 +219,7 @@ fn make_boundary(o: Options, entity: const u8[:]) -> u8[>..], bool {
     loop {
         b.clear();
         var r: u8[24] = [0; 24];
-        bignum::random_bytes(r);
+        entropy::random_bytes(r);
         b.append("pgp-");
         openpgp::hex_append(b, r, false);
         if find(entity, b) < 0 { return b, true; }

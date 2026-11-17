@@ -24,7 +24,7 @@ import crypto.bignum.chacha20;
 import crypto.bignum.x25519;
 import crypto.bignum.ec;
 import crypto.bignum.mlkem;
-import crypto.bignum.entropy;
+import entropy;
 
 let HPKE_MODE_BASE: i64 = 0;
 let HPKE_MODE_PSK: i64 = 1;
@@ -315,7 +315,7 @@ fn hpke_derive_key_pair(kem: i64, ikm: const u8[:]) -> u8[>..], u8[>..] {
 fn hpke_keygen(kem: i64) -> u8[>..], u8[>..] {
     var ikm: u8[>..] = [];
     ikm.resize(64, 0);
-    random_bytes(ikm);
+    entropy::random_bytes(ikm);
     return hpke_derive_key_pair(kem, ikm);
 }
 
@@ -323,15 +323,15 @@ fn hpke_keygen(kem: i64) -> u8[>..], u8[>..] {
 // material, ML-KEM's message, or a hybrid's message and curve key.
 fn hpke_encap_rand(kem: i64) -> u8[>..] {
     var r: u8[>..] = [];
-    if hpke_is_dh(kem) { r.resize(hpke_dh_nsk(kem), 0); random_bytes(r); return r; }
+    if hpke_is_dh(kem) { r.resize(hpke_dh_nsk(kem), 0); entropy::random_bytes(r); return r; }
     r.resize(32, 0);
-    random_bytes(r);
+    entropy::random_bytes(r);
     if hpke_is_mlkem(kem) { return r; }
     let dh = hpke_dh_of(kem);
     var t: u8[>..] = [];
     t.resize(hpke_dh_nsk(dh), 0);
     loop {
-        random_bytes(t);
+        entropy::random_bytes(t);
         let pk, ok = hpke_dh_public(dh, t);
         if ok { break; }
     }

@@ -8,7 +8,6 @@
 import std;
 import gslib from "../../..";
 import gslib.crypto.ssh;
-import gslib.crypto.bignum;
 import gslib.encoding.asn1;
 import gslib.crypto.x509;
 import gslib.crypto.ssh.cipher;
@@ -27,13 +26,13 @@ fn pair(cipher: const u8[:], mac: const u8[:]) -> ssh::PacketCipher, ssh::Packet
     let h, ml, etm, okm = ssh::mac_sizes(mac);
     var key: u8[>..] = [];
     key.resize(kl, 0);
-    bignum::random_bytes(key);
+    entropy::random_bytes(key);
     var iv: u8[>..] = [];
     iv.resize(il, 0);
-    bignum::random_bytes(iv);
+    entropy::random_bytes(iv);
     var mk: u8[>..] = [];
     mk.resize(ml, 0);
-    bignum::random_bytes(mk);
+    entropy::random_bytes(mk);
     let a = ssh::packet_cipher(cipher, mac, key, iv, mk);
     let b = ssh::packet_cipher(cipher, mac, key, iv, mk);
     return a, b;

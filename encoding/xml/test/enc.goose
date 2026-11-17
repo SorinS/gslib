@@ -17,7 +17,7 @@ import gslib.crypto.x509;
 import gslib.crypto.x509.keys;
 import gslib.crypto.bignum;
 import gslib.crypto.bignum.gcm;
-import gslib.crypto.bignum.entropy;
+import gslib.entropy;
 
 var failures = 0;
 var checks = 0;
@@ -219,9 +219,9 @@ fn crafted(plain: const u8[:], type_uri: const u8[:]) -> u8[>..] {
     let cert = cert_of(RSA_CRT);
     let pub, okp = x509::rsa_public_key(cert);
     var cek: u8[16] = [0; 16];
-    bignum::random_bytes(cek);
+    entropy::random_bytes(cek);
     var iv: u8[12] = [0; 12];
-    bignum::random_bytes(iv);
+    entropy::random_bytes(iv);
     var ct: u8[>..] = [];
     ct.append(iv);
     ct.append(bignum::aes_gcm_seal(cek, iv, "", plain));

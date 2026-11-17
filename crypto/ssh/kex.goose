@@ -16,7 +16,7 @@ import crypto.bignum.ec;
 import crypto.bignum.mlkem;
 import crypto.bignum.hmac;
 import crypto.bignum.ffdh;
-import crypto.bignum.entropy;
+import entropy;
 import crypto.x509;
 import crypto.ssh.keys;
 
@@ -75,10 +75,10 @@ fn kex_method(name: const u8[:]) -> Kex, bool {
 fn kex_keygen(k: Kex&) {
     k.mine.clear();
     if k.method == KEX_CURVE25519 || k.method == KEX_MLKEM768X25519 {
-        bignum::random_bytes(k.x25519_sk);
+        entropy::random_bytes(k.x25519_sk);
         let pk = bignum::x25519_base(k.x25519_sk);
         if k.method == KEX_MLKEM768X25519 {
-            bignum::random_bytes(k.mlkem_seed);
+            entropy::random_bytes(k.mlkem_seed);
             let ek, dk = bignum::mlkem_keys_from_seed(3, k.mlkem_seed);
             k.mine.append(ek);
         }
@@ -88,7 +88,7 @@ fn kex_keygen(k: Kex&) {
         var sk: u8[>..] = [];
         sk.resize(c.len, 0);
         loop {
-            bignum::random_bytes(sk);
+            entropy::random_bytes(sk);
             let s, ok = bignum::ec_scalar(c, sk);
             if ok { break; }
         }
@@ -155,9 +155,9 @@ fn kex_server_secret(k: Kex&, theirs: const u8[:]) -> u8[>..], bool {
     if k.method == KEX_MLKEM768X25519 {
         if theirs.len != 1184 + 32 { return out, false; }
         var m: u8[32] = [0; 32];
-        bignum::random_bytes(m);
+        entropy::random_bytes(m);
         let s1, ct, ok1 = bignum::mlkem_encaps_with(3, theirs[..1184], m);
-        bignum::random_bytes(k.x25519_sk);
+        entropy::random_bytes(k.x25519_sk);
         let pk = bignum::x25519_base(k.x25519_sk);
         let s2, ok2 = bignum::x25519_shared(k.x25519_sk, theirs[1184..]);
         if !ok1 || !ok2 { return out, false; }

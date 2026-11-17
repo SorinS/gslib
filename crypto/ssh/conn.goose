@@ -38,7 +38,7 @@ import crypto.bignum;
 import crypto.bignum.hmac;
 import crypto.bignum.ct;
 import crypto.bignum.bcrypt;
-import crypto.bignum.entropy;
+import entropy;
 import crypto.x509;
 
 let VERSION: const u8[:] = "SSH-2.0-Goose";
@@ -505,7 +505,7 @@ fn send_kexinit_lists(c: Conn&, lists: const u8[:], out: u8[>..]&) {
     var b: u8[>..] = [];
     b.push(MSG_KEXINIT);
     var cookie: u8[16] = [0; 16];
-    bignum::random_bytes(cookie);
+    entropy::random_bytes(cookie);
     b.append(cookie);
     b.append(lists);
     c.my_kexinit.clear();
@@ -927,7 +927,7 @@ fn known_hosts_line(cfg: const ClientConfig&, k: const PublicKey&, hash: bool) -
     let name = known_host_name(cfg);
     if hash {
         var salt: u8[20] = [0; 20];
-        bignum::random_bytes(salt);
+        entropy::random_bytes(salt);
         out.append("|1|");
         base64::encode(out, salt);
         out.push('|');

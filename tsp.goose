@@ -272,7 +272,7 @@ fn read_int_into(d: const u8[:], t: asn1::Tlv, out: u8[..32]&) -> bool {
 fn random_int(n: i64) -> u8[>..] {
     var b: u8[>..] = [];
     b.resize(n, 0);
-    bignum::random_bytes(b);
+    entropy::random_bytes(b);
     b[0] = (b[0] & 0x7f) | 0x01;
     return b;
 }

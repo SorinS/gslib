@@ -1,0 +1,7 @@
+ok   random_bytes fills 32 bytes
+ok   random_bytes fills 1000 bytes, every part
+ok   two draws differ
+ok   try_random_bytes
+ok   an empty slice
+ok   a part of a buffer, and nothing beside it
+ok   64 KiB: every byte value about equally often

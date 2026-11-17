@@ -24,7 +24,7 @@ import crypto.bignum.sha256;
 import crypto.bignum.sha512;
 import crypto.bignum.sha3;
 import crypto.bignum.hmac;
-import crypto.bignum.entropy;
+import entropy;
 
 // The parameter sets, in the order of their OIDs (2.16.840.1.101.3.4.3.20
 // to .31: the set's number plus 19).
@@ -1134,7 +1134,7 @@ fn slhdsa_key_from_seed(set: i64, seed: const u8[:]) -> u8[>..], u8[>..] {
 fn slhdsa_keygen(set: i64) -> u8[>..], u8[>..] {
     var seed: u8[>..] = [];
     seed.resize(slhdsa_seed_len(set), 0);
-    random_bytes(seed);
+    entropy::random_bytes(seed);
     let sk, pk = slhdsa_key_from_seed(set, seed);
     return sk, pk;
 }
@@ -1234,7 +1234,7 @@ fn slh_pure_msg(msg: const u8[:], ctx: const u8[:]) -> u8[>..], bool {
 fn slhdsa_sign(set: i64, sk: const u8[:], msg: const u8[:], ctx: const u8[:] = "") -> u8[>..] {
     var rnd: u8[>..] = [];
     rnd.resize(slhdsa_n(set), 0);
-    random_bytes(rnd);
+    entropy::random_bytes(rnd);
     return slhdsa_sign_with(set, sk, msg, ctx, rnd);
 }
 
@@ -1305,7 +1305,7 @@ fn slhdsa_hash_sign_with(set: i64, sk: const u8[:], msg: const u8[:], ph: i64, c
 fn slhdsa_hash_sign(set: i64, sk: const u8[:], msg: const u8[:], ph: i64, ctx: const u8[:] = "") -> u8[>..] {
     var rnd: u8[>..] = [];
     rnd.resize(slhdsa_n(set), 0);
-    random_bytes(rnd);
+    entropy::random_bytes(rnd);
     return slhdsa_hash_sign_with(set, sk, msg, ph, ctx, rnd);
 }
 

@@ -9,7 +9,7 @@ import os;
 import gslib from "../..";
 import gslib.crypto.bignum;
 import gslib.crypto.bignum.chacha20;
-import gslib.crypto.bignum.entropy;
+import gslib.entropy;
 
 fn hex(b: const u8[:]) -> u8[>..] {
     var out: u8[>..] = [];
@@ -26,7 +26,7 @@ fn counter_nonce(n: u64) -> u8[12] {
 
 fn main() {
     var key: u8[32] = [0; 32];
-    bignum::random_bytes(key);
+    entropy::random_bytes(key);
     let header = "session 7";                // authenticated, not encrypted
 
     // A stream of records, each under the next nonce: the sender seals,
@@ -63,7 +63,7 @@ fn main() {
     // XChaCha20-Poly1305: random 24-byte nonces, safe for many messages
     // under one key with no counter to keep.
     var xnonce: u8[24] = [0; 24];
-    bignum::random_bytes(xnonce);
+    entropy::random_bytes(xnonce);
     let xct = bignum::xchacha20_poly1305_seal(key, xnonce, "", "random nonce, no state");
     let xpt, xok = bignum::xchacha20_poly1305_open(key, xnonce, "", xct);
     guard xok && xpt == "random nonce, no state" else { print("chacha20_poly1305: xchacha round trip failed"); exit(1); }

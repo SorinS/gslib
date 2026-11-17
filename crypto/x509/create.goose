@@ -13,7 +13,7 @@ import encoding.asn1;
 import crypto.x509.keys;
 import crypto.bignum;
 import crypto.bignum.sha1;
-import crypto.bignum.entropy;
+import entropy;
 
 // --- Names --------------------------------------------------------------------
 
@@ -383,7 +383,7 @@ fn create_certificate(t: const Template&, spki: const u8[:], issuer_der: const u
     serial.append(t.serial);
     if serial.len == 0 {
         serial.resize(16, 0);
-        bignum::random_bytes(serial);
+        entropy::random_bytes(serial);
         serial[0] = (serial[0] & 0x7f) | 0x01;               // positive, and 16 bytes long
     }
     let alg_id = sig_alg_id(alg, h);

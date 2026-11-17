@@ -42,7 +42,7 @@ import encoding.xml.enc;
 import crypto.x509;
 import crypto.x509.keys;
 import crypto.bignum;
-import crypto.bignum.entropy;
+import entropy;
 import crypto.bignum.ec;
 import compress;
 import compress.flate;
@@ -299,7 +299,7 @@ fn now_or(configured: i64) -> i64 { if configured != 0 { configured } else { tim
 // bits), an NCName as xs:ID wants.
 fn new_id() -> u8[>..] {
     var r: u8[20] = [0; 20];
-    bignum::random_bytes(r);
+    entropy::random_bytes(r);
     var out: u8[>..] = [];
     out.push('_');
     let hex = "0123456789abcdef";

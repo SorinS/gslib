@@ -150,10 +150,7 @@ made up for the run, under the Negotiate and NTLM schemes, and a wrong
 password is refused.
 
 It passed on Windows Server 2022 with programs built by MSVC, clang-cl and
-MinGW gcc. gslib's TLS server and NTLM acceptor take their keys' entropy
-from bignum's `getentropy`, which Windows does not have, so on Windows the
-check needs bignum's entropy from `os::random_bytes` (a Goose change under
-review).
+MinGW gcc.
 
 Kerberos was tried by hand against an Active Directory domain
 (Windows Server 2022): a service account with the SPN

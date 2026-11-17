@@ -28,8 +28,7 @@ namespace krb5;
 import std;
 import os;
 import encoding.asn1;
-import crypto.bignum;
-import crypto.bignum.entropy;
+import entropy;
 import krb5.crypto;
 import krb5.messages;
 import krb5.config;
@@ -93,7 +92,7 @@ fn kdc_now(s: const Settings&) -> i64, i64 {
 // A nonce of 31 bits: some KDCs read nonces as signed.
 fn new_nonce() -> u32 {
     var b: u8[4] = [0; 4];
-    bignum::random_bytes(b);
+    entropy::random_bytes(b);
     let b0: u32 = b[0];
     let b1: u32 = b[1];
     let b2: u32 = b[2];

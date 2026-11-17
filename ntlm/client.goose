@@ -22,8 +22,7 @@
 namespace ntlm;
 
 import std;
-import crypto.bignum;
-import crypto.bignum.entropy;
+import entropy;
 import ntlm.crypto;
 import ntlm.messages;
 import ntlm.session;
@@ -86,9 +85,9 @@ fn negotiate(c: Initiator&, out: u8[>..]&) -> i64 {
 // blob's time when the server sent none.
 fn authenticate(c: Initiator&, challenge: const u8[:], now: i64, out: u8[>..]&) -> i64 {
     var cc: u8[8] = [0; 8];
-    bignum::random_bytes(cc);
+    entropy::random_bytes(cc);
     var key: u8[16] = [0; 16];
-    bignum::random_bytes(key);
+    entropy::random_bytes(key);
     return authenticate_with(c, challenge, filetime(now), cc, key, true, out);
 }
 

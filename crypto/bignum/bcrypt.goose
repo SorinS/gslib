@@ -10,7 +10,7 @@ import std;
 import crypto.bignum.ct;
 import crypto.bignum.blowfish;
 import crypto.bignum.sha512;
-import crypto.bignum.entropy;
+import entropy;
 
 let BCRYPT_MIN_COST: i64 = 4;
 let BCRYPT_MAX_COST: i64 = 31;
@@ -107,7 +107,7 @@ fn bcrypt_hash_with(password: const u8[:], cost: i64, salt: const u8[:]) -> u8[>
 
 fn bcrypt_hash(password: const u8[:], cost: i64 = BCRYPT_DEFAULT_COST) -> u8[>..], bool {
     var salt: u8[16] = [0; 16];
-    random_bytes(salt);
+    entropy::random_bytes(salt);
     return bcrypt_hash_with(password, cost, salt);
 }
 

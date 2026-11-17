@@ -20,7 +20,7 @@ import crypto.bignum.mont;
 import crypto.bignum.hmac;
 import crypto.bignum.rsa;
 import crypto.bignum.ec;
-import crypto.bignum.entropy;
+import entropy;
 
 // A key: the domain parameters p, q, g, the public y, and the private x
 // (empty for a public key), big-endian, p g y as wide as p and x as q.

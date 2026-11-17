@@ -26,7 +26,7 @@ import mail;
 import crypto.bignum;
 import crypto.bignum.hmac;
 import crypto.bignum.kdf;
-import crypto.bignum.entropy;
+import entropy;
 import ntlm;
 import ntlm.messages;
 import ntlm.client;
@@ -208,7 +208,7 @@ fn sasl_initial(s: Sasl&, out: u8[>..]&) -> bool {
     if s.mech != AUTH_SCRAM_SHA1 && s.mech != AUTH_SCRAM_SHA256 { return false; }
     if s.nonce.len == 0 {
         var r: u8[18] = [0; 18];
-        bignum::random_bytes(r);
+        entropy::random_bytes(r);
         var n: u8[>..] = [];
         base64::encode(n, r);
         s.nonce.append(n);

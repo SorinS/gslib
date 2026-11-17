@@ -36,7 +36,7 @@ import crypto.bignum.sha3;
 import crypto.bignum.ct;
 import crypto.bignum.dsa;
 import crypto.bignum.hmac;
-import crypto.bignum.entropy;
+import entropy;
 
 // A private key of one of the KEY_* types: an EC scalar (big-endian, the
 // curve's length), an Ed25519 or ML-DSA seed, a DSA key, or an RSA key.

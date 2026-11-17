@@ -187,10 +187,8 @@ tests.
 Tested on macOS (arm64) with Go 1.25 and dig 9.10.6; on Ubuntu 20.04
 (x86-64, Python 3.8) with Go 1.22 and dig 9.18, whose DNS cookies found
 OPT records with options refused by an earlier version of the unpacker;
-and on Windows Server (MSVC, Winsock), where every test but dnssec and
-sig0 passes, the client test against a goose-dnsd built there included:
-those two need crypto/bignum's random bytes, which Windows does not have
-yet (the top README's Requirements).
+and on Windows Server (MSVC, Winsock), dnssec and the client test against
+a goose-dnsd built there included.
 
 ## Departures from miekg
 

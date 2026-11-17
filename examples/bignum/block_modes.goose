@@ -11,7 +11,7 @@ import gslib.crypto.bignum;
 import gslib.crypto.bignum.aes;
 import gslib.crypto.bignum.camellia;
 import gslib.crypto.bignum.modes;
-import gslib.crypto.bignum.entropy;
+import gslib.entropy;
 
 fn hex(b: const u8[:]) -> u8[>..] {
     var out: u8[>..] = [];
@@ -24,9 +24,9 @@ fn fail(what: const u8[:]) { print("block_modes: ", what); exit(1); }
 fn main() {
     let msg = "Attack at dawn; bring the blue folder and two pencils.";
     var key: u8[32] = [0; 32];
-    bignum::random_bytes(key);
+    entropy::random_bytes(key);
     var iv: u8[16] = [0; 16];
-    bignum::random_bytes(iv);
+    entropy::random_bytes(iv);
     let k = bignum::aes_init(key);           // AES-256: the key size picks it
 
     // CBC takes whole blocks: pad, encrypt in place, decrypt, unpad.
@@ -57,7 +57,7 @@ fn main() {
     // XTS: two keys, a sector number as the tweak, whole 16-byte blocks.
     // The same data in two sectors encrypts differently.
     var k2b: u8[32] = [0; 32];
-    bignum::random_bytes(k2b);
+    entropy::random_bytes(k2b);
     let k2 = bignum::aes_init(k2b);
     var s7: u8[512] = [0x55; 512];
     var s8: u8[512] = [0x55; 512];

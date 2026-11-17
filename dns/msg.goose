@@ -21,6 +21,7 @@ import os;
 import dns;
 import dns.rdata;
 import dns.edns;
+import entropy;
 
 // --- Records -------------------------------------------------------------------
 
@@ -637,8 +638,13 @@ fn msg_string(m: const Msg&) -> u8[>..] {
 
 // --- Helpers ---------------------------------------------------------------------
 
-// A random message ID (miekg's Id), from the runtime's entropy.
-fn new_id() -> u16 { (random_seed() & 0xffff) as! u16 }
+// A random message ID (miekg's Id), from the OS's entropy: an ID an
+// off-path attacker could guess is how forged answers get accepted.
+fn new_id() -> u16 {
+    var b: u8[2] = [0; 2];
+    entropy::random_bytes(b);
+    return (b[0] as u16 << 8) | b[1];
+}
 
 // Makes m a query for the text name and type, class IN, recursion desired
 // and a fresh ID (miekg's SetQuestion).

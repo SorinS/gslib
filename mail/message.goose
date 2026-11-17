@@ -41,7 +41,7 @@ import mime.encodedword;
 import mime.quotedprintable;
 import mime.types_builtin;
 import encoding.asn1;
-import crypto.bignum.entropy;
+import entropy;
 import mail;
 import mail.address;
 
@@ -490,7 +490,7 @@ fn msg_defaults(m: Msg&) {
     if !m.has_date { set_date(m, time_ns() / 1000000000); }
     if m.message_id.len == 0 {
         var raw: u8[22] = [0; 22];
-        bignum::random_bytes(raw);
+        entropy::random_bytes(raw);
         for b in raw { m.message_id.push(ID_CHARS[b & 63]); }
     }
     if mime::index_byte(m.message_id, '@') < 0 {
@@ -499,7 +499,7 @@ fn msg_defaults(m: Msg&) {
     }
     if m.boundary.len == 0 {
         var raw: u8[24] = [0; 24];
-        bignum::random_bytes(raw);
+        entropy::random_bytes(raw);
         for b in raw { m.boundary.push(mime::LOWERHEX[b >> 4]); m.boundary.push(mime::LOWERHEX[b & 15]); }
     }
 }

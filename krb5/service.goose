@@ -17,7 +17,7 @@ import std;
 import os;
 import crypto.bignum;
 import crypto.bignum.sha256;
-import crypto.bignum.entropy;
+import entropy;
 import krb5.crypto;
 import krb5.messages;
 import krb5.keytab;
@@ -224,7 +224,7 @@ fn make_krb_error(code: i64, server: const u8[:], realm: const u8[:], now: i64, 
 
 fn random_u32() -> u32 {
     var b: u8[4] = [0; 4];
-    bignum::random_bytes(b);
+    entropy::random_bytes(b);
     let b0: u32 = b[0];
     let b1: u32 = b[1];
     let b2: u32 = b[2];

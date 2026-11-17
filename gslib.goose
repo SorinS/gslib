@@ -23,10 +23,11 @@
 // Windows services, systemd units and launchd jobs (service), and the
 // operating system's own calls: processes, users, files, the Windows
 // registry and management, signals, terminals (sys), and Windows' SSPI:
-// Schannel TLS and Negotiate (Kerberos/NTLM) from the login (sspi). A program
+// Schannel TLS and Negotiate (Kerberos/NTLM) from the login (sspi), with
+// the OS's random bytes for keys under all of it (entropy). A program
 // declares the package once and imports the
 // modules it uses, grouped as Go groups them (compress, crypto/,
-// encoding/, mime, net/; krb5, jwx, pkcs11, dns, mail, acme, oauth, tsp, est, scep, saml, ntlm, tpm2, webauthn, service, sys, sspi and
+// encoding/, mime, net/; krb5, jwx, pkcs11, dns, mail, acme, oauth, tsp, est, scep, saml, ntlm, tpm2, webauthn, service, sys, sspi, entropy and
 // net's sockets at the top too);
 // each keeps its own namespace:
 //

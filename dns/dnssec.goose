@@ -23,7 +23,7 @@ import crypto.bignum;
 import crypto.bignum.rsa;
 import crypto.bignum.ec;
 import crypto.bignum.ed25519;
-import crypto.bignum.entropy;
+import entropy;
 import crypto.bignum.hmac;
 import crypto.bignum.sha256;
 import crypto.bignum.sha512;

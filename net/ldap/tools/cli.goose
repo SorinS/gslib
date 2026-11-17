@@ -20,8 +20,7 @@ import gslib.encoding.asn1;
 import gslib.crypto.x509;
 import gslib.crypto.tls;
 import gslib.crypto.tls.handshake;
-import gslib.crypto.bignum;
-import gslib.crypto.bignum.entropy;
+import gslib.entropy;
 import .sysnet;
 
 // OpenLDAP's ldap_err2string.
@@ -543,7 +542,7 @@ fn bind(o: Opts&, l: Link&, cfg: const tls::ClientConfig&, c: ldap::Conn&) -> i6
                 continue;
             }
             var nonce_bytes: u8[16] = [0; 16];
-            bignum::random_bytes(nonce_bytes);
+            entropy::random_bytes(nonce_bytes);
             let resp, okr = ldap::digest_md5_response(challenge, l.host, o.authcid, o.password, hex_text(nonce_bytes));
             if !okr { let x = fail(o, "DIGEST-MD5: bad challenge"); return ldap::RESULT_DECODING_ERROR; }
             msgs.clear();

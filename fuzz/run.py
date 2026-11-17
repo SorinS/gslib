@@ -56,7 +56,7 @@ BUILD = os.environ.get("FUZZ_BUILD") or os.path.join(FUZZ, "build")
 # gslib's own C, from gslib.build (pkcs11's p11.c needs the runtime's
 # header, and no target loads modules). Linked into every target; only the
 # symbols a target calls are pulled in.
-NATIVE = ["net/src/net.c", "mime/src/path.c", "krb5/src/krb5sys.c", "dns/src/dnsnet.c", "tpm2/src/tpmdev.c"]
+NATIVE = ["entropy/src/entropy.c", "net/src/net.c", "mime/src/path.c", "krb5/src/krb5sys.c", "dns/src/dnsnet.c", "tpm2/src/tpmdev.c"]
 
 GOOSE_RE = re.compile(r"goose runtime error: (.*?)(?: \(([^()]*:\d+)\))?$", re.M)
 FRAME_RE = re.compile(r"#\d+ 0x[0-9a-f]+ in (\S+) (\S+)")

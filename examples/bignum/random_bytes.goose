@@ -1,5 +1,6 @@
-// Randomness for keys: bignum.entropy's random_bytes fills a buffer from
-// the OS (getentropy), for keys, nonces, salts and tokens. std's rng is a
+// Randomness for keys: entropy's random_bytes fills a buffer from the OS
+// (getentropy, or BCryptGenRandom on Windows), for keys, nonces, salts and
+// tokens. std's rng is a
 // fast generator for simulations and tests, never for secrets. Also: a
 // uniform random number below a bound, by rejection, without bias.
 //
@@ -8,7 +9,7 @@ import std;
 import os;
 import gslib from "../..";
 import gslib.crypto.bignum;
-import gslib.crypto.bignum.entropy;
+import gslib.entropy;
 import gslib.crypto.bignum.gcm;
 
 fn hex(b: const u8[:]) -> u8[>..] {
@@ -21,7 +22,7 @@ fn hex(b: const u8[:]) -> u8[>..] {
 fn token() -> u8[>..] {
     let alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     var raw: u8[33] = [0; 33];                 // a multiple of 3: no padding
-    bignum::random_bytes(raw);
+    entropy::random_bytes(raw);
     var out: u8[>..] = [];
     var i = 0;
     while i < raw.len {
@@ -38,7 +39,7 @@ fn below(n: const bignum::BigInt&) -> bignum::BigInt {
     var buf: u8[>..] = [];
     buf.resize((bits + 7) / 8, 0);
     loop {
-        bignum::random_bytes(buf);
+        entropy::random_bytes(buf);
         if bits % 8 != 0 { buf[0] &= ((1 << (bits % 8)) - 1) as! u8; }
         let v = bignum::from_bytes_be(buf);
         if bignum::lt(v, n) { return v; }
@@ -49,8 +50,8 @@ fn main() {
     // Keys and nonces: fixed-size arrays filled in place.
     var key:   u8[32] = [0; 32];
     var nonce: u8[12] = [0; 12];
-    bignum::random_bytes(key);
-    bignum::random_bytes(nonce);
+    entropy::random_bytes(key);
+    entropy::random_bytes(nonce);
     print("aes-256 key ", hex(key));
     print("gcm nonce   ", hex(nonce));
     let sealed = bignum::aes_gcm_seal(key, nonce, "", "random key, random nonce");
@@ -59,13 +60,13 @@ fn main() {
 
     // Two draws never repeat (a repeat of 32 bytes would mean a broken source).
     var again: u8[32] = [0; 32];
-    bignum::random_bytes(again);
+    entropy::random_bytes(again);
     guard again[..] != key[..] else { print("random_bytes: two draws were equal"); exit(1); }
 
     // Any length works; large buffers are filled 256 bytes per OS call.
     var big: u8[>..] = [];
     big.resize(1000, 0);
-    bignum::random_bytes(big);
+    entropy::random_bytes(big);
     var zeros = 0;
     for b in big { if b == 0 { zeros++; } }
     print("1000 random bytes, ", zeros, " of them zero (about 4 expected)");

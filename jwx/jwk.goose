@@ -26,7 +26,7 @@ import crypto.bignum.mldsa;
 import crypto.bignum.hmac;
 import crypto.bignum.sha256;
 import crypto.bignum.sha512;
-import crypto.bignum.entropy;
+import entropy;
 
 // The longest "oct" key: HS512 wants 64 bytes; 512 leaves room for
 // passwords (PBES2) and long HMAC keys.
@@ -151,7 +151,7 @@ fn generate_okp(crv: i64) -> Key {
     assert(jwa::is_okp(crv));
     var d: u8[>..] = [];
     d.resize(jwa::crv_len(crv), 0);
-    bignum::random_bytes(d);
+    entropy::random_bytes(d);
     return okp_from_private(crv, d);
 }
 
@@ -197,7 +197,7 @@ fn generate_akp(alg: i64) -> Key {
     assert(jwa::is_mldsa(alg));
     var seed: u8[>..] = [];
     seed.resize(32, 0);
-    bignum::random_bytes(seed);
+    entropy::random_bytes(seed);
     return akp_from_seed(alg, seed);
 }
 
@@ -214,7 +214,7 @@ fn from_oct(secret: const u8[:]) -> Key {
 fn generate_oct(len: i64) -> Key {
     var b: u8[>..] = [];
     b.resize(len, 0);
-    bignum::random_bytes(b);
+    entropy::random_bytes(b);
     return from_oct(b);
 }
 

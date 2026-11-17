@@ -36,7 +36,7 @@ import crypto.bignum.modes;
 import crypto.bignum.keywrap;
 import crypto.bignum.hmac;
 import crypto.bignum.ct;
-import crypto.bignum.entropy;
+import entropy;
 
 let XENC_NS:   const u8[:] = "http://www.w3.org/2001/04/xmlenc#";
 let XENC11_NS: const u8[:] = "http://www.w3.org/2009/xmlenc11#";
@@ -203,7 +203,7 @@ fn oaep_encrypt(key: const bignum::RsaPublicKey&, msg: const u8[:], label: const
     db[dblen - msg.len - 1] = 1;
     for i in msg.len { db[dblen - msg.len + i] = msg[i]; }
     let sd = em[1..hl + 1];
-    bignum::random_bytes(sd);
+    entropy::random_bytes(sd);
     bignum::mgf1(mgf, db, sd);
     bignum::mgf1(mgf, sd, db);
     let c, ok = bignum::rsa_public_op_ct(key, em);
@@ -345,7 +345,7 @@ fn decrypt_key(d: const Doc&, ek: i64, key: const x509::PrivateKey&, klen: i64, 
             if !o.allow_rsa15 { return cek, ERR_ENC_ALGORITHM; }
             // Implicit rejection: a random key unless the padding is right.
             cek.resize(klen, 0);
-            bignum::random_bytes(cek);
+            entropy::random_bytes(cek);
             if !bignum::rsa_decrypt_pkcs1_session_key(key.rsa, wrapped, cek) { return cek, ERR_ENC_DECRYPT; }
             return cek, OK;
         }
@@ -657,9 +657,9 @@ fn encrypt_element(d: Doc&, el: i64, cert: const x509::Cert&, o: const EncryptOp
     write(d, el, pt);
     var cek: u8[>..] = [];
     cek.resize(content_key_len(o.alg), 0);
-    bignum::random_bytes(cek);
+    entropy::random_bytes(cek);
     var iv: u8[12] = [0; 12];
-    bignum::random_bytes(iv);
+    entropy::random_bytes(iv);
     let sealed = bignum::aes_gcm_seal(cek, iv, "", pt);
     var ct: u8[>..] = [];
     ct.append(iv);

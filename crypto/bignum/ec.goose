@@ -21,7 +21,7 @@ import crypto.bignum;
 import crypto.bignum.ct;
 import crypto.bignum.mont;
 import crypto.bignum.hmac;
-import crypto.bignum.entropy;
+import entropy;
 
 // The field prime p and group order n with their Montgomery constants, and
 // p - 2, n - 2 for inversion by Fermat. a, b, b3 = 3b, gx and gy are in
@@ -516,7 +516,7 @@ fn ec_keypair(c: const Curve&) -> u8[>..], u8[>..] {
     var sk: u8[>..] = [];
     sk.resize(c.len, 0);
     loop {
-        random_bytes(sk);
+        entropy::random_bytes(sk);
         let k, ok = ec_scalar(c, sk);
         if ok { break; }
     }

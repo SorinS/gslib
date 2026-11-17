@@ -10,7 +10,7 @@ import std;
 import crypto.bignum;
 import crypto.bignum.mont;
 import crypto.bignum.ct;
-import crypto.bignum.entropy;
+import entropy;
 
 // The primes, from RFC 3526's formula 2^n - 2^(n-64) - 1 + 2^64 *
 // (floor(2^(n-130) pi) + offset): group 14 (2048 bits), 15 (3072), 16 (4096).
@@ -75,7 +75,7 @@ fn ffdh_keygen(p: const u8[:], xlen: i64) -> u8[>..], u8[>..] {
     assert(xlen >= 28 && xlen <= p.len);
     var x: u8[>..] = [];
     x.resize(xlen, 0);
-    random_bytes(x);
+    entropy::random_bytes(x);
     x[0] |= 0x80;
     let two: u8[1] = [2];
     let pub = ffdh_modexp(two, x, p);

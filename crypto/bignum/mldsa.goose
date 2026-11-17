@@ -17,7 +17,7 @@ namespace bignum;
 import std;
 import crypto.bignum.ct;
 import crypto.bignum.sha3;
-import crypto.bignum.entropy;
+import entropy;
 
 let MLDSA_Q: u32 = 8380417;
 let MLDSA_QINV_NEG: u32 = 4236238847;          // -q^-1 mod 2^32
@@ -471,7 +471,7 @@ fn mldsa_public_key(set: i64, seed: const u8[:]) -> u8[>..] {
 fn mldsa_keygen(set: i64) -> u8[>..], u8[>..] {
     var seed: u8[>..] = [];
     seed.resize(32, 0);
-    random_bytes(seed);
+    entropy::random_bytes(seed);
     return seed, mldsa_public_key(set, seed);
 }
 
@@ -602,7 +602,7 @@ fn mldsa_sign_internal(set: i64, seed: const u8[:], mu: const u8[:], rnd: const 
 // A hedged signature of msg under ctx.
 fn mldsa_sign(set: i64, seed: const u8[:], msg: const u8[:], ctx: const u8[:] = "") -> u8[>..] {
     var rnd: u8[32] = [0; 32];
-    random_bytes(rnd);
+    entropy::random_bytes(rnd);
     return mldsa_sign_with(set, seed, msg, ctx, rnd);
 }
 
@@ -623,7 +623,7 @@ fn mldsa_sign_with(set: i64, seed: const u8[:], msg: const u8[:], ctx: const u8[
 // External mu: signs a 64-byte message representative from mldsa_mu.
 fn mldsa_sign_mu(set: i64, seed: const u8[:], mu: const u8[:], deterministic: bool = false) -> u8[>..] {
     var rnd: u8[32] = [0; 32];
-    if !deterministic { random_bytes(rnd); }
+    if !deterministic { entropy::random_bytes(rnd); }
     return mldsa_sign_internal(set, seed, mu, rnd);
 }
 

@@ -24,7 +24,7 @@ import crypto.bignum.gcm;
 import crypto.bignum.chacha20;
 import crypto.bignum.bcrypt;
 import crypto.bignum.ct;
-import crypto.bignum.entropy;
+import entropy;
 import encoding.asn1;
 import crypto.x509;
 import crypto.x509.keys;
@@ -382,13 +382,13 @@ fn generate_key(kind: i64, bits: i64 = 3072) -> PrivateKey {
     var key = x509::empty_key();
     key.kind = kind;
     if kind == x509::KEY_ED25519 {
-        bignum::random_bytes(key.seed);
+        entropy::random_bytes(key.seed);
     } else if is_ecdsa(kind) {
         let c = curve_of(kind);
         var sk: u8[>..] = [];
         sk.resize(c.len, 0);
         loop {
-            bignum::random_bytes(sk);
+            entropy::random_bytes(sk);
             let s, ok = bignum::ec_scalar(c, sk);
             if ok { break; }
         }
@@ -587,7 +587,7 @@ fn marshal_private_key(k: const PrivateKey&, passphrase: const u8[:] = "", ciphe
     var b: u8[>..] = [];
     b.append(OPENSSH_MAGIC);
     if passphrase.len > 0 {
-        bignum::random_bytes(salt);
+        entropy::random_bytes(salt);
         put_string(b, cipher);
         put_string(b, "bcrypt");
         let mark = begin_string(b);
@@ -603,7 +603,7 @@ fn marshal_private_key(k: const PrivateKey&, passphrase: const u8[:] = "", ciphe
     put_string(b, k.public.blob);
     var p: u8[>..] = [];
     var check: u8[4] = [0; 4];
-    bignum::random_bytes(check);
+    entropy::random_bytes(check);
     p.append(check);
     p.append(check);
     put_string(p, key_type(k.key.kind));

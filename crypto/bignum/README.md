@@ -81,7 +81,9 @@ language, written in Goose: a foundation for cryptography.
 - **`bignum.bcrypt`**: bcrypt password hashes, as Go's x/crypto/bcrypt, and
   bcrypt_pbkdf (OpenBSD's KDF for OpenSSH's encrypted keys).
 - **`bignum.argon2`**: Argon2id, Argon2i and Argon2d (RFC 9106).
-- **`bignum.entropy`**: random bytes from the OS (`getentropy`), for keys.
+- Random bytes for keys come from the `entropy` package (`entropy::random_bytes`:
+  getentropy, or BCryptGenRandom on Windows), which bignum imports by name
+  only, so a program can declare another package of that name in its root.
 
 ```goose
 import std;
@@ -674,9 +676,6 @@ generation takes about 0.27 s on average (ten runs, in constant time).
   square root would need Tonelli-Shanks). TLS 1.3 sends only uncompressed
   points; krb5's SPAKE sends compressed ones.
 - Secrets are not wiped from memory.
-- `entropy` needs `getentropy` (macOS, Linux, BSDs), so it does not work on
-  Windows. It opens the C library at startup (`extern "c"`, mapped to
-  `libc.so.6` on Linux by `bignum.build`), so `goose run` has it too.
 - This code has not been audited.
 
 ## Tests
@@ -908,7 +907,7 @@ In gslib's `examples/bignum/`, run from gslib's top as `goose examples/bignum/<n
   binary splitting.
 - `bigint_basics.goose`: BigInt parsing and bases, arithmetic, truncating and floor division,
   gcd, modinv and modpow, bits and bytes.
-- `random_bytes.goose`: the OS's random bytes for keys and nonces, a token, a number below a bound.
+- `random_bytes.goose`: entropy's random bytes for keys and nonces, a token, a big number below a bound.
 - `hashes.goose`: SHA-2, SHA-3, SHAKE and cSHAKE, BLAKE2, and the legacy hashes.
 - `mac.goose`: HMAC, CMAC and Poly1305, tags checked in constant time.
 - `derive_keys.goose`: HKDF, PBKDF2 and scrypt.

@@ -51,7 +51,7 @@ def strip(line):
 def bigint_api():
     names = set()
     # The library's main module sits beside its directory, at gslib's root.
-    for line in open(os.path.join(ROOT, "..", "bignum.goose")):
+    for line in open(os.path.join(ROOT, "..", "bignum.goose"), encoding="utf-8"):
         m = FN.match(line)
         if m:
             names.add(m.group(1))
@@ -62,7 +62,7 @@ def uses(path, api):
     """{function: {BigInt function it calls}} for one module."""
     found = {}
     fn = None
-    for line in open(path):
+    for line in open(path, encoding="utf-8"):
         code = strip(line)
         m = FN.match(code)
         if m:

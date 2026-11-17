@@ -36,7 +36,7 @@ import crypto.bignum.aes;
 import crypto.bignum.modes;
 import crypto.bignum.rsa;
 import crypto.bignum.ec;
-import crypto.bignum.entropy;
+import entropy;
 
 let SESSION_NONE:   i64 = 0;
 let SESSION_PW:     i64 = 1;
@@ -145,7 +145,7 @@ fn new_nonce(s: Session&) {
     }
     var n: u8[>..] = [];
     n.resize(digest_size(s.hash), 0);
-    bignum::random_bytes(n);
+    entropy::random_bytes(n);
     s.nonce_caller.clear();
     s.nonce_caller.append(n);
 }
@@ -354,7 +354,7 @@ fn secret_to(pub: Public, label: const u8[:], eph: const u8[:] = "", rnd: const 
             enc = bignum::rsa_encrypt_oaep_with_seed(key, seed, lbl, rnd[hl..], hash_id(pub.name_alg));
         } else {
             seed.resize(hl, 0);
-            bignum::random_bytes(seed);
+            entropy::random_bytes(seed);
             enc = bignum::rsa_encrypt_oaep(key, seed, lbl, hash_id(pub.name_alg));
         }
         return seed, enc, OK;

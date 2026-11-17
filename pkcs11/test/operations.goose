@@ -10,14 +10,14 @@ import gslib from "../..";
 import gslib.pkcs11;
 import gslib.crypto.bignum;
 import gslib.crypto.bignum.hmac;
-import gslib.crypto.bignum.entropy;
+import gslib.entropy;
 import hsm;
 import tv;
 
 fn random(n: i64) -> u8[>..] {
     var b: u8[>..] = [];
     b.resize(n, 0);
-    bignum::random_bytes(b);
+    entropy::random_bytes(b);
     return b;
 }
 

@@ -22,14 +22,14 @@ import gslib.crypto.bignum.rsa;
 import gslib.crypto.bignum.ec;
 import gslib.crypto.bignum.ed25519;
 import gslib.crypto.bignum.keywrap;
-import gslib.crypto.bignum.entropy;
+import gslib.entropy;
 import hsm;
 import tv;
 
 fn random(n: i64) -> u8[>..] {
     var b: u8[>..] = [];
     b.resize(n, 0);
-    bignum::random_bytes(b);
+    entropy::random_bytes(b);
     return b;
 }
 
