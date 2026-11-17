@@ -16,6 +16,7 @@ struct MemInfo: total available swap_total swap_free
 struct Rlimit: cur max
 struct WinSize: rows cols xpixels ypixels
 struct Child: pid handle stdin_fd stdout_fd stderr_fd pty
+struct StatFs: bsize frsize blocks bfree bavail files ffree favail fsid flags namemax
 
 # --- Errors and the platform ------------------------------------------------
 all   i32 platform_id()
@@ -74,6 +75,13 @@ all   i64 readlink(path: const u8[:], out: u8[>..]&)
 all   i64 link(existing: const u8[:], newpath: const u8[:])
 all   i64 truncate(path: const u8[:], size: i64)
 all   i64 utimes(path: const u8[:], atime_ns: i64, mtime_ns: i64)
+posix i64 lchmod(path: const u8[:], mode: i64)
+posix i64 lutimes(path: const u8[:], atime_ns: i64, mtime_ns: i64)
+posix i64 fchmod(fd: i64, mode: i64)
+posix i64 fchown(fd: i64, uid: i64, gid: i64)
+posix i64 futimes(fd: i64, atime_ns: i64, mtime_ns: i64)
+posix i64 statfs(path: const u8[:], out: StatFs&)
+posix i64 fstatfs(fd: i64, out: StatFs&)
 all   i64 realpath(path: const u8[:], out: u8[>..]&)
 all   i64 mkdir(path: const u8[:], mode: i64)
 all   i64 rmdir(path: const u8[:])

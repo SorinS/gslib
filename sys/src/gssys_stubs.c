@@ -13,6 +13,13 @@ int64_t gssys_getegid(void) { return GSSYS_ENOTSUP; }
 int64_t gssys_getgroups(gs_rref out) { (void)out; return GSSYS_ENOTSUP; }
 int64_t gssys_chown(gssys_slice path, int64_t uid, int64_t gid) { (void)path; (void)uid; (void)gid; return GSSYS_ENOTSUP; }
 int64_t gssys_lchown(gssys_slice path, int64_t uid, int64_t gid) { (void)path; (void)uid; (void)gid; return GSSYS_ENOTSUP; }
+int64_t gssys_lchmod(gssys_slice path, int64_t mode) { (void)path; (void)mode; return GSSYS_ENOTSUP; }
+int64_t gssys_lutimes(gssys_slice path, int64_t atime_ns, int64_t mtime_ns) { (void)path; (void)atime_ns; (void)mtime_ns; return GSSYS_ENOTSUP; }
+int64_t gssys_fchmod(int64_t fd, int64_t mode) { (void)fd; (void)mode; return GSSYS_ENOTSUP; }
+int64_t gssys_fchown(int64_t fd, int64_t uid, int64_t gid) { (void)fd; (void)uid; (void)gid; return GSSYS_ENOTSUP; }
+int64_t gssys_futimes(int64_t fd, int64_t atime_ns, int64_t mtime_ns) { (void)fd; (void)atime_ns; (void)mtime_ns; return GSSYS_ENOTSUP; }
+int64_t gssys_statfs(gssys_slice path, gssys_StatFs *out) { (void)path; (void)out; return GSSYS_ENOTSUP; }
+int64_t gssys_fstatfs(int64_t fd, gssys_StatFs *out) { (void)fd; (void)out; return GSSYS_ENOTSUP; }
 int64_t gssys_set_nonblock(int64_t fd, int32_t on) { (void)fd; (void)on; return GSSYS_ENOTSUP; }
 int64_t gssys_poll(gssys_i64s fds, gssys_i64s events, int64_t timeout_ms) { (void)fds; (void)events; (void)timeout_ms; return GSSYS_ENOTSUP; }
 int64_t gssys_fork(void) { return GSSYS_ENOTSUP; }

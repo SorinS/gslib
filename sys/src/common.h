@@ -24,6 +24,9 @@
 #define CLS_IS_DIR        9
 #define CLS_NOT_DIR       10
 #define CLS_INVALID       11
+#define CLS_BAD_FD        12
+#define CLS_LOOP          13
+#define CLS_NAME_TOO_LONG 14
 
 /* File kinds (Stat.kind, read_dir). */
 #define KIND_UNKNOWN 0

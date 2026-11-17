@@ -57,6 +57,9 @@ int32_t gssys_error_is(int64_t code, int32_t cls) {
     case CLS_IS_DIR:        return e == ERROR_DIRECTORY_NOT_SUPPORTED;
     case CLS_NOT_DIR:       return e == ERROR_DIRECTORY;
     case CLS_INVALID:       return e == ERROR_INVALID_PARAMETER || e == ERROR_INVALID_HANDLE || e == ERROR_INVALID_NAME;
+    case CLS_BAD_FD:        return e == ERROR_INVALID_HANDLE;
+    case CLS_LOOP:          return e == ERROR_CANT_RESOLVE_FILENAME;
+    case CLS_NAME_TOO_LONG: return e == ERROR_FILENAME_EXCED_RANGE || e == ERROR_BUFFER_OVERFLOW;
     }
     return 0;
 }

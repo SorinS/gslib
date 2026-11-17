@@ -43,7 +43,7 @@ return a value take an `e: i64&` for the error instead.
 | | |
 |---|---|
 | `error_text(e) -> u8[>..]` | The system's words for it (`strerror`, `FormatMessage`) |
-| `is_not_exist(e)`, `is_exist`, `is_permission`, `is_timeout`, `is_not_supported`, `is_would_block`, `is_not_empty`, `is_dir_error`, `is_not_dir`, `is_invalid` | What kind it is, on any platform, as Go's `os.IsNotExist` (ENOENT, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, NERR_UserNotFound... are all `is_not_exist`) |
+| `is_not_exist(e)`, `is_exist`, `is_permission`, `is_timeout`, `is_not_supported`, `is_would_block`, `is_not_empty`, `is_dir_error`, `is_not_dir`, `is_invalid`, `is_bad_fd`, `is_loop` (too many links, or `O_NOFOLLOW` met one), `is_name_too_long` | What kind it is, on any platform, as Go's `os.IsNotExist` (ENOENT, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, NERR_UserNotFound... are all `is_not_exist`) |
 
 ## sys: the host, processes, users, files
 
@@ -67,7 +67,11 @@ return a value take an `e: i64&` for the error instead.
 
 Files by path: `stat`, `lstat` (into a `Stat`: kind, mode, size, links,
 uid and gid, device and inode, access, change, modification and birth
-times in nanoseconds, Windows attributes), `chmod`, `chown`, `lchown`,
+times in nanoseconds; `attrs`: Windows attributes, or on POSIX st_mode's
+type bits, `S_IFMT`), `chmod`, `chown`, `lchown`, `lchmod` and `lutimes`
+(POSIX: a symbolic link's own; Linux has no mode for one, so `lchmod` is
+`is_not_supported` there), `statfs` and `fstatfs` (POSIX: a file system's
+sizes as statvfs gives them, into a `StatFs`),
 `symlink`, `readlink`, `link`, `truncate`, `utimes`, `realpath`, `mkdir`,
 `rmdir`, `unlink`, `rename` (replacing), `read_dir -> DirEntry[>..]` (name
 and kind, no `.` or `..`). On Windows, as in Go: the mode is 0444 or
@@ -78,7 +82,7 @@ mode allows it; `readlink` gives a link's or a junction's target.
 
 Files by descriptor (a HANDLE on Windows): `open(path, O_* flags, mode)`,
 `close`, `read`, `write`, `pread`, `pwrite`, `seek`, `fsync`,
-`ftruncate`, `fstat`, `lock` (`LOCK_SHARED` or `LOCK_EXCLUSIVE` on the
+`ftruncate`, `fstat`, `fchmod`, `fchown`, `futimes` (POSIX), `lock` (`LOCK_SHARED` or `LOCK_EXCLUSIVE` on the
 whole file, with `LOCK_NONBLOCK`; `flock` and `LockFileEx`), `pipe`,
 `std_fd(0..2)`, `isatty`; `write_all` and `read_all` loop over short
 writes and reads. The `O_*` flags are sys's own, the same everywhere,

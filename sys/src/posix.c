@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <sys/file.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/utsname.h>
@@ -73,6 +74,9 @@ int32_t gssys_error_is(int64_t code, int32_t cls) {
     case CLS_IS_DIR:        return e == EISDIR;
     case CLS_NOT_DIR:       return e == ENOTDIR;
     case CLS_INVALID:       return e == EINVAL;
+    case CLS_BAD_FD:        return e == EBADF;
+    case CLS_LOOP:          return e == ELOOP;
+    case CLS_NAME_TOO_LONG: return e == ENAMETOOLONG;
     }
     return 0;
 }
@@ -611,11 +615,64 @@ int64_t gssys_readlink(gssys_slice path, gs_rref out) {
     return r;
 }
 
-int64_t gssys_utimes(gssys_slice path, int64_t atime_ns, int64_t mtime_ns) {
-    struct timespec ts[2];
+static void timespecs(struct timespec ts[2], int64_t atime_ns, int64_t mtime_ns) {
     ts[0].tv_sec = (time_t)(atime_ns / 1000000000); ts[0].tv_nsec = (long)(atime_ns % 1000000000);
     ts[1].tv_sec = (time_t)(mtime_ns / 1000000000); ts[1].tv_nsec = (long)(mtime_ns % 1000000000);
+}
+
+int64_t gssys_utimes(gssys_slice path, int64_t atime_ns, int64_t mtime_ns) {
+    struct timespec ts[2];
+    timespecs(ts, atime_ns, mtime_ns);
     WITH_PATH(path, p, utimensat(AT_FDCWD, p, ts, 0));
+}
+
+/* chmod and utimes on a symbolic link itself. Linux has no mode for a
+   link: lchmod there fails with EOPNOTSUPP, as fchmodat does. */
+int64_t gssys_lchmod(gssys_slice path, int64_t mode) {
+    WITH_PATH(path, p, fchmodat(AT_FDCWD, p, (mode_t)(mode & 07777), AT_SYMLINK_NOFOLLOW));
+}
+
+int64_t gssys_lutimes(gssys_slice path, int64_t atime_ns, int64_t mtime_ns) {
+    struct timespec ts[2];
+    timespecs(ts, atime_ns, mtime_ns);
+    WITH_PATH(path, p, utimensat(AT_FDCWD, p, ts, AT_SYMLINK_NOFOLLOW));
+}
+
+int64_t gssys_fchmod(int64_t fd, int64_t mode) { return ERR(fchmod((int)fd, (mode_t)(mode & 07777))); }
+int64_t gssys_fchown(int64_t fd, int64_t uid, int64_t gid) { return ERR(fchown((int)fd, (uid_t)uid, (gid_t)gid)); }
+
+int64_t gssys_futimes(int64_t fd, int64_t atime_ns, int64_t mtime_ns) {
+    struct timespec ts[2];
+    timespecs(ts, atime_ns, mtime_ns);
+    return ERR(futimens((int)fd, ts));
+}
+
+/* statvfs, as OpenSSH's statvfs@openssh.com sends it; flags: 1 read-only,
+   2 no setuid. */
+static void fill_statfs(gssys_StatFs *o, const struct statvfs *s) {
+    o->bsize = (int64_t)s->f_bsize; o->frsize = (int64_t)s->f_frsize;
+    o->blocks = (int64_t)s->f_blocks; o->bfree = (int64_t)s->f_bfree; o->bavail = (int64_t)s->f_bavail;
+    o->files = (int64_t)s->f_files; o->ffree = (int64_t)s->f_ffree; o->favail = (int64_t)s->f_favail;
+    o->fsid = (int64_t)s->f_fsid;
+    o->flags = ((s->f_flag & ST_RDONLY) ? 1 : 0) | ((s->f_flag & ST_NOSUID) ? 2 : 0);
+    o->namemax = (int64_t)s->f_namemax;
+}
+
+int64_t gssys_statfs(gssys_slice path, gssys_StatFs *out) {
+    struct statvfs s;
+    char *p = cstr(path);
+    if (!p) return -EINVAL;
+    int64_t r = ERR(statvfs(p, &s));
+    free(p);
+    if (r == 0) fill_statfs(out, &s);
+    return r;
+}
+
+int64_t gssys_fstatfs(int64_t fd, gssys_StatFs *out) {
+    struct statvfs s;
+    int64_t r = ERR(fstatvfs((int)fd, &s));
+    if (r == 0) fill_statfs(out, &s);
+    return r;
 }
 
 int64_t gssys_realpath(gssys_slice path, gs_rref out) {

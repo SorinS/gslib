@@ -126,7 +126,7 @@ fn rename_no_replace(from: const u8[:], to: const u8[:]) -> i64 {
         if !(fs::err_is(r, 14) || fs::err_is(r, 9) || fs::err_is(r, 13) || fs::err_is(r, 4)) { return r; }
     }
     let t, e2 = fs::stat(to, false);
-    if e2 == 0 { return -(fs::fs_errno(10) as i64); }      // EEXIST
+    if e2 == 0 { return fs::ERR_EXIST; }
     return fs::fs_two(from, to, 0);
 }
 

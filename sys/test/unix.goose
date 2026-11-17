@@ -61,6 +61,43 @@ fn posix() {
     var root_group = false;
     for g in unix::groups() { if g.gid == "0" { root_group = true; } }
     check(root_group, "groups: group 0 is one");
+    files();
+}
+
+// A file's mode, owner and times by descriptor, a symbolic link's own, the
+// file system's sizes, and the error classes an SFTP server tells apart.
+fn files() {
+    var dir: u8[>..] = [];
+    check(sys::mkdir_temp("", "gssys-unix-*", dir) == 0, "mkdir_temp");
+    let file = str(dir, "/f");
+    let link = str(dir, "/l");
+    let fd = sys::open(file, sys::O_RDWR | sys::O_CREATE | sys::O_EXCL, 384);
+    check(fd >= 0 && sys::symlink(file, link) == 0, "a file and a link to it");
+    var st = sys::Stat { .. };
+    check(sys::fchmod(fd, 416) == 0 && sys::fstat(fd, st) == 0 && st.mode == 416, "fchmod");
+    check(st.attrs == 32768, "Stat.attrs: S_IFREG");                      // POSIX: st_mode's type bits
+    check(sys::fchown(fd, sys::getuid(), sys::getgid()) == 0, "fchown: to its own owner");
+    let t: i64 = 1000000000 * 1000000000;                               // 2001-09-09, in ns
+    check(sys::futimes(fd, t, t + 2000000000) == 0 && sys::fstat(fd, st) == 0 && st.mtime_ns == t + 2000000000, "futimes");
+    check(sys::lutimes(link, t, t) == 0 && sys::lstat(link, st) == 0 && st.mtime_ns == t, "lutimes: the link's own");
+    check(sys::stat(link, st) == 0 && st.mtime_ns == t + 2000000000, "lutimes: the file's unchanged");
+    let lm = sys::lchmod(link, 384);                                    // Linux: links have no mode
+    check(lm == 0 || sys::is_not_supported(lm), "lchmod");
+    check(sys::stat(file, st) == 0 && st.mode == 416, "lchmod: the file's mode unchanged");
+    var fs = sys::StatFs { .. };
+    check(sys::statfs(dir, fs) == 0 && fs.bsize > 0 && fs.blocks > 0 && fs.namemax > 0, "statfs");
+    var fs2 = sys::StatFs { .. };
+    check(sys::fstatfs(fd, fs2) == 0 && fs2.blocks == fs.blocks, "fstatfs: the same file system");
+    check(sys::close(fd) == 0, "close");
+
+    let nf = sys::open(link, sys::O_RDONLY | sys::O_NOFOLLOW, 0);
+    check(nf < 0 && sys::is_loop(nf), "is_loop: O_NOFOLLOW on a link");
+    check(sys::is_bad_fd(sys::close(fd)), "is_bad_fd: closed twice");
+    var long: u8[>..] = [];
+    for _ in 300 { long.push('a'); }
+    check(sys::is_name_too_long(sys::stat(str(dir, "/", long), st)), "is_name_too_long");
+    check(!sys::is_loop(sys::stat(str(dir, "/none"), st)), "is_loop: not for a missing file");
+    check(sys::unlink(link) == 0 && sys::unlink(file) == 0 && sys::rmdir(dir) == 0, "clean up");
 }
 
 fn windows() {

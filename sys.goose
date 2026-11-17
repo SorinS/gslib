@@ -113,6 +113,9 @@ let ERRC_NOT_EMPTY:     i32 = 8;
 let ERRC_IS_DIR:        i32 = 9;
 let ERRC_NOT_DIR:       i32 = 10;
 let ERRC_INVALID:       i32 = 11;
+let ERRC_BAD_FD:        i32 = 12;
+let ERRC_LOOP:          i32 = 13;
+let ERRC_NAME_TOO_LONG: i32 = 14;
 
 fn is_not_exist(e: i64) -> bool { error_is(e, ERRC_NOT_EXIST) != 0 }
 fn is_exist(e: i64) -> bool { error_is(e, ERRC_EXIST) != 0 }
@@ -124,6 +127,9 @@ fn is_not_empty(e: i64) -> bool { error_is(e, ERRC_NOT_EMPTY) != 0 }
 fn is_dir_error(e: i64) -> bool { error_is(e, ERRC_IS_DIR) != 0 }
 fn is_not_dir(e: i64) -> bool { error_is(e, ERRC_NOT_DIR) != 0 }
 fn is_invalid(e: i64) -> bool { error_is(e, ERRC_INVALID) != 0 }
+fn is_bad_fd(e: i64) -> bool { error_is(e, ERRC_BAD_FD) != 0 }
+fn is_loop(e: i64) -> bool { error_is(e, ERRC_LOOP) != 0 }             // too many symbolic links, or O_NOFOLLOW met one
+fn is_name_too_long(e: i64) -> bool { error_is(e, ERRC_NAME_TOO_LONG) != 0 }
 
 // --- Fields: how the C hands back records and lists ----------------------------------
 

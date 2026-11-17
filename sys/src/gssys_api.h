@@ -19,6 +19,7 @@ typedef struct { int64_t total; int64_t available; int64_t swap_total; int64_t s
 typedef struct { int64_t cur; int64_t max; } gssys_Rlimit;
 typedef struct { int64_t rows; int64_t cols; int64_t xpixels; int64_t ypixels; } gssys_WinSize;
 typedef struct { int64_t pid; int64_t handle; int64_t stdin_fd; int64_t stdout_fd; int64_t stderr_fd; int64_t pty; } gssys_Child;
+typedef struct { int64_t bsize; int64_t frsize; int64_t blocks; int64_t bfree; int64_t bavail; int64_t files; int64_t ffree; int64_t favail; int64_t fsid; int64_t flags; int64_t namemax; } gssys_StatFs;
 
 int32_t gssys_platform_id(void);
 int64_t gssys_error_text(int64_t code, gs_rref out);
@@ -68,6 +69,13 @@ int64_t gssys_readlink(gssys_slice path, gs_rref out);
 int64_t gssys_link(gssys_slice existing, gssys_slice newpath);
 int64_t gssys_truncate(gssys_slice path, int64_t size);
 int64_t gssys_utimes(gssys_slice path, int64_t atime_ns, int64_t mtime_ns);
+int64_t gssys_lchmod(gssys_slice path, int64_t mode);
+int64_t gssys_lutimes(gssys_slice path, int64_t atime_ns, int64_t mtime_ns);
+int64_t gssys_fchmod(int64_t fd, int64_t mode);
+int64_t gssys_fchown(int64_t fd, int64_t uid, int64_t gid);
+int64_t gssys_futimes(int64_t fd, int64_t atime_ns, int64_t mtime_ns);
+int64_t gssys_statfs(gssys_slice path, gssys_StatFs *out);
+int64_t gssys_fstatfs(int64_t fd, gssys_StatFs *out);
 int64_t gssys_realpath(gssys_slice path, gs_rref out);
 int64_t gssys_mkdir(gssys_slice path, int64_t mode);
 int64_t gssys_rmdir(gssys_slice path);

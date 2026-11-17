@@ -121,8 +121,11 @@ directory, and ends with its exit status; the `sftp` subsystem runs the
 SFTP server. It connects the client's -L and -D channels to their targets,
 and listens for -R on the loopback address (on the address asked for with
 `-g`, as OpenSSH's GatewayPorts); an address over 255 bytes is refused.
-With `-v` what the client sent is logged made safe for the terminal. tools/net.c is their operating-system part (sockets, the terminal,
-processes), and tools/fs.c the file system's, for macOS and Linux.
+With `-v` what the client sent is logged made safe for the terminal. The
+tools have no C of their own: tools/sysnet.goose puts their sockets on
+gslib's net and their terminal, processes and private files on sys
+(sys.term, sys.process, read_private), and tools/fs.goose the SFTP
+server's and scp's file system on sys, for macOS and Linux.
 
 `goose-scp` copies files as OpenSSH's scp does by default (over SFTP):
 `[-r] [-p] [-q] [-v] [-P port] [-i keyfile] [-o option=value] [-J jump]
