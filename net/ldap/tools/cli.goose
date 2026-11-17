@@ -21,7 +21,9 @@ import gslib.crypto.x509;
 import gslib.crypto.tls;
 import gslib.crypto.tls.handshake;
 import gslib.entropy;
-import .sysnet;
+import gslib.net;
+import gslib.sys;
+import gslib.sys.term;
 
 // OpenLDAP's ldap_err2string.
 fn err2string(code: i64) -> const u8[:] {
@@ -132,7 +134,7 @@ fn opts(prog: const u8[:]) -> Opts {
 }
 
 fn fail(o: const Opts&, s: const u8[:]) -> i32 {
-    sysnet::eprint(str(o.prog, ": ", s, "\n"));
+    write_stderr(str(o.prog, ": ", s, "\n"));
     return 1;
 }
 
@@ -246,7 +248,7 @@ fn controls(o: const Opts&, out: u8[>..]&) -> bool {
             if !ok { return false; }
             ldap::put_assertion(out, f, critical);
         } else if name == "authzid" {
-            if !critical { sysnet::eprint("authzid: must be marked critical\n"); return false; }
+            if !critical { write_stderr("authzid: must be marked critical\n"); return false; }
             ldap::put_proxied_authz(out, value);
         } else if name == "manageDSAit" {
             ldap::put_manage_dsa_it(out, critical);
@@ -264,7 +266,7 @@ fn controls(o: const Opts&, out: u8[>..]&) -> bool {
 // --- The transport ------------------------------------------------------------------
 
 // The socket, and TLS over it once it is on.
-struct Link { fd: i32, tls_on: bool, host: u8[..1024], t: tls::Conn }
+struct Link { fd: i64, tls_on: bool, host: u8[..1024], t: tls::Conn }
 
 fn link() -> Link {
     var cfg = tls::client_config("", "");
@@ -311,7 +313,7 @@ fn tls_config(o: const Opts&, host: const u8[:], cfg: tls::ClientConfig&) -> boo
     return true;
 }
 
-fn write_all(l: const Link&, data: const u8[:]) -> bool { data.len == 0 || sysnet::net_write(l.fd, data) == data.len }
+fn write_all(l: const Link&, data: const u8[:]) -> bool { data.len == 0 || net::write(l.fd, data, 0) == data.len }
 
 // Sends LDAP bytes, in TLS records once TLS is on.
 fn transmit(l: Link&, data: const u8[:]) -> bool {
@@ -325,8 +327,8 @@ fn transmit(l: Link&, data: const u8[:]) -> bool {
 // or why the connection ended.
 fn receive(o: const Opts&, l: Link&, cfg: const tls::ClientConfig&, c: ldap::Conn&, msgs: u8[>..]&) -> i64 {
     var buf: u8[65536] = [0; 65536];
-    let n = sysnet::net_read(l.fd, buf, o.timeout_ms as! i32);
-    if n == -2 { return ldap::RESULT_TIMEOUT; }
+    let n = net::read(l.fd, buf, o.timeout_ms as! i32);
+    if n == net::ERR_TIMEOUT { return ldap::RESULT_TIMEOUT; }
     if n <= 0 {
         let e = ldap::eof(c);
         return if e != 0 { e } else { ldap::ERROR_NETWORK };
@@ -384,7 +386,7 @@ fn handshake(o: const Opts&, l: Link&, cfg: const tls::ClientConfig&) -> bool {
         out.clear();
         if tls::connected(l.t) { l.tls_on = true; return true; }
         if tls::failed(l.t) { break; }              // client_start refused (a bad configuration)
-        let n = sysnet::net_read(l.fd, buf, o.timeout_ms as! i32);
+        let n = net::read(l.fd, buf, o.timeout_ms as! i32);
         if n <= 0 { break; }
         if tls::client_feed(l.t, cfg, buf[..n], out, app) != 0 {
             let x = write_all(l, out);
@@ -402,7 +404,6 @@ fn handshake(o: const Opts&, l: Link&, cfg: const tls::ClientConfig&) -> bool {
 // Connects as o says: the URL, TLS for ldaps://, StartTLS for -Z and
 // -ZZ. 0, or the code to exit with.
 fn connect(o: const Opts&, l: Link&, cfg: tls::ClientConfig&, c: ldap::Conn&) -> i64 {
-    sysnet::net_init();
     let text = if o.uri.len > 0 { o.uri[..] } else { "ldap://localhost" };
     // Only the first of several URIs separated by spaces or commas.
     var end = 0;
@@ -414,9 +415,9 @@ fn connect(o: const Opts&, l: Link&, cfg: tls::ClientConfig&, c: ldap::Conn&) ->
     l.host.append(host);
     if u.scheme == "ldapi" {
         if host.len == 0 { let x = fail(o, "ldapi:// needs the socket's path"); return ldap::RESULT_PARAM_ERROR; }
-        l.fd = sysnet::net_connect_unix(host);
+        l.fd = net::dial_unix(host);
     } else {
-        l.fd = sysnet::net_connect(host, u.port as! i32);
+        l.fd = net::dial(host, u.port as! i32, 0);
     }
     if l.fd < 0 {
         var s: u8[>..] = [];
@@ -424,7 +425,7 @@ fn connect(o: const Opts&, l: Link&, cfg: tls::ClientConfig&, c: ldap::Conn&) ->
         if u.scheme == "ldapi" { s.append(text[u.scheme.len + 3..end]); }
         else { format(s, host, ":", u.port); }
         s.append("/??base: Can't contact LDAP server (-1)\n");
-        sysnet::eprint(s);
+        write_stderr(s);
         return 1;
     }
     if !tls_config(o, host, cfg) { return 255; }
@@ -443,7 +444,7 @@ fn connect(o: const Opts&, l: Link&, cfg: tls::ClientConfig&, c: ldap::Conn&) ->
                 report(o, "ldap_start_tls", rc, ldap::result_message(msgs, m), "");
                 return status(rc);
             }
-            sysnet::eprint(str("ldap_start_tls: ", err2string(rc), " (", rc, ")\n"));
+            write_stderr(str("ldap_start_tls: ", err2string(rc), " (", rc, ")\n"));
         } else if !handshake(o, l, cfg) {
             return 255;
         }
@@ -458,7 +459,7 @@ fn report(o: const Opts&, op: const u8[:], code: i64, message: const u8[:], matc
     format(s, op, ": ", err2string(code), " (", api_code(code), ")\n");
     if matched.len > 0 { format(s, "\tmatched DN: ", matched, "\n"); }
     if message.len > 0 { format(s, "\tadditional info: ", message, "\n"); }
-    sysnet::eprint(s);
+    write_stderr(s);
 }
 
 // A result as ldapcompare, ldapmodrdn and ldappasswd print it, on
@@ -483,7 +484,7 @@ fn report_response(o: const Opts&, op: const u8[:], msgs: const u8[:], m: const 
         var s: u8[>..] = [];
         s.append("\treferrals:\n");
         for r in refs { format(s, "\t\t", r, "\n"); }
-        sysnet::eprint(s);
+        write_stderr(s);
     }
 }
 
@@ -501,7 +502,7 @@ fn bind(o: Opts&, l: Link&, cfg: const tls::ClientConfig&, c: ldap::Conn&) -> i6
     let sasl = o.mech.len > 0;
     if !sasl && !o.simple && o.binddn.len == 0 && !o.has_password && !o.ask_password { return 0; }
     if o.ask_password && !o.has_password {
-        let pw, ok = sysnet::secret("Enter LDAP Password: ");
+        let pw, ok = secret("Enter LDAP Password: ");
         if !ok { let x = fail(o, "cannot read the password"); return ldap::RESULT_LOCAL_ERROR; }
         o.password.clear();
         o.password.append(pw);
@@ -524,10 +525,10 @@ fn bind(o: Opts&, l: Link&, cfg: const tls::ClientConfig&, c: ldap::Conn&) -> i6
     } else if o.mech == "DIGEST-MD5" {
         id = ldap::sasl_bind(c, "DIGEST-MD5", "", false, out);
     } else {
-        sysnet::eprint("ldap_sasl_interactive_bind: Unknown authentication method (-6)\n\tadditional info: SASL(-4): no mechanism available: No worthy mechs found\n");
+        write_stderr("ldap_sasl_interactive_bind: Unknown authentication method (-6)\n\tadditional info: SASL(-4): no mechanism available: No worthy mechs found\n");
         return status(ldap::RESULT_AUTH_UNKNOWN);
     }
-    if !o.quiet { sysnet::eprint(str("SASL/", o.mech, " authentication started\n")); }
+    if !o.quiet { write_stderr(str("SASL/", o.mech, " authentication started\n")); }
     loop {
         var code = wait(o, l, cfg, c, id, out, msgs);
         if code != 0 { report(o, "ldap_sasl_bind", code, "", ""); return status(code); }
@@ -564,7 +565,7 @@ fn close(l: Link&, c: ldap::Conn&) {
         tls::close(l.t, cl);
         let y = write_all(l, cl);
     }
-    sysnet::net_close(l.fd);
+    net::close(l.fd);
     l.fd = -1;
 }
 
@@ -589,4 +590,18 @@ fn run(o: const Opts&, l: Link&, cfg: const tls::ClientConfig&, c: ldap::Conn&, 
         if label.len > 0 { print_result(label, msgs, m); } else { report_response(o, op, msgs, m); }
     }
     return rc;
+}
+
+// A password typed at the terminal (not standard input, which may be
+// LDIF), not echoed; false when there is no terminal.
+fn secret(prompt: const u8[:]) -> u8[>..], bool {
+    var out: u8[>..] = [];
+    let win = sys::platform() == sys::PLATFORM_WINDOWS;
+    let tty = sys::open(if win { "CONIN$" } else { "/dev/tty" }, sys::O_RDWR, 0);
+    if tty < 0 { return out, false; }
+    write_stderr(prompt);
+    let e = term::read_password(tty, out);
+    sys::close(tty);
+    write_stderr("\n");
+    return out, e >= 0;
 }

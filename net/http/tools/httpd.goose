@@ -32,7 +32,8 @@ import gslib.encoding.asn1;
 import gslib.crypto.x509;
 import gslib.crypto.tls;
 import gslib.crypto.tls.handshake;
-import sysnet;
+import gslib.net;
+import gslib.sys;
 
 let IDLE_MS: i32 = 30000;
 let MAX_ROOT: i64 = 4096;
@@ -45,6 +46,25 @@ fn die(msg: const u8[:]) {
     write_stderr(msg);
     write_stderr("\n");
     exit(2);
+}
+
+// 1 when fd has something to read (or is closed), 0 when timeout_ms
+// passed first, -1 on an error.
+fn wait_readable(fd: i64, timeout_ms: i32) -> i64 {
+    let fds: i64[1] = [fd];
+    let want: u8[1] = [net::WANT_READ];
+    var ready: u8[1] = [0];
+    let n = net::poll(fds, want, ready, timeout_ms);
+    return if n > 0 { 1 } else if n == net::ERR_TIMEOUT { 0 } else { -1 };
+}
+
+// Reads what is there (up to 64 KB) into a builder: how many bytes, 0 at
+// the end, < 0 on an error.
+fn read_some(fd: i64, out: u8[>..]&) -> i64 {
+    var buf: u8[65536] = [0; 65536];
+    let n = net::read(fd, buf, 0);
+    if n > 0 { out.append(buf[..n]); }
+    return n;
 }
 
 fn pem_der(path: const u8[:], labels: const u8[:][:]) -> u8[>..] {
@@ -123,7 +143,7 @@ fn file_answer(root: const u8[:], path: const u8[:], body: u8[>..]&) -> Answer {
         }
         full.append("index.html");
     }
-    let real = sysnet::realpath(full);
+    let real = sys::realpath(full);
     if real.len == 0 { return a; }
     // Inside the root: the root itself, then '/'.
     if real.len <= root.len || real[..root.len] != root || real[root.len] != '/' { a.status = 403; return a; }
@@ -137,13 +157,13 @@ fn file_answer(root: const u8[:], path: const u8[:], body: u8[>..]&) -> Answer {
 
 // Sends `plain` (HTTP bytes) through TLS if there is a connection, then
 // all of it to the socket. False if the socket failed.
-fn flush(fd: i32, on_tls: bool, tc: tls::Conn&, plain: u8[>..]&, wire: u8[>..]&) -> bool {
+fn flush(fd: i64, on_tls: bool, tc: tls::Conn&, plain: u8[>..]&, wire: u8[>..]&) -> bool {
     if plain.len > 0 {
         if on_tls { tls::send(tc, plain, wire); } else { wire.append(plain); }
         plain.clear();
     }
     if wire.len > 0 {
-        if sysnet::net_write(fd, wire) < 0 { return false; }
+        if net::write(fd, wire, 0) < 0 { return false; }
         wire.clear();
     }
     return true;
@@ -152,15 +172,15 @@ fn flush(fd: i32, on_tls: bool, tc: tls::Conn&, plain: u8[>..]&, wire: u8[>..]&)
 // Shut down writing, read what the peer still sends until it closes or a
 // second passes, and close: closing with data unread would send a reset
 // that can overtake the last response.
-fn linger_close(fd: i32) {
-    sysnet::net_shutdown_write(fd);
+fn linger_close(fd: i64) {
+    net::shutdown(fd, net::SHUT_WRITE);
     var sink: u8[>..] = [];
     for k in 20 {
-        if sysnet::net_wait(fd, 100) <= 0 { continue; }
+        if wait_readable(fd, 100) <= 0 { continue; }
         sink.clear();
-        if sysnet::read_some(fd, sink) <= 0 { break; }
+        if read_some(fd, sink) <= 0 { break; }
     }
-    sysnet::net_close(fd);
+    net::close(fd);
 }
 
 fn log(method: const u8[:], target: const u8[:], status: i64, n: i64) {
@@ -176,7 +196,7 @@ fn log(method: const u8[:], target: const u8[:], status: i64, n: i64) {
     write_stderr(l);
 }
 
-fn serve(fd: i32, root: const u8[:], on_tls: bool, scfg: const tls::ServerConfig&) {
+fn serve(fd: i64, root: const u8[:], on_tls: bool, scfg: const tls::ServerConfig&) {
     var tc = tls::server(scfg);
     var hc = http::server_conn(http::server_options());
     var raw: u8[>..] = [];
@@ -189,9 +209,9 @@ fn serve(fd: i32, root: const u8[:], on_tls: bool, scfg: const tls::ServerConfig
     var target: u8[>..] = [];
     var first = true;               // nothing of HTTP/1.1 has been read yet
     loop {
-        if sysnet::net_wait(fd, IDLE_MS) <= 0 { break; }
+        if wait_readable(fd, IDLE_MS) <= 0 { break; }
         raw.clear();
-        if sysnet::read_some(fd, raw) <= 0 { break; }
+        if read_some(fd, raw) <= 0 { break; }
         // After the client's close_notify nothing more can be sent (and
         // TLS 1.2 discards what is pending), so a request that came with it
         // goes unanswered; the alert or our close_notify goes out as is.
@@ -244,7 +264,7 @@ fn serve(fd: i32, root: const u8[:], on_tls: bool, scfg: const tls::ServerConfig
         if !flush(fd, on_tls, tc, plain, wire) { break; }
         if late_ticket && on_tls && !stop && !http::closing(hc) && tls::version(tc) == tls::VERSION_TLS13 {
             // After the client has had time to read the response.
-            sysnet::net_wait(fd, 200);
+            wait_readable(fd, 200);
             if tls::send_session_ticket(tc, scfg, wire) && !flush(fd, false, tc, plain, wire) { break; }
         }
         if stop || http::closing(hc) {
@@ -344,7 +364,7 @@ fn h2_answer(c: http::H2Conn&, recs: u8[>..]&, root: const u8[:], sid: i64, out:
 
 // An HTTP/2 connection, `buf` holding what came after the TLS handshake
 // (or the preface on TCP).
-fn serve_h2(fd: i32, root: const u8[:], on_tls: bool, tc: tls::Conn&, scfg: const tls::ServerConfig&, buf0: const u8[:]) {
+fn serve_h2(fd: i64, root: const u8[:], on_tls: bool, tc: tls::Conn&, scfg: const tls::ServerConfig&, buf0: const u8[:]) {
     var c = http::h2_conn(http::h2_server_options());
     let max_body = http::server_options().max_body;
     var buf: u8[>..] = [];
@@ -410,13 +430,13 @@ fn serve_h2(fd: i32, root: const u8[:], on_tls: bool, tc: tls::Conn&, scfg: cons
         }
         if !flush(fd, on_tls, tc, plain, wire) { break; }
         if done || http::h2_closed(c) { break; }
-        if sysnet::net_wait(fd, IDLE_MS) <= 0 {
+        if wait_readable(fd, IDLE_MS) <= 0 {
             http::h2_goaway(c, plain);
             flush(fd, on_tls, tc, plain, wire);
             break;
         }
         raw.clear();
-        if sysnet::read_some(fd, raw) <= 0 { break; }
+        if read_some(fd, raw) <= 0 { break; }
         if on_tls {
             let r = tls::server_feed(tc, scfg, raw, wire, buf);
             if r != 0 || tls::closed(tc) { flush(fd, false, tc, plain, wire); break; }
@@ -471,12 +491,12 @@ fn make_answer(root: const u8[:], method: const u8[:], target: const u8[:], body
 // --- Running connections ----------------------------------------------------
 //
 // serve() handles one connection from accept to close, and blocks only in
-// sysnet (net_wait, net_read, net_write). What knows that connections run
+// net (wait_readable's poll, read, write). What knows that connections run
 // at once is this section. Each runs on a Goose thread (spec §11.2), a
 // contained one, so an abort ends that connection only, as a process of
 // its own did. With coroutines, conn_worker becomes a coroutine's body,
 // run_conn starts one, the slots and the reaper become the scheduler's
-// count, and sysnet's waits yield instead of blocking: serve() and what it
+// count, and net's waits yield instead of blocking: serve() and what it
 // calls stay as they are.
 //
 // A thread shares no memory: its arguments are copied in, and so is every
@@ -492,9 +512,9 @@ struct Site { root: u8[..4096], on_tls: bool }
 struct Slot { free: bool }
 
 // A connection's thread, for the reaper.
-struct Running { id: i64, fd: i32 }
+struct Running { id: i64, fd: i64 }
 
-thread_fn conn_worker(fd: i32, site: Site, scfg: tls::ServerConfig) {
+thread_fn conn_worker(fd: i64, site: Site, scfg: tls::ServerConfig) {
     serve(fd, site.root, site.on_tls, scfg);
     qput(Slot { free: true });
 }
@@ -507,7 +527,7 @@ thread_fn reaper() {
         let r = qget<Running>();
         var msg: u8[>..] = [];
         if !thread_wait(r.id, msg) {
-            sysnet::net_close(r.fd);
+            net::close(r.fd);
             qput(Slot { free: true });
             var line: u8[>..] = [];
             line.append("goose-httpd: a connection ended in an abort: ");
@@ -519,19 +539,19 @@ thread_fn reaper() {
 }
 
 // Serves fd on a thread of its own.
-fn run_conn(fd: i32, site: const Site&, scfg: const tls::ServerConfig&) {
+fn run_conn(fd: i64, site: const Site&, scfg: const tls::ServerConfig&) {
     let id = thread_spawn_contained(conn_worker, fd, site, copy(scfg));
     qput(Running { id: id, fd: fd });
 }
 
 // Accepts connections on lfd and runs each, at most max_conns at once; a
 // connection past them waits in the listening socket's queue.
-fn accept_loop(lfd: i32, max_conns: i64, site: const Site&, scfg: const tls::ServerConfig&) {
+fn accept_loop(lfd: i64, max_conns: i64, site: const Site&, scfg: const tls::ServerConfig&) {
     for k in max_conns { qput(Slot { free: true }); }
     thread_spawn(reaper);
     loop {
         let slot = qget<Slot>();
-        let fd = sysnet::net_accept(lfd);
+        let fd = net::accept(lfd, 0);
         if fd < 0 { qput(slot); continue; }
         run_conn(fd, site, scfg);
     }
@@ -573,7 +593,7 @@ fn main() {
         i += 2;
     }
     if root.len == 0 { die("--root is required"); }
-    let real_root = sysnet::realpath(root);
+    let real_root = sys::realpath(root);
     if real_root.len == 0 || !is_dir(real_root) { die("--root is no directory"); }
     if real_root.len > MAX_ROOT { die("--root's path is too long"); }
     let on_tls = cert.len > 0;
@@ -590,14 +610,13 @@ fn main() {
     else if tls_max != "1.3" { die("--tls-max is 1.2 or 1.3"); }
     if http2 { tls::add_alpn(scfg.alpn, "h2"); }
     tls::add_alpn(scfg.alpn, "http/1.1");
-    sysnet::net_init();
-    let lfd = sysnet::net_listen(listen, port as! i32);
+    let lfd = net::listen(listen, port);
     if lfd < 0 { die("cannot listen"); }
     var line: u8[>..] = [];
     line.append("goose-httpd: listening on ");
     line.append(listen);
     line.push(':');
-    format(line, sysnet::net_local_port(lfd));
+    format(line, net::local_port(lfd));
     line.append(if on_tls { " (TLS)\n" } else { "\n" });
     write_stderr(line);
     var site = Site { root: [], on_tls: on_tls };

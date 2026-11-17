@@ -35,6 +35,8 @@ import crypto.tls;
 import crypto.tls.handshake;
 import crypto.tls.session;
 import net;
+import net.ip;
+import net.idna;
 
 // A Response's errors.
 let ERR_NONE: i64 = 0;
@@ -929,10 +931,10 @@ fn conn_dial(c: Client&, i: i64, host: const u8[:], port: i64) -> i64 {
 // the rule that localhost and loopback addresses go direct) let `host`
 // (ASCII, lowered, no brackets) on `port` go through the proxy.
 fn use_proxy(c: const Client&, host: const u8[:], port: i64, loopback_rule: bool) -> bool {
-    let ip, kind = parse_ip(host);
+    let ip, kind = net::parse_ip(host);
     if loopback_rule {
         if host == "localhost" { return false; }
-        if kind != 0 && ip_is_loopback(ip, kind) { return false; }
+        if kind != 0 && net::ip_is_loopback(ip, kind) { return false; }
     }
     var port_text: u8[>..] = [];
     format(port_text, port);
@@ -941,7 +943,7 @@ fn use_proxy(c: const Client&, host: const u8[:], port: i64, loopback_rule: bool
         var low: u8[>..] = [];
         for ch in trim_ows(it) { low.push(lower(ch)); }
         // An entry outside ASCII in its ASCII form (Go's idnaASCII).
-        var p, aok = to_ascii_host(low);
+        var p, aok = net::to_ascii_host(low);
         if !aok { p.clear(); }
         if use && p.len > 0 {
             if p[..] == "*" { use = false; }
@@ -962,7 +964,7 @@ fn use_proxy(c: const Client&, host: const u8[:], port: i64, loopback_rule: bool
                     let colon = last_index(phost, ':');
                     if colon > 0 && position(phost[..colon], ':') < 0 { pport.append(phost[colon + 1..]); phost = phost[..colon]; }
                 }
-                let pip, pkind = parse_ip(phost);
+                let pip, pkind = net::parse_ip(phost);
                 if pkind != 0 {
                     if kind != 0 && ip_equal(ip, pip) && (pport.len == 0 || pport[..] == port_text[..]) { use = false; }
                 } else if phost.len > 0 && kind == 0 {
@@ -987,20 +989,11 @@ fn ip_equal(a: const u8[:], b: const u8[:]) -> bool { a == b }
 
 // Whether "ip/bits" holds the address.
 fn cidr_contains(p: const u8[:], ip: const u8[:], kind: i64) -> bool {
-    let slash = position(p, '/');
-    let net, nkind = parse_ip(p[..slash]);
-    let bits, ok = parse_int(p[slash + 1..]);
-    if nkind == 0 || !ok || bits < 0 { return false; }
-    // An IPv4 block's bits count from the IPv4 part of the 16 bytes.
-    let total = if nkind == 4 { bits + 96 } else { bits };
-    if (nkind == 4 && bits > 32) || total > 128 { return false; }
-    if (nkind == 4) != (kind == 4) { return false; }
-    for b in 128 {
-        if b >= total { break; }
-        let m = (0x80 >> (b % 8)) as! u8;
-        if (ip[b / 8] & m) != (net[b / 8] & m) { return false; }
-    }
-    return true;
+    let prefix, ok = net::parse_prefix(p);
+    var a = net::no_addr();
+    for i in 16 { a.ip[i] = ip[i]; }
+    a.kind = kind;
+    return ok && net::prefix_contains(prefix, a);
 }
 
 // The proxy for a URL, as Go's Proxy funcs choose it: its URL text, or
@@ -1062,7 +1055,7 @@ fn socks5_connect(c: Client&, i: i64, pu: const Url&, host: const u8[:], port: i
     got.clear();
     // The target by name (the proxy resolves it), or as an address.
     c.wire.append([5, 1, 0]);
-    let ip, kind = parse_ip(host);
+    let ip, kind = net::parse_ip(host);
     if kind == 4 { c.wire.push(1); c.wire.append(ip[12..16]); }
     else if kind == 6 { c.wire.push(4); c.wire.append(ip[..]); }
     else {

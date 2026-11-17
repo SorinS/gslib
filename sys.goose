@@ -366,6 +366,28 @@ fn read_all(fd: i64, out: u8[>..]&) -> i64 {
     return total;
 }
 
+// Writes data to path, readable and writable by its owner only (0600),
+// all or nothing: a new file beside it, synced and renamed over it, as
+// credential caches, keytabs and private keys are kept. 0, or the error.
+fn write_private(path: const u8[:], data: const u8[:]) -> i64 {
+    var attempt = 0;
+    var taken: i64 = 0;
+    while attempt < 100 {
+        let tmp = str(path, ".", getpid(), ".", attempt, ".tmp");
+        let fd = open(tmp, O_WRONLY | O_CREATE | O_EXCL, 384);
+        if is_exist(fd) { taken = fd; attempt++; continue; }
+        if fd < 0 { return fd; }
+        var e = write_all(fd, data);
+        if e == 0 { e = fsync(fd); }
+        let ce = close(fd);
+        if e == 0 { e = ce; }
+        if e == 0 { e = rename(tmp, path); }
+        if e != 0 { unlink(tmp); }
+        return e;
+    }
+    return taken;
+}
+
 // --- Another process's arguments ------------------------------------------------------------
 
 // Process pid's command line, as its words (Linux: /proc; macOS:

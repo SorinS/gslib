@@ -22,8 +22,6 @@ import gslib.jwx;
 import gslib.net;
 import gslib.net.http;
 import gslib.net.http.conn1;
-import gslib.dns;
-import gslib.dns.server;
 
 fn fail(s: const u8[:]) {
     print("rp_server: ", s);
@@ -88,7 +86,7 @@ fn username_of(body: const u8[:], out: u8[>..]&) -> bool {
 }
 
 fn serve(p: const webauthn::Policy&, port: i64) {
-    let fd = dns::dnsnet_listen("127.0.0.1", port as i32, 8);
+    let fd = net::listen("127.0.0.1", port);
     if fd < 0 { fail(str("cannot listen on 127.0.0.1:", port)); }
     write_stderr(str("rp_server: serving ", trim(p.origins), " (RP ID ", p.rp_id, "): open http://localhost:", port, "/\n"));
     var creds:           Stored[>..] = [];
@@ -98,7 +96,7 @@ fn serve(p: const webauthn::Policy&, port: i64) {
     var login_challenge: u8[..64]    = [];
     var login_user:      u8[..64]    = [];
     loop {
-        let c = dns::dnsnet_accept(fd, 1000);
+        let c = net::accept(fd, 1000);
         if c < 0 { continue; }
         var hc = http::server_conn(http::server_options());
         var raw:     u8[16384] = [0; 16384];

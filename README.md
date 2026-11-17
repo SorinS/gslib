@@ -36,14 +36,14 @@ later.
 | `tpm2` | TPM 2.0, as go-tpm with go-tpm-tools' checks: raw TCP (swtpm), the Microsoft simulator's protocol and Linux's /dev/tpmrm0; password, HMAC (bound, salted by RSA-OAEP or ECDH) and policy sessions with AES-CFB parameter encryption; the TCG EK and SRK templates, keys, signing, RSA-OAEP, ECDH, NV and EK certificates, PCRs, sealing to PCR policies; a policy calculator; Quote, Certify, CertifyCreation and ActivateCredential, with their verification, MakeCredential and TCG event log replay in software; goose-tpm | [README](tpm2/README.md) |
 | `webauthn` | WebAuthn Level 3 and passkeys for a relying party: registration and authentication options as the L3 JSON has them; registrations checked whole (clientDataJSON, the attestation object, authenticator data and its flags, the algorithm) with every attestation format but SafetyNet: none, packed, fido-u2f, tpm, android-key, apple, chained to the RP's roots by x509; authentications against the stored credential record (signature, user handle, counter, backup flags); FIDO MDS3 BLOBs verified and searched; goose-webauthn (options, verify, MDS, a demo RP for a real browser) | [README](webauthn/README.md) |
 | `net/http` | HTTP/1.1 and HTTP/2, server and client: a client with Go's policy (redirects, cookies, credentials, proxies, gzip, TLS session resumption, streaming uploads, several responses at once), URLs, cookies, HPACK; goose-http and goose-httpd | [README](net/http/README.md) |
-| `net` | TCP client sockets, as the client half of Go's net: `net::dial` with a deadline, `net::read` and `net::write` with timeouts, `net::readable`, `net::close`; what http, dns, krb5 and the examples connect with (POSIX and Winsock) | [net.goose](net.goose) |
+| `net` | Sockets and IP addresses, as Go's net and net/netip: TCP connections and listeners with timeouts, UDP connected or answering many, Unix-domain sockets, waiting on several sockets, the system resolver; addresses parsed, printed (RFC 5952), classified and checked against prefixes; host:port; Punycode host names; what http, ldap, dns, krb5 and the tools' servers talk through (POSIX and Winsock) | [README](net/README.md) |
 | `service` | Programs as system services, as Go's kardianos/service: one API for Windows services (the service control manager: dispatcher, control handler, stop, shutdown, pause, parameter changes; installing with a description, delayed start and restart on failure; the Application event log), systemd units (a user's or the system's) and launchd agents and daemons; begin, wait for the system's requests, end; install, uninstall, start, stop, restart, status, and those as a program's verbs | [README](service/README.md) |
 | `sys` | The operating system's own calls, as Go's golang.org/x/sys, os/user and x/term with go-win64api's Windows management, on Windows, Linux and macOS: the host, processes (list, arguments, executable, kill), users and groups, files by path and by descriptor (stat, links, locks, pipes, memory maps), errors sorted portably; the Windows registry; local accounts and groups, sessions, services, shares and installed software; signals as values, limits, usage and sysctl; terminals and consoles; its FFI generated from one table, as mksyscall | [README](sys/README.md) |
 | `sspi` | Windows' SSPI, as Go's alexbrainman/sspi: security packages, credentials (the login's or a password's), contexts a token at a time, sign/verify/seal/unseal; a TLS client on Windows' own Schannel (the system's roots, policy and TLS 1.3, peer certificate for x509, manual validation for test servers); HTTP Negotiate (RFC 4559) from the Windows login, Kerberos in a domain and NTLM otherwise, or as a user by password | [README](sspi/README.md) |
 
-## entropy, dns, pkcs11, jwx, mail, openpgp, acme, oauth, tsp, xml, est, scep, saml, ntlm, tpm2, webauthn, service, sys and sspi
+## entropy, net, dns, pkcs11, jwx, mail, openpgp, acme, oauth, tsp, xml, est, scep, saml, ntlm, tpm2, webauthn, service, sys and sspi
 
-These nineteen have the most to say beyond their table rows: what each
+These twenty have the most to say beyond their table rows: what each
 module does, how it was built and how it was tested. Each README has the
 full API.
 
@@ -70,6 +70,34 @@ everywhere: a fixed generator for tests that compare against recorded
 output, or a TPM's or an HSM's generator. Tested under the JIT and built
 natively on macOS, Linux and Windows Server 2022; a trial of the split
 repositories ran tls's tests with a replacement declared in their root.
+
+### net: sockets and addresses
+
+net is the transport the rest of gslib stands on, after Go's net and
+net/netip. It dials TCP connections, each address of a name in turn,
+with a deadline, and reads and writes with timeouts that hold even when a
+peer stops reading. It listens and accepts, gives both ends' addresses,
+waits on up to 256 sockets at once, writes what fits without waiting, and
+half-closes. UDP is either connected to one peer or bound to answer many,
+with each sender's address. There are Unix-domain stream sockets for
+ldapi://, and the system resolver for a name's addresses and an
+address's name. Sockets stay plain i64 descriptors, so a library can hand
+one to TLS or to poll; addresses have types: an Addr parsed by Go's
+rules and printed the RFC 5952 way, classified (loopback, private,
+link-local, multicast, global), with a port, and prefixes such as
+10.0.0.0/8 that say whether they hold an address. net.idna turns host
+names outside ASCII into Punycode.
+
+It used to be a TCP client and nothing more, so each server brought its
+own sockets: dns had UDP and listening ones, krb5 its own UDP exchange,
+and the http, ldap and gss tools each a POSIX-only C file. All of that is
+net now, in one C file that works on Windows too. IP parsing and Punycode
+moved out of http's URL code, and ldap's URLs now check a bracketed host
+as an IPv6 address. Tested on macOS, Linux and Windows (MSVC, natively
+too): parsing against Go's cases, printing round trips, every address
+class, prefixes and Go's Punycode vectors, and sockets on 127.0.0.1 and
+::1 covering accept timeouts, both ends' addresses, poll, a socket filled
+by write_some, half-closing, UDP both ways and each error.
 
 ### dns: the DNS
 
@@ -105,8 +133,8 @@ repositories ran tls's tests with a replacement declared in their root.
 
 A record is held as its uncompressed wire form, and a section or zone as
 records back to back, read through offsets: Goose has no interfaces or
-garbage collector for miekg's struct per type. The C (`dns/src/dnsnet.c`,
-in the package sidecar) is UDP and listening sockets; TCP is http's.
+garbage collector for miekg's struct per type. Its sockets, UDP, TCP
+and listening, are net's.
 
 Tested against miekg/dns itself, which `dns/scripts/oracle` (a Go module
 pinned to v1.1.73) uses to write the vectors: 160 records and 23 refusals,
@@ -909,13 +937,13 @@ modules a program imports are compiled. The libraries need one another (http nee
 tls, x509, asn1 and bignum), and since they are one package, a program
 declares only gslib.
 
-The C is net's TCP sockets (`net/src/net.c`, behind `net.goose`:
-`import gslib.net;`, then `net::dial`), mime's platform
-constant (`mime/src/path.c`), krb5's UDP, owner-only files and host
-names (`krb5/src/krb5sys.c`), pkcs11's module loading
-(`pkcs11/src/p11.c`) and dns's UDP and listening sockets
-(`dns/src/dnsnet.c`), named in `gslib.build` and compiled only into
-programs that call them. bignum reaches the OS's random bytes through
+The C is net's sockets (`net/src/net.c`, behind `net.goose`:
+`import gslib.net;`, then `net::dial`), mime's platform constant
+(`mime/src/path.c`), pkcs11's module loading (`pkcs11/src/p11.c`),
+tpm2's TPM device, service's service managers, sys's system calls and
+sspi's SSPI, named in `gslib.build` and compiled only into programs that
+call them. Libraries and tools reach the system through net and sys
+rather than C of their own. bignum reaches the OS's random bytes through
 libc, by an `extern "c"` block; mime's multipart takes them from there.
 
 ## Layout
@@ -929,7 +957,7 @@ gslib.goose, gslib.build              the package's entry and its sidecar
 <group>/<lib>/README.md               its documentation
 compress.goose, compress/             compress, laid out the same way at the top
 entropy.goose, entropy/src/           entropy and its C, the same
-net.goose, net/src/                   net's sockets and their C (net/ is also http's and ldap's group)
+net.goose, net/                       net's sockets (net/src), addresses (net/ip.goose) and IDNA; net/ is also http's and ldap's group
 mime.goose, mime/                     mime, the same
 mail.goose, mail/                     mail, the same
 acme.goose, acme/                     acme, the same

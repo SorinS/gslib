@@ -77,7 +77,9 @@ Files by descriptor (a HANDLE on Windows): `open(path, O_* flags, mode)`,
 `ftruncate`, `fstat`, `lock` (`LOCK_SHARED` or `LOCK_EXCLUSIVE` on the
 whole file, with `LOCK_NONBLOCK`; `flock` and `LockFileEx`), `pipe`,
 `std_fd(0..2)`, `isatty`; `write_all` and `read_all` loop over short
-writes and reads. The `O_*` flags are sys's own, the same everywhere.
+writes and reads, and `write_private` writes a file only its owner may
+read (0600), all or nothing: a new file beside it, synced and renamed
+over it, as credential caches, keytabs and keys are kept. The `O_*` flags are sys's own, the same everywhere.
 
 Memory maps: `map_file(fd, offset, length, writable, e) -> Map` (shared:
 writes reach the file; `map_sync` writes them now), `map_anonymous`,

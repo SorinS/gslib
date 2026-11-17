@@ -154,9 +154,13 @@ fn urls() {
     check("all parts", okf && f.dn == "ou=a,dc=x" && f.attrs == "cn,mail" && f.scope == ldap::SCOPE_ONE && f.filter == "(cn=a b)" && f.exts == "!x-ext");
     let six, ok6 = ldap::parse_url("ldap://[2001:db8::1]:10389/??sub");
     check("ipv6", ok6 && six.host == "2001:db8::1" && six.port == 10389 && six.scope == ldap::SCOPE_SUB);
+    let lo, oklo = ldap::parse_url("ldap://[::1]:389/");
+    check("ipv6 loopback", oklo && lo.host == "::1" && lo.port == 389);
+    let z, okz = ldap::parse_url("ldaps://[fe80::1%25en0]/");
+    check("ipv6 zone", okz && z.host == "fe80::1%en0" && z.port == 636);
     let e, oke = ldap::parse_url("ldap://h/??children");
     check("children scope", oke && e.scope == ldap::SCOPE_CHILDREN);
-    let bad = ["http://h", "ldap:/h", "ldap://h:0", "ldap://h:65536", "ldap://h:x", "ldap://[::1", "ldap://h/%zz", "ldap://h/??wide",
+    let bad = ["http://h", "ldap:/h", "ldap://h:0", "ldap://h:65536", "ldap://h:x", "ldap://[::1", "ldap://[nope]/", "ldap://[1.2.3.4]/", "ldap://[::1::2]/", "ldap://[]/", "ldap://h/%zz", "ldap://h/??wide",
                "ldap://h/a?b?base?c?d?e", "://h"];
     for b in bad {
         let x, okx = ldap::parse_url(b);

@@ -32,8 +32,6 @@ import gslib.krb5.ndr;
 import gslib.net;
 import gslib.net.http;
 import gslib.net.http.conn1;
-import gslib.dns;
-import gslib.dns.server;
 
 fn usage() {
     write_stderr("usage: negotiate_server --keytab FILE [--listen ADDR] [--port N] [--count N]\n");
@@ -159,14 +157,14 @@ fn main() {
     if kerr != krb5::OK { write_stderr(str("negotiate_server: ", keytab, ": ", krb5::error_text(kerr), "\n")); exit(1); }
     for e in kt { print("key: ", krb5::principal_string(e.name, e.realm), " kvno ", e.kvno, " etype ", e.key.etype); }
 
-    let fd = dns::dnsnet_listen(addr, port as! i32, 1);
+    let fd = net::listen(addr, port);
     if fd < 0 { write_stderr("negotiate_server: cannot listen\n"); exit(1); }
-    print("serving on ", addr, " port ", dns::dnsnet_local_port(fd));
+    print("serving on ", addr, " port ", net::local_port(fd));
     flush_stdout();
     var rc: krb5::ReplayEntry[>..] = [];
     var total = 0;
     loop {
-        let c = dns::dnsnet_accept(fd, 1000);
+        let c = net::accept(fd, 1000);
         if c < 0 { continue; }
         total += serve_conn(c, kt, rc);
         net::close(c);

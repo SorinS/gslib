@@ -42,8 +42,6 @@ import gslib.crypto.x509.keys;
 import gslib.crypto.x509.cms;
 import gslib.crypto.x509.pool;
 import gslib.encoding.asn1;
-import gslib.dns;
-import gslib.dns.server;
 
 struct Options {
     data:        u8[..512]  = [],
@@ -263,12 +261,12 @@ fn serve_conn(c: i64, t: tsp::Tsa&, o: const Options&) {
 fn serve(t: tsp::Tsa&, o: const Options&) -> i32 {
     if o.port < 0 { return usage(); }
     let addr = if o.listen.len > 0 { o.listen[..] } else { "127.0.0.1" };
-    let fd = dns::dnsnet_listen(addr, o.port, 1);
+    let fd = net::listen(addr, o.port);
     if fd < 0 { return fail(str("cannot listen on ", addr, " port ", o.port)); }
-    say(str("goose-ts: serving on ", addr, " port ", dns::dnsnet_local_port(fd)));
+    say(str("goose-ts: serving on ", addr, " port ", net::local_port(fd)));
     var served = 0;
     while o.count == 0 || served < o.count {
-        let c = dns::dnsnet_accept(fd, 1000);
+        let c = net::accept(fd, 1000);
         if c < 0 { continue; }
         serve_conn(c, t, o);
         served++;

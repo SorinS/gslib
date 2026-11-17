@@ -21,11 +21,10 @@ import gslib.net.ldap.conn;
 import gslib.net.ldap.ldif;
 import gslib.net.ldap.dn;
 import gslib.net.ldap.filter;
-import .sysnet;
 import .cli;
 
 fn usage(o: const cli::Opts&) -> i32 {
-    sysnet::eprint(str("usage: ", o.prog, " [options] [-a] [-c] [-f file]\nModify options:\n  -a          add plain entries (the default for goose-ldapadd)\n  -c          continue after errors\n  -f file     read the LDIF from file, not standard input\n", cli::COMMON_USAGE));
+    write_stderr(str("usage: ", o.prog, " [options] [-a] [-c] [-f file]\nModify options:\n  -a          add plain entries (the default for goose-ldapadd)\n  -c          continue after errors\n  -f file     read the LDIF from file, not standard input\n", cli::COMMON_USAGE));
     return 2;
 }
 
@@ -79,9 +78,9 @@ fn run() -> i32 {
         if k < 0 {
             let at = if r.error_line > 0 { r.error_line } else { r.line };
             if starts_with(err, "modify operation type is missing") {
-                sysnet::eprint(str("ldapmodify: ", err, " at line ", at, ", entry \"", r.dn, "\"\n"));
+                write_stderr(str("ldapmodify: ", err, " at line ", at, ", entry \"", r.dn, "\"\n"));
             } else {
-                sysnet::eprint(str("ldapmodify: ", err, " (line ", at, ", entry \"", r.dn, "\")\n"));
+                write_stderr(str("ldapmodify: ", err, " (line ", at, ", entry \"", r.dn, "\")\n"));
             }
             failure = ldap::RESULT_PARAM_ERROR;
             if !o.continuous { break; }

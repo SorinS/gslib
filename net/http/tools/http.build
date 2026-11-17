@@ -1,2 +1,1 @@
 output = "goose-http";
-c_sources = ["upfile.c"];

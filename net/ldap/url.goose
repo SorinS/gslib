@@ -2,12 +2,14 @@
 // DialURL take them: ldap://host:port (389), ldaps:// (636), and
 // ldapi:// with the socket's path percent-encoded as the host; then
 // optionally /dn?attributes?scope?filter?extensions, each
-// percent-decoded. A host in brackets is an IPv6 address.
+// percent-decoded. A host in brackets is an IPv6 address (net.ip's
+// rules; a zone as %25 and its name), checked as one.
 
 namespace ldap;
 
 import std;
 import net.ldap;
+import net.ip;
 
 struct Url {
     scheme: u8[..8],                   // "ldap", "ldaps" or "ldapi"
@@ -69,6 +71,10 @@ fn parse_url(text: const u8[:]) -> Url, bool {
     let port_text = hostport[p0..];
     var h: u8[>..] = [];
     if !percent_decode(hostport[h0..h1], h) || h.len > 1024 { return u, false; }
+    if h0 == 1 {
+        let ip, kind = net::parse_ip_zone(h);
+        if kind != 6 { return u, false; }
+    }
     u.host.append(h);
     if scheme == "ldap" { u.port = 389; }
     if scheme == "ldaps" { u.port = 636; }

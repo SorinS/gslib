@@ -50,12 +50,22 @@ import gslib.net.http.url;
 import gslib.net.http.cookie;
 import gslib.net.http.client;
 import gslib.net.http.fetch;
+import gslib.sys;
 
-extern fn upfile_open(path: const u8[:]) -> i64;
-extern fn upfile_size(fd: i64) -> i64;
-extern fn upfile_read(fd: i64, buf: u8[:]) -> i64;
-extern fn upfile_rewind(fd: i64) -> bool;
-extern fn upfile_close(fd: i64);
+// The -T file, read a piece at a time so a large one is not held in
+// memory: standard input for "-".
+fn upfile_open(path: const u8[:]) -> i64 {
+    if path == "-" { return sys::std_fd(0); }
+    let fd = sys::open(path, sys::O_RDONLY, 0);
+    return if fd < 0 { -1 } else { fd };
+}
+
+// The size of a regular file, or -1 (standard input, a pipe).
+fn upfile_size(fd: i64) -> i64 {
+    var st = sys::Stat { .. };
+    if sys::fstat(fd, st) != 0 || st.kind != sys::KIND_FILE { return -1; }
+    return st.size;
+}
 
 var silent = false;
 var verbose = false;
@@ -123,13 +133,13 @@ fn upload_to(c: http::Client&, method: const u8[:], url: const u8[:], fields: co
     // A file is read again for a hop that sends it again (curl rewinds it
     // too); standard input cannot be.
     var r = http::fetch_stream(c, method, target, f, size, size >= 0) { out: u8[>..]&, start: bool =>
-        if start && size >= 0 && !upfile_rewind(fd) { failed = true; }
+        if start && size >= 0 && sys::seek(fd, 0, sys::SEEK_SET) != 0 { failed = true; }
         let at = out.len;
         out.resize(at + 65536, 0);
-        let n = if failed { -1 } else { upfile_read(fd, out[at..]) };
+        let n = if failed { -1 } else { sys::read(fd, out[at..]) };
         if n < 0 { failed = true; out.resize(at); false } else { out.resize(at + n); n > 0 }
     };
-    upfile_close(fd);
+    if path != "-" { sys::close(fd); }
     if failed { die("reading the -T file failed"); }
     return r;
 }

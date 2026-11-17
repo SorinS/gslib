@@ -124,61 +124,39 @@ SPLITS = {
         ],
     ),
     "net": dict(
-        repo="netgoose", new=True, subdirs=["src", "scripts", "test"],
+        repo="netgoose", new=True, subdirs=["src", "scripts", "test", "ip.goose", "idna.goose", "README.md"],
         sidecar=(
-            "// net's sidecar: the TCP sockets of net.goose (src/net.c), compiled only\n"
+            "// net's sidecar: the sockets of net.goose (src/net.c), compiled only\n"
             "// into programs that call them.\n"
             "c_sources = [\"src/net.c\"];\n"
             "c_libs_windows = [\"ws2_32\"];\n"
             "\n"
             "// Programs, not the package's modules.\n"
-            "exclude = [\"test\", \"scripts\"];\n"),
+            "exclude = [\"examples\", \"test\", \"scripts\"];\n"),
         gitignore=["__pycache__/", "*.o"],
         fixups=[
             ("net.goose", "The C is net/src/net.c,", "The C is src/net.c,"),
             ("net.goose", "//   import net;        // from a program; `import net;` inside gslib",
              "//   import net;        // in a program whose root declares net"),
             ("net.goose", "// The libraries in net/ (http, ldap) are modules of their own, with their\n"
-             "// own namespaces; this one is `net::`.",
+             "// own namespaces; this one, ip and idna are `net::`.",
              "// http and ldap (httpgoose, ldapgoose) are packages of their own; this\n"
-             "// one is `net::`."),
+             "// one, ip and idna are `net::`."),
+            ("ip.goose", "//   import net.ip;      // `import net.ip;` inside gslib",
+             "//   import net.ip;"),
+            ("idna.goose", "//   import net.idna;    // `import net.idna;` inside gslib",
+             "//   import net.idna;"),
+            ("README.md", 'import gslib from "SorinS/gslib@v0.7.0";\nimport gslib.net;\nimport gslib.net.ip;',
+             'import net from "SorinS/netgoose@v0.7.0";\nimport net.ip;'),
+            ("README.md", "| `gslib.net` |", "| `net` |"),
+            ("README.md", "| `gslib.net.ip` |", "| `net.ip` |"),
+            ("README.md", "| `gslib.net.idna` |", "| `net.idna` |"),
+            ("README.md", "It is what gslib's http, ldap,\ndns and krb5 talk through, and what their tools serve on.",
+             "It is what gslib's http, ldap,\ndns and krb5 talk through (httpgoose and ldapgoose among them)."),
+            ("README.md", "The C is `net/src/net.c`, named in `gslib.build`", "The C is `src/net.c`, named in `net.build`"),
+            ("README.md", "python3 net/scripts/", "python3 scripts/"),
+            ("README.md", " DNS itself, record by record, is gslib's dns |", " |"),
         ],
-        readme=(
-            "# net\n"
-            "\n"
-            "TCP client sockets for the Goose language, after the client half of Go's\n"
-            "net package: a connection with a deadline on connecting, reads and\n"
-            "writes with timeouts, and a check whether an idle connection has been\n"
-            "closed. POSIX (macOS, Linux) and Windows (Winsock). It is what\n"
-            "[http](https://github.com/SorinS/httpgoose)'s client connects with.\n"
-            "\n"
-            "```goose\n"
-            "import net from \"SorinS/netgoose@{tag}\";\n"
-            "\n"
-            "let fd = net::dial(\"example.com\", 80, 5000);\n"
-            "if fd < 0 { ... }                     // one of net::ERR_*\n"
-            "net::write(fd, req, 5000);\n"
-            "let n = net::read(fd, buf, 5000);     // > 0 bytes, 0 at the end, < 0 error\n"
-            "net::close(fd);\n"
-            "```\n"
-            "\n"
-            "A connection is an i64, the socket. Every result >= 0 is a success; a\n"
-            "negative one is one of the `ERR_*` constants in net.goose, which also\n"
-            "documents each function. A timeout of 0 (or less) means none.\n"
-            "\n"
-            "The C is `src/net.c`, named by the sidecar `net.build` and compiled\n"
-            "only into programs that call it. The package needs no other.\n"
-            "\n"
-            "## Tests\n"
-            "\n"
-            "```bash\n"
-            "python3 scripts/net_check.py   # src/net.c without Goose, against servers on 127.0.0.1\n"
-            "```\n"
-            "\n"
-            "It compiles `test/native/net_drive.c` with `src/net.c` (cc, or `$CC`).\n"
-            "\n"
-            "This repository is gslib's `net` on its own, kept in step with gslib\n"
-            "(github.com/SorinS/gslib) by its `scripts/split.py`.\n"),
     ),
     "bignum": dict(
         repo="bigmongoose",
@@ -307,24 +285,12 @@ SPLITS = {
     "http": dict(
         repo="httpgoose",
         fixups=[
-            # net_check.py tests net's C, which is netgoose's now.
+            # net's tests are netgoose's.
             ("scripts/run_tests.py",
-             "run once, and net/scripts/net_check.py tests net/src/net.c. --native\n"
-             "also builds and runs the tests with the C compiler.",
-             "run once. --native also builds and runs the tests with the C compiler.\n"
-             "net's sockets are netgoose's, tested there (scripts/net_check.py)."),
-            ("scripts/run_tests.py",
-             "\n    # net/src/net.c, the sockets beneath http.client, on its own against\n"
-             "    # servers on 127.0.0.1 (net/scripts/net_check.py; it has a watchdog).\n"
-             "    if not args.k or args.k in \"net_check\":\n"
-             "        try:\n"
-             "            p = subprocess.run([sys.executable, os.path.join(ROOT, \"..\", \"scripts\", \"net_check.py\")],\n"
-             "                               capture_output=True, text=True, timeout=120)\n"
-             "            rc, out, err = p.returncode, p.stdout, p.stderr\n"
-             "        except subprocess.TimeoutExpired:\n"
-             "            rc, out, err = 1, \"\", \"net_check.py still running after 120 s\"\n"
-             "        check(\"net/scripts/net_check.py\", rc, out, err, None)\n",
-             ""),
+             "run once (net's own tests, net/src/net.c's among them, are net's\n"
+             "scripts/run_tests.py). --native also builds",
+             "run once (net's own tests, net/src/net.c's among them, are\n"
+             "netgoose's). --native also builds"),
             # The README names gslib's modules where they are separate packages here.
             ("README.md",
              "Sockets from gslib's `net` module (`net.goose`, C in `net/src/net.c`)",

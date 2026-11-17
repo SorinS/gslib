@@ -18,11 +18,10 @@ import gslib.net.ldap.conn;
 import gslib.net.ldap.ldif;
 import gslib.net.ldap.dn;
 import gslib.net.ldap.filter;
-import .sysnet;
 import .cli;
 
 fn usage(o: const cli::Opts&) -> i32 {
-    sysnet::eprint(str("usage: ", o.prog, " [options] [-z] dn <attr:value|attr::b64value>\nCompare options:\n  -z          quiet: print nothing\n", cli::COMMON_USAGE));
+    write_stderr(str("usage: ", o.prog, " [options] [-z] dn <attr:value|attr::b64value>\nCompare options:\n  -z          quiet: print nothing\n", cli::COMMON_USAGE));
     return 2;
 }
 

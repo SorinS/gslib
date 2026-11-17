@@ -25,6 +25,7 @@ import gslib.dns.zone;
 import gslib.dns.tsig;
 import gslib.dns.client;
 import gslib.dns.server;
+import gslib.net;
 
 let KEY_NAME = "loopback.example.com.";
 let SECRET = "bG9vcGJhY2sgZXhhbXBsZSBzZWNyZXQ=";
@@ -63,8 +64,8 @@ fn main() {
         var w: u8[>..] = [];
         let mac, pe = dns::pack_query(c, q, w);
         guard pe == dns::OK else { print("loopback: pack: ", dns::error_text(pe)); exit(1); }
-        let fd = dns::dnsnet_udp_open("127.0.0.1", srv.port);
-        guard fd >= 0 && dns::dnsnet_send(fd, w) == w.len else { print("loopback: cannot send"); exit(1); }
+        let fd = net::dial_udp("127.0.0.1", srv.port);
+        guard fd >= 0 && net::send(fd, w) == w.len else { print("loopback: cannot send"); exit(1); }
 
         // The server's turn: one request, answered from the zone.
         var seen_tsig = false;
@@ -97,8 +98,8 @@ fn main() {
         // The client's turn: the reply, matched to the query and checked.
         var buf: u8[>..] = [];
         buf.resize(1232, 0);
-        let n = dns::dnsnet_recv(fd, buf, 2000);
-        dns::dnsnet_close(fd);
+        let n = net::recv(fd, buf, 2000);
+        net::close(fd);
         guard n > 0 && dns::reply_matches(w, buf[..n]) else { print("loopback: no reply"); exit(1); }
         let raw = buf[..n];
         let rmac, te = dns::check_reply_tsig(c, raw, mac, false);

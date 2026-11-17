@@ -43,14 +43,14 @@ fn ask(host: const u8[:], tcp: bool) -> dns::Peer {
         }
         if fd >= 0 { net::close(fd); }
     } else {
-        let fd = dns::dnsnet_udp_open(host, srv.port);
-        if fd >= 0 && dns::dnsnet_send(fd, w) == w.len {
+        let fd = net::dial_udp(host, srv.port);
+        if fd >= 0 && net::send(fd, w) == w.len {
             dns::serve(srv, cfg) { req, resp, peer => seen = peer; };
             reply.resize(512, 0);
-            let n = dns::dnsnet_recv(fd, reply, 2000);
+            let n = net::recv(fd, reply, 2000);
             reply.resize(if n > 0 { n } else { 0 }, 0);
         }
-        if fd >= 0 { dns::dnsnet_close(fd); }
+        if fd >= 0 { net::close(fd); }
     }
     dns::server_close(srv);
     check(str(host, if tcp { " tcp" } else { " udp" }, ": a reply"), reply.len > 0 && dns::reply_matches(w, reply));
@@ -69,7 +69,7 @@ fn query_bytes(qname: const u8[:], edns: bool) -> u8[>..] {
 fn recv_reply(fd: i64) -> u8[>..] {
     var reply: u8[>..] = [];
     reply.resize(65535, 0);
-    let n = dns::dnsnet_recv(fd, reply, 2000);
+    let n = net::recv(fd, reply, 2000);
     reply.resize(if n > 0 { n } else { 0 }, 0);
     return reply;
 }
@@ -89,15 +89,15 @@ fn udp_once(w: const u8[:]) -> u8[>..], bool {
     var srv = dns::server_open(cfg);
     var reply: u8[>..] = [];
     var ran = false;
-    let fd = dns::dnsnet_udp_open("127.0.0.1", srv.port);
-    if srv.err == dns::OK && fd >= 0 && dns::dnsnet_send(fd, w) == w.len {
+    let fd = net::dial_udp("127.0.0.1", srv.port);
+    if srv.err == dns::OK && fd >= 0 && net::send(fd, w) == w.len {
         dns::serve(srv, cfg) { req, resp, peer =>
             ran = true;
             for i in 60 { dns::new_rr(resp.answer, str("big.example. 60 IN TXT \"record number ", i, " of sixty, padded out a little\"")); }
         };
         reply = recv_reply(fd);
     }
-    if fd >= 0 { dns::dnsnet_close(fd); }
+    if fd >= 0 { net::close(fd); }
     dns::server_close(srv);
     return reply, ran;
 }
@@ -150,25 +150,25 @@ fn slow_tcp() {
     let t = net::dial("127.0.0.1", srv.port, 2000);
     let one: u8[1] = [0];
     check("slow TCP: one byte", t >= 0 && net::write(t, one, 2000) == 1);
-    let u1 = dns::dnsnet_udp_open("127.0.0.1", srv.port);
-    let u2 = dns::dnsnet_udp_open("127.0.0.1", srv.port);
+    let u1 = net::dial_udp("127.0.0.1", srv.port);
+    let u2 = net::dial_udp("127.0.0.1", srv.port);
     let w1 = query_bytes("one.example.", false);
     let w2 = query_bytes("two.example.", false);
-    dns::dnsnet_send(u1, w1);
+    net::send(u1, w1);
     var n = 0;
     let start = clock_ns();
     // The first query's handler sends the second, which comes while the
     // server has the TCP connection.
     dns::serve(srv, cfg) { req, resp, peer =>
-        if n == 0 { dns::dnsnet_send(u2, w2); }
+        if n == 0 { net::send(u2, w2); }
         n++;
     };
     let ms = (clock_ns() - start) / 1000000;
     check(str("slow TCP: both UDP queries, in ", ms, " ms"), n == 2 && ms < 2500);
     let r2 = recv_reply(u2);
     check("slow TCP: second reply", dns::reply_matches(w2, r2));
-    dns::dnsnet_close(u1);
-    dns::dnsnet_close(u2);
+    net::close(u1);
+    net::close(u2);
     net::close(t);
     dns::server_close(srv);
 }
@@ -182,18 +182,18 @@ fn tcp_query_cap() {
     let t = net::dial("127.0.0.1", srv.port, 2000);
     let w = query_bytes("one.example.", false);
     check("TCP cap: two queries sent", t >= 0 && dns::write_tcp_msg(t, w, 2000) == dns::OK && dns::write_tcp_msg(t, w, 2000) == dns::OK);
-    let u = dns::dnsnet_udp_open("127.0.0.1", srv.port);
+    let u = net::dial_udp("127.0.0.1", srv.port);
     let wu = query_bytes("udp.example.", false);
     var tcp_seen = 0;
     dns::serve(srv, cfg) { req, resp, peer =>
-        if peer.tcp { tcp_seen++; dns::dnsnet_send(u, wu); }
+        if peer.tcp { tcp_seen++; net::send(u, wu); }
     };
     var r: u8[>..] = [];
     check("TCP cap: first answered", dns::read_tcp_msg(t, r, 2000) == dns::OK && dns::reply_matches(w, r));
     r.clear();
     check("TCP cap: then closed", tcp_seen == 1 && dns::read_tcp_msg(t, r, 2000) != dns::OK);
     check("TCP cap: UDP answered", dns::reply_matches(wu, recv_reply(u)));
-    dns::dnsnet_close(u);
+    net::close(u);
     net::close(t);
     dns::server_close(srv);
 }

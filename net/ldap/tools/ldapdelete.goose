@@ -18,11 +18,10 @@ import gslib.net.ldap.conn;
 import gslib.net.ldap.ldif;
 import gslib.net.ldap.dn;
 import gslib.net.ldap.filter;
-import .sysnet;
 import .cli;
 
 fn usage(o: const cli::Opts&) -> i32 {
-    sysnet::eprint(str("usage: ", o.prog, " [options] [-r] [-c] [-f file] [dn...]\nDelete options:\n  -r          delete recursively\n  -c          continue after errors\n  -f file     read the DNs from file\n", cli::COMMON_USAGE));
+    write_stderr(str("usage: ", o.prog, " [options] [-r] [-c] [-f file] [dn...]\nDelete options:\n  -r          delete recursively\n  -c          continue after errors\n  -f file     read the DNs from file\n", cli::COMMON_USAGE));
     return 2;
 }
 
@@ -45,7 +44,7 @@ fn below(o: const cli::Opts&, l: cli::Link&, cfg: const tls::ClientConfig&, c: l
             // As ldapdelete -r: the search's failure said, and the entry
             // itself deleted all the same.
             let rc = ldap::result_code(msgs, m);
-            if rc != 0 { sysnet::eprint(str("ldap_search: ", cli::err2string(rc), " (", rc, ")\n")); }
+            if rc != 0 { write_stderr(str("ldap_search: ", cli::err2string(rc), " (", rc, ")\n")); }
         }
         if m.op != ldap::OP_SEARCH_ENTRY { continue; }
         let e = ldap::entry_dn(msgs, m);

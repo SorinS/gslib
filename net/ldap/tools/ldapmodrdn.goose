@@ -18,11 +18,10 @@ import gslib.net.ldap.conn;
 import gslib.net.ldap.ldif;
 import gslib.net.ldap.dn;
 import gslib.net.ldap.filter;
-import .sysnet;
 import .cli;
 
 fn usage(o: const cli::Opts&) -> i32 {
-    sysnet::eprint(str("usage: ", o.prog, " [options] [-r] [-s newsuperior] [-c] [-f file] [dn newrdn]\nRename options:\n  -r          remove the old RDN's values\n  -s newsup   the new superior entry\n  -c          continue after errors\n  -f file     read DN and new RDN lines from file\n", cli::COMMON_USAGE));
+    write_stderr(str("usage: ", o.prog, " [options] [-r] [-s newsuperior] [-c] [-f file] [dn newrdn]\nRename options:\n  -r          remove the old RDN's values\n  -s newsup   the new superior entry\n  -c          continue after errors\n  -f file     read DN and new RDN lines from file\n", cli::COMMON_USAGE));
     return 2;
 }
 

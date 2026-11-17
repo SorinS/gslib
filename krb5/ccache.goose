@@ -14,7 +14,7 @@ import os;
 import krb5.crypto;
 import krb5.messages;
 import krb5.keytab;
-import krb5.sys;
+import sys;
 
 let CONF_REALM = "X-CACHECONF:";
 
@@ -361,7 +361,7 @@ fn ccache_save(name: const u8[:], cc: const CCache&) -> i64 {
     if !ok { return ERR_FORMAT; }
     var b: u8[>..] = [];
     ccache_encode(b, cc);
-    return if krb5sys_write_private(path, b) == 0 { OK } else { ERR_FILE };
+    return if sys::write_private(path, b) == 0 { OK } else { ERR_FILE };
 }
 
 // The default cache: $KRB5CCNAME, else FILE:/tmp/krb5cc_<uid> (MIT's
@@ -370,7 +370,7 @@ fn default_ccache_name() -> u8[>..] {
     var out: u8[>..] = [];
     if env("KRB5CCNAME", out) && out.len > 0 { return out; }
     out.clear();
-    let uid = krb5sys_uid();
+    let uid = sys::getuid();
     if uid >= 0 {
         out.append("FILE:/tmp/krb5cc_");
         format_int(out, uid, 10, 0, ' ');

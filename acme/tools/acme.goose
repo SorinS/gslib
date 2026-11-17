@@ -52,7 +52,7 @@ import gslib.dns.zone;
 import gslib.dns.update;
 import gslib.dns.client;
 import gslib.dns.server;
-import gslib.krb5.sys;
+import gslib.sys;
 
 struct Options {
     server:          u8[..512]  = [],
@@ -105,7 +105,7 @@ fn why(a: const acme::Client&, e: i64) -> u8[>..] {
     return out;
 }
 
-fn write_private(path: const u8[:], data: const u8[:]) -> bool { krb5::krb5sys_write_private(path, data) == 0 }
+fn write_private(path: const u8[:], data: const u8[:]) -> bool { sys::write_private(path, data) == 0 }
 
 // The account key from its file, or a new P-256 key written there.
 fn account_key(path: const u8[:]) -> jwk::Key, bool {
@@ -189,7 +189,7 @@ fn http01_response(req: const u8[:], thumb: const u8[:]) -> u8[>..] {
 thread_fn http01_server(fd: i64, thumb: u8[..64]) {
     var buf: u8[4096] = [0; 4096];
     loop {
-        let c = dns::dnsnet_accept(fd, 1000);
+        let c = net::accept(fd, 1000);
         if c < 0 { continue; }
         var req: u8[>..] = [];
         while find(req, "\r\n\r\n") < 0 && req.len < 8192 {
@@ -272,7 +272,7 @@ fn run_order(a: acme::Client&, hc: http::Client&, o: const Options&) -> i32 {
     let csr, cok = make_csr(o.names, k);
     if !cok { return fail("cannot make the certificate request"); }
     if o.http_port >= 0 {
-        let fd = dns::dnsnet_listen("", o.http_port, 1);
+        let fd = net::listen("", o.http_port);
         if fd < 0 { return fail(str("cannot listen on port ", o.http_port)); }
         var thumb: u8[..64] = [];
         thumb.append(jwk::thumbprint_b64(a.key));

@@ -157,8 +157,8 @@ system's roots), `LDAPTLS_REQCERT` (`never` or `allow` turn checking
 off), `LDAPTLS_CERT` and `LDAPTLS_KEY` (a client certificate, for
 EXTERNAL); `LDAPURI` and `LDAPBINDDN` stand in for `-H` and `-D`.
 Without `-x`, `-D`, `-w` or `-Y` there is no bind (OpenLDAP's would be
-SASL). tools/net.c is their operating-system part (TCP and Unix
-sockets, the terminal), for macOS and Linux.
+SASL). Their sockets are gslib's net (TCP, and Unix-domain for ldapi://)
+and the password prompt sys's terminal, so they run on Windows too.
 
 ## Examples
 

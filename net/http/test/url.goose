@@ -1,6 +1,6 @@
 // http.url: what scripts/url_differential.py does not compare with Go:
 // request targets, Host fields, Referer and redacted forms, ports,
-// queries and forms, IP addresses, Punycode (Go's cookiejar vectors).
+// queries and forms. IP addresses and Punycode are net's (net/test/ip.goose).
 
 import std;
 import gslib from "../../..";
@@ -186,94 +186,12 @@ fn queries() {
     check("nothing appended", d2, "");
 }
 
-fn ip(s: const u8[:], want_kind: i64, want_hex: const u8[:]) {
-    let a, kind = http::parse_ip(s);
-    if kind != want_kind { print("FAIL ip ", s, ": kind ", kind); failures++; return; }
-    if kind == 0 { return; }
-    var h: u8[>..] = [];
-    for c in a { format_uint(h, c, 16, 2, '0'); }
-    check(s, h, want_hex);
-}
-
-fn ips() {
-    ip("1.2.3.4", 4, "00000000000000000000ffff01020304");
-    ip("255.255.255.255", 4, "00000000000000000000ffffffffffff");
-    ip("01.2.3.4", 0, "");
-    ip("1.2.3", 0, "");
-    ip("1.2.3.4.5", 0, "");
-    ip("256.1.1.1", 0, "");
-    ip("1..2.3", 0, "");
-    ip("::", 6, "00000000000000000000000000000000");
-    ip("::1", 6, "00000000000000000000000000000001");
-    ip("1::", 6, "00010000000000000000000000000000");
-    ip("1:2:3:4:5:6:7:8", 6, "00010002000300040005000600070008");
-    ip("1:2:3:4:5:6:7::", 6, "00010002000300040005000600070000");
-    ip("1::8", 6, "00010000000000000000000000000008");
-    ip("::ffff:1.2.3.4", 6, "00000000000000000000ffff01020304");
-    ip("1:2:3:4:5:6:1.2.3.4", 6, "00010002000300040005000601020304");
-    ip("abcd:EF01::", 6, "abcdef01000000000000000000000000");
-    ip("1:2:3:4:5:6:7:8:9", 0, "");
-    ip("1:2:3:4:5:6:7:8::", 0, "");
-    ip("::1:2:3:4:5:6:7:8", 0, "");
-    ip("1::2::3", 0, "");
-    ip(":::", 0, "");
-    ip("12345::", 0, "");
-    ip("1:", 0, "");
-    ip(":1", 0, "");
-    ip("1:2:3:4:5:6:7:1.2.3.4", 0, "");
-    ip("::1.2.3", 0, "");
-    ip("", 0, "");
-    check_bool("zone", http::is_ip("fe80::1%en0"), true);
-    check_bool("empty zone", http::is_ip("fe80::1%"), false);
-    check_bool("v4 zone", http::is_ip("1.2.3.4%x"), false);
-    let l1, k1 = http::parse_ip("127.9.9.9");
-    check_bool("127/8 loopback", http::ip_is_loopback(l1, k1), true);
-    let l2, k2 = http::parse_ip("::1");
-    check_bool("::1 loopback", http::ip_is_loopback(l2, k2), true);
-    let l3, k3 = http::parse_ip("::2");
-    check_bool("::2 not loopback", http::ip_is_loopback(l3, k3), false);
-    let l4, k4 = http::parse_ip("::ffff:127.0.0.1");
-    check_bool("mapped loopback", http::ip_is_loopback(l4, k4), true);
-}
-
-fn unhex(s: const u8[:]) -> u8[>..] {
-    var out: u8[>..] = [];
-    if s == "-" { return out; }
-    var i = 0;
-    while i + 1 < s.len {
-        out.push((http::url_hex(s[i]) * 16 + http::url_hex(s[i + 1])) as! u8);
-        i += 2;
-    }
-    return out;
-}
-
-fn punycode() {
-    let data = embed_file("vectors/punycode.txt");
-    var n = 0;
-    each_split(data, '\n') {
-        let line = it;
-        let sp = position(line, ' ');
-        if line.len > 0 && line[0] != '#' && sp > 0 {
-            let label = unhex(line[..sp]);
-            var want: u8[>..] = [];
-            if line[sp + 1..] != "-" { want.append(line[sp + 1..]); }
-            var got: u8[>..] = [];
-            check_bool("punycode ok", http::punycode_encode(got, label), true);
-            check(line, got, want);
-            n++;
-        }
-    };
-    print("punycode vectors: ", n);
-}
-
 fn main() {
     targets();
     hosts();
     parts();
     resolution();
     queries();
-    ips();
-    punycode();
     if failures > 0 { print(failures, " failures"); exit(1); }
     print("url: all passed");
 }

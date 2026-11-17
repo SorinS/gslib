@@ -26,6 +26,8 @@ namespace http;
 import std;
 import net.http;
 import net.http.url;
+import net.ip;
+import net.idna;
 
 // --- Set-Cookie (RFC 6265 §5.2) --------------------------------------------
 
@@ -344,7 +346,7 @@ fn psl_load(p: Psl&, text: const u8[:]) -> i64 {
             if body[0] == '!' { excl = true; body = body[1..]; }
             var low: u8[>..] = [];
             for ch in body { low.push(lower(ch)); }
-            let a, ok = to_ascii_host(low);
+            let a, ok = net::to_ascii_host(low);
             if ok && a.len > 0 {
                 if excl { p.rules.push('!'); }
                 p.rules.append(a);
@@ -370,7 +372,7 @@ fn registrable_domain(p: const Psl&, name: const u8[:]) -> u8[>..], bool {
     if name.len == 0 || name[0] == '.' { return d, false; }
     var low: u8[>..] = [];
     for ch in name { low.push(lower(ch)); }
-    let a, ok = to_ascii_host(low);
+    let a, ok = net::to_ascii_host(low);
     if !ok || find(a, "..") >= 0 { return d, false; }
     let ps = public_suffix(p, a);
     if ps.len >= a.len { return d, false; }
@@ -548,7 +550,7 @@ fn canonical_host(hostport: const u8[:]) -> u8[>..], bool {
         }
     }
     if h.len > 0 && h[h.len - 1] == '.' { h = h[..h.len - 1]; }
-    let a, ok = to_ascii_host(h);
+    let a, ok = net::to_ascii_host(h);
     if !ok { return out, false; }
     for ch in a { out.push(lower(ch)); }
     return out, true;
@@ -571,7 +573,7 @@ fn cookie_host(u: const Url&) -> u8[>..], bool {
 // IPv4 address.
 fn cookie_is_ip(h: const u8[:]) -> bool {
     if position(h, ':') >= 0 || position(h, '%') >= 0 { return true; }
-    let ip, kind = parse_ip(h);
+    let ip, kind = net::parse_ip(h);
     return kind == 4;
 }
 
@@ -721,8 +723,8 @@ fn should_send(d: const u8[:], r: const CookieRec&, https: bool, host: const u8[
     if !dm || !cookie_path_match(path, d[r.path.pos..r.path.end]) { return false; }
     if (r.flags & CK_SECURE) == 0 || https { return true; }
     if is_localhost_domain(domain) { return true; }
-    let ip, kind = parse_ip(domain);
-    return ip_is_loopback(ip, kind);
+    let ip, kind = net::parse_ip(domain);
+    return net::ip_is_loopback(ip, kind);
 }
 
 // The cookies to send to u at now_ms, in Go's order (by path, longest
