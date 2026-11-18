@@ -2,7 +2,8 @@
 // mechListMIC both ways and sealing after it (the RC4 state reset), a raw
 // NTLMSSP token where SPNEGO was expected, an initiator listing Kerberos
 // first (NTLM chosen, a round more), no NTLM offered (rejected), a
-// mechListMIC changed or stripped, a wrong password.
+// mechListMIC changed or stripped, a wrong password; anonymous, with no
+// keys and so no mechListMIC either way (as SMB's null sessions are).
 import std;
 import os;
 import gslib from "../..";
@@ -185,8 +186,44 @@ fn hostile() {
     tv::check_err("wrong password", tampered("wrong", false, false), ntlm::ERR_LOGON);
 }
 
+fn anonymous() {
+    var cli = krb5::spnego_ntlm_initiator(ntlm::anonymous_credentials(), "cifs/fs.example.test", 0);
+    var a = ntlm::acceptor("WEB", "EXAMPLE", "web.example.test", "example.test");
+    a.allow_anonymous = true;
+    var srv = krb5::spnego_ntlm_acceptor(a);
+    var t1: u8[>..] = [];
+    tv::check_err("anonymous: init", krb5::spnego_ntlm_init(cli, t1), ntlm::OK);
+    var t2: u8[>..] = [];
+    let d1, e1 = step(srv, t1, t2);
+    tv::check("anonymous: accept 1", !d1 && e1 == ntlm::OK);
+    var t3: u8[>..] = [];
+    let c1, ce1 = krb5::spnego_ntlm_init_continue(cli, t2, NOW, t3);
+    tv::check("anonymous: continue 1, no mechListMIC", !c1 && ce1 == ntlm::OK && !cli.mic_sent);
+    var t4: u8[>..] = [];
+    let d2, e2 = step(srv, t3, t4);
+    tv::check_err("anonymous: accept 2", e2, ntlm::OK);
+    tv::check("anonymous: acceptor done, no MICs", d2 && srv.complete && srv.acc.anonymous && !srv.mic_sent);
+    var t5: u8[>..] = [];
+    let c2, ce2 = krb5::spnego_ntlm_init_continue(cli, t4, NOW, t5);
+    tv::check_err("anonymous: continue 2", ce2, ntlm::OK);
+    tv::check("anonymous: initiator done, no keys", c2 && cli.complete && !krb5::spnego_ntlm_session(cli).keys);
+    // An acceptor that does not allow anonymous refuses it.
+    var cli2 = krb5::spnego_ntlm_initiator(ntlm::anonymous_credentials(), "cifs/fs.example.test", 0);
+    var srv2 = acceptor();
+    var u1: u8[>..] = [];
+    krb5::spnego_ntlm_init(cli2, u1);
+    var u2: u8[>..] = [];
+    step(srv2, u1, u2);
+    var u3: u8[>..] = [];
+    krb5::spnego_ntlm_init_continue(cli2, u2, NOW, u3);
+    var u4: u8[>..] = [];
+    let d3, e3 = step(srv2, u3, u4);
+    tv::check_err("anonymous refused", e3, ntlm::ERR_ANONYMOUS);
+}
+
 fn main() {
     good();
+    anonymous();
     raw();
     other_mechs();
     hostile();

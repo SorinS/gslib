@@ -35,6 +35,7 @@ later.
 | `ntlm` | NTLM authentication ([MS-NLMP]), NTLMv2 only (no LM or NTLMv1 response is ever made, and the acceptor refuses them): NEGOTIATE, CHALLENGE and AUTHENTICATE with their AV_PAIRs, an initiator and an acceptor (the NT hash looked up through a block) checking NTProofStr, the MIC, the time, channel bindings (tls-server-end-point) and the target name; signing and sealing; NTLM inside SPNEGO (krb5), over HTTP (net/http's fetch, `AUTH_NTLM`) and in SMTP/POP3/IMAP AUTH (mail); goose-ntlm (compute, decode, a test HTTP server, a client) | [README](ntlm/README.md) |
 | `tpm2` | TPM 2.0, as go-tpm with go-tpm-tools' checks: raw TCP (swtpm), the Microsoft simulator's protocol and Linux's /dev/tpmrm0; password, HMAC (bound, salted by RSA-OAEP or ECDH) and policy sessions with AES-CFB parameter encryption; the TCG EK and SRK templates, keys, signing, RSA-OAEP, ECDH, NV and EK certificates, PCRs, sealing to PCR policies; a policy calculator; Quote, Certify, CertifyCreation and ActivateCredential, with their verification, MakeCredential and TCG event log replay in software; goose-tpm | [README](tpm2/README.md) |
 | `radius` | RADIUS, both sides, as FreeRADIUS speaks it: packets and their authenticators with the Message-Authenticator always first (BlastRADIUS), hidden attributes (User-Password, CHAP, Tunnel-Password, MS-MPPE keys), a client over UDP and RadSec (RADIUS over TLS) with PAP, CHAP, MS-CHAPv2, EAP, accounting, Status-Server, CoA and Disconnect, a server's handling of each request; EAP peer and server for MD5, MS-CHAPv2, EAP-TLS, PEAP and TTLS over TLS 1.2 and 1.3 with their keys; goose-radtest and goose-radiusd | [README](radius/README.md) |
+| `smb` | An SMB2 and SMB3 client, as Windows and Samba speak it: dialects 2.0.2 to 3.1.1, NEGOTIATE with 3.1.1's contexts and 3.0's validate-negotiate, SPNEGO logins with NTLMv2 or Kerberos, signing (HMAC-SHA256, AES-CMAC, AES-GMAC) and encryption (AES-128/256 CCM and GCM) required where the server or the client asks and checked on every response; shares, files and directories: read and write with multi-credit requests, list, stat, rename, delete, truncate, times, the share's space; goose-smbclient | [README](smb/README.md) |
 | `webauthn` | WebAuthn Level 3 and passkeys for a relying party: registration and authentication options as the L3 JSON has them; registrations checked whole (clientDataJSON, the attestation object, authenticator data and its flags, the algorithm) with every attestation format but SafetyNet: none, packed, fido-u2f, tpm, android-key, apple, chained to the RP's roots by x509; authentications against the stored credential record (signature, user handle, counter, backup flags); FIDO MDS3 BLOBs verified and searched; goose-webauthn (options, verify, MDS, a demo RP for a real browser) | [README](webauthn/README.md) |
 | `net/http` | HTTP/1.1 and HTTP/2, server and client: a client with Go's policy (redirects, cookies, credentials, proxies, gzip, TLS session resumption, streaming uploads, several responses at once), URLs, cookies, HPACK; goose-http and goose-httpd | [README](net/http/README.md) |
 | `net` | Sockets and IP addresses, as Go's net and net/netip: TCP connections and listeners with timeouts, UDP connected or answering many, Unix-domain sockets, waiting on several sockets, the system resolver; addresses parsed, printed (RFC 5952), classified and checked against prefixes; host:port; Punycode host names; what http, ldap, dns, krb5 and the tools' servers talk through (POSIX and Winsock) | [README](net/README.md) |
@@ -42,9 +43,9 @@ later.
 | `sys` | The operating system's own calls, as Go's golang.org/x/sys, os/user and x/term with go-win64api's Windows management, on Windows, Linux and macOS: the host, processes (list, arguments, executable, kill), users and groups, files by path and by descriptor (stat, links, locks, pipes, memory maps), errors sorted portably; the Windows registry; local accounts and groups, sessions, services, shares and installed software; signals as values, limits, usage and sysctl; terminals and consoles; its FFI generated from one table, as mksyscall | [README](sys/README.md) |
 | `sspi` | Windows' SSPI, as Go's alexbrainman/sspi: security packages, credentials (the login's or a password's), contexts a token at a time, sign/verify/seal/unseal; a TLS client on Windows' own Schannel (the system's roots, policy and TLS 1.3, peer certificate for x509, manual validation for test servers); HTTP Negotiate (RFC 4559) from the Windows login, Kerberos in a domain and NTLM otherwise, or as a user by password | [README](sspi/README.md) |
 
-## entropy, net, dns, pkcs11, jwx, mail, openpgp, acme, oauth, tsp, xml, est, scep, saml, ntlm, tpm2, webauthn, radius, service, sys and sspi
+## entropy, net, dns, pkcs11, jwx, mail, openpgp, acme, oauth, tsp, xml, est, scep, saml, ntlm, tpm2, webauthn, radius, smb, service, sys and sspi
 
-These twenty-one have the most to say beyond their table rows: what each
+These twenty-two have the most to say beyond their table rows: what each
 module does, how it was built and how it was tested. Each README has the
 full API.
 
@@ -744,6 +745,54 @@ versions, RadSec both ways (FreeRADIUS proxying over it too), with the
 MS-MPPE keys matching the MSK on every side: 57 checks. A libFuzzer
 target covers the parser, EAP's reassembly and the server's handling.
 
+### smb: an SMB2 and SMB3 client
+
+`smb` reads and writes files on Windows and Samba file servers. It
+speaks every SMB2 and SMB3 dialect, 2.0.2, 2.1, 3.0, 3.0.2 and 3.1.1,
+over TCP port 445, and logs in through SPNEGO with NTLMv2 (gslib's
+`ntlm`) or Kerberos with a service ticket from gslib's `krb5`, the
+server's AP-REP checked. Then come shares and files: trees, CREATE and
+CLOSE, READ and WRITE cut to the server's maximums and charged several
+credits each when the server allows large ones, directory listings,
+file and file system information, times and sizes set, renames and
+deletes, and whole files read or written in one call.
+
+Its first concern is that nothing the session should protect gets
+through unprotected. Signing is required by default; encryption is used
+when the server asks for it, for the session or a share, or when the
+client requires it. Every response is then checked: one that should
+have been signed or encrypted and was not, or whose signature or tag is
+wrong, fails the request. The negotiation is protected too: under 3.1.1
+the session's keys come from a SHA-512 hash of every NEGOTIATE and
+SESSION_SETUP message, and the server's signature on its last
+SESSION_SETUP response is checked with them; under 3.0 and 3.0.2 a
+signed FSCTL_VALIDATE_NEGOTIATE_INFO follows the first TREE_CONNECT.
+Signing is HMAC-SHA256 on 2.x, AES-128-CMAC on 3.x and AES-128-GMAC
+when 3.1.1 negotiates it; encryption is AES-128-CCM on 3.0 and 3.0.2,
+and AES-128-GCM, AES-128-CCM, AES-256-GCM or AES-256-CCM on 3.1.1, the
+256-bit keys from the whole Kerberos session key. Keys come from SP
+800-108's KDF with each dialect's labels. AES-CCM was new to gslib:
+`crypto/bignum` gained `bignum.ccm`. goose-smbclient is a small
+smbclient: ls, get, put, cat, mkdir, rmdir, rm, mv, stat, truncate,
+touch, df and info, several in one connection.
+
+Tested against Microsoft's published SMB 3 vectors (the 3.1.1 preauth
+hash over real Windows messages, the keys of seven sessions, signatures,
+and WRITE and READ messages encrypted and decrypted with CCM and GCM,
+byte for byte both ways), Windows's own requests rebuilt byte for byte,
+and every truncation of a response refused; and live (`make
+interop-smb`, Docker) against Samba 4.17: every dialect with every file
+operation and Samba's smbclient reading what it wrote and the other way,
+both 3.1.1 signing algorithms, AES-128-CCM on 3.0 and 3.0.2 and all
+four ciphers on 3.1.1, shares and
+servers that require encryption, Kerberos against Samba's AD DC
+(including AES-256-GCM), anonymous sessions, refusals, and a man in the
+middle changing one response at a time (a signature, the SIGNED flag,
+an encrypted message, the final SESSION_SETUP, a NEGOTIATE under 3.1.1
+and under 3.0), which every time fails the client: 57 checks. A
+libFuzzer target covers the response parsers, decryption and signature
+checks.
+
 ### service: system services
 
 `service` makes a Goose program a system service on the three platforms
@@ -1081,6 +1130,7 @@ saml.goose, saml/                     saml, the same
 ntlm.goose, ntlm/                     ntlm, the same
 tpm2.goose, tpm2/                     tpm2, the same
 radius.goose, radius/                 radius, the same
+smb.goose, smb/                       smb, the same
 webauthn.goose, webauthn/             webauthn, the same
 service.goose, service/, service/src/ service, the same, and its C
 sys.goose, sys/, sys/src/             sys and its modules (registry, windows, unix, term, process), the same, and its C

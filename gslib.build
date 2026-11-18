@@ -46,6 +46,7 @@ exclude = [
     "scep/test", "scep/tools",
     "ntlm/test", "ntlm/tools",
     "radius/test", "radius/tools",
+    "smb/test", "smb/tools", "smb/scripts",
     "saml/test", "saml/tools",
     "webauthn/test", "webauthn/tools",
     "tpm2/test", "tpm2/tools", "tpm2/scripts",

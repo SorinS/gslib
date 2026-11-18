@@ -6,8 +6,9 @@ every number in signed lowercase hex (`-1f`, `0`); test/vectors/x25519.txt:
 `scalar u result` as 32-byte little-endian hex, from an RFC 7748 transcription;
 and sha256.txt, aes.txt, gcm.txt and rsa.txt from hashlib and transcriptions
 of FIPS 197, SP 800-38D and RFC 8017 (see crypto_vectors.py), and the rest
-from extra_vectors.py, parity_vectors.py and camellia_vectors.py, all
-cross-checked against the openssl command when it is installed.
+from extra_vectors.py, parity_vectors.py, camellia_vectors.py and
+ccm_vectors.py, all cross-checked against the openssl command when it is
+installed (ccm.txt against the published vectors only).
 Deterministic (fixed seed).
 
     python3 scripts/gen_vectors.py [count_per_op]
@@ -187,6 +188,9 @@ def main():
         write(name, lines)
     import camellia_vectors
     for name, lines in camellia_vectors.generate().items():
+        write(name, lines)
+    import ccm_vectors
+    for name, lines in ccm_vectors.generate().items():
         write(name, lines)
 
 

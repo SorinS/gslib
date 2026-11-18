@@ -50,6 +50,8 @@ language, written in Goose: a foundation for cryptography.
   block cipher here: AES-CMAC, Camellia-CMAC; constant time when the
   cipher is.
 - **`bignum.gcm`**: AES-GCM authenticated encryption, constant time.
+- **`bignum.ccm`**: AES-CCM (SP 800-38C, RFC 3610), SMB 3's cipher,
+  constant time.
 - **`bignum.keywrap`**: AES Key Wrap (RFC 3394, SP 800-38F KW) and with
   padding (RFC 5649, KWP), constant time; JOSE's A*KW uses it.
 - **`bignum.modes`**: CBC, CFB, OFB and CTR over any of the block ciphers,
@@ -285,6 +287,13 @@ lengths work too. A message is at most `GCM_MAX` bytes ((2^32 − 2) · 16,
 SP 800-38D): encrypting more aborts, as Go panics, and opening more fails;
 `gcm_fits(n)` is the check all four use. Opening with a key of the wrong
 length or an empty nonce returns false rather than aborting.
+
+`aes_ccm_seal(key, nonce, aad, pt, tag_len)` and `aes_ccm_open` are CCM
+the same way, and `ccm_encrypt` / `ccm_decrypt` work in place with an
+expanded key. Nonces are 7 to 13 bytes and tags 4 to 16 (even); a message
+must fit the counter the nonce leaves (`ccm_fits`): encrypting outside
+those aborts, opening fails. A tag is checked at its full length, never as
+a prefix.
 
 `bignum.modes` has the other modes of Go's crypto/cipher, written once
 over any block cipher with a `cipher_encrypt` overload (AES, Camellia, DES

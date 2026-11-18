@@ -1,0 +1,2 @@
+ms.txt: 10 preauth, 3 kdf30, 4 kdf311, 4 sign, 12 transform
+134 checks, 0 failures

@@ -24,7 +24,7 @@
 // - `bignum.rsa`: key generation, key loading, the private-key operation
 //   (CRT, blinded) and encryption; `bignum.dsa` signing and `bignum.ffdh`,
 //   all built on `ct` and `mont`;
-// - `bignum.aes`, `bignum.gcm`, `bignum.camellia`, `bignum.cmac`,
+// - `bignum.aes`, `bignum.gcm`, `bignum.ccm`, `bignum.camellia`, `bignum.cmac`,
 //   `bignum.des`, `bignum.mlkem`, `bignum.mldsa` and `bignum.slhdsa`
 //   need no bignum, and are constant time themselves (SLH-DSA's secrets
 //   only enter hashes; what it branches on is in the signature).
