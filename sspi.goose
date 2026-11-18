@@ -22,44 +22,20 @@
 //
 // Results are SSPI's status codes: OK (SEC_E_OK, 0), SEC_I_* (> 0, a
 // step that goes on) or SEC_E_* (< 0, an error); error_text says each.
-// Credentials and contexts are ids (> 0), their handles kept by the C
-// half (sspi/src/sspi.c), which loads secur32 and crypt32 when first
-// used. A context is used from one thread at a time.
+// Credentials and contexts are ids (> 0), their handles kept by
+// sspi.native, which binds secur32 and crypt32 with extern blocks. An id
+// is used on the thread that made it, by one thread at a time.
 //
 // Windows only: elsewhere every call returns SEC_E_UNSUPPORTED_FUNCTION,
-// so a program that uses it builds and runs everywhere and asks
-// available() first.
+// so a program that uses it builds everywhere and asks available()
+// first. It starts there with a goose whose runtime leaves the libraries
+// gslib.build spells "-" unopened (sspi/README.md).
 
 namespace sspi;
 
 import std;
 
-extern fn gsspi_platform() -> i32;
-extern fn gsspi_packages(out: u8[:]) -> i64;
-extern fn gsspi_package_info(name: const u8[:], out: u8[:]) -> i64;
-extern fn gsspi_acquire(package: const u8[:], use_: i32, user: const u8[:], domain: const u8[:], password: const u8[:]) -> i64;
-extern fn gsspi_acquire_schannel(flags: i32, min_version: i32, max_version: i32) -> i64;
-extern fn gsspi_free_credentials(id: i64) -> i32;
-extern fn gsspi_context(cred: i64, server: i32) -> i64;
-extern fn gsspi_delete_context(id: i64) -> i32;
-extern fn gsspi_feed(id: i64, data: const u8[:]) -> i64;
-extern fn gsspi_pending_input(id: i64) -> i64;
-extern fn gsspi_step(id: i64, target: const u8[:], flags: i32, out: u8[:]) -> i64;
-extern fn gsspi_out_len(id: i64) -> i64;
-extern fn gsspi_context_flags(id: i64) -> i64;
-extern fn gsspi_context_package(id: i64, out: u8[:]) -> i64;
-extern fn gsspi_context_user(id: i64, out: u8[:]) -> i64;
-extern fn gsspi_peer_certificate(id: i64, out: u8[:]) -> i64;
-extern fn gsspi_connection(id: i64, which: i32, out: u8[:]) -> i64;
-extern fn gsspi_max_message(id: i64) -> i64;
-extern fn gsspi_encrypt(id: i64, data: const u8[:], out: u8[:]) -> i64;
-extern fn gsspi_decrypt(id: i64, out: u8[:]) -> i64;
-extern fn gsspi_shutdown(id: i64, out: u8[:]) -> i64;
-extern fn gsspi_take_output(id: i64, out: u8[:]) -> i64;
-extern fn gsspi_sign(id: i64, msg: const u8[:], out: u8[:]) -> i64;
-extern fn gsspi_verify(id: i64, msg: const u8[:], sig: const u8[:]) -> i64;
-extern fn gsspi_seal(id: i64, msg: const u8[:], out: u8[:]) -> i64;
-extern fn gsspi_unseal(id: i64, msg: const u8[:], out: u8[:]) -> i64;
+import sspi.native;
 
 // --- Packages and constants -----------------------------------------------------
 

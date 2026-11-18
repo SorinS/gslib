@@ -264,13 +264,11 @@ SPLITS = {
     "sspi": dict(
         repo="sspigoose", new=True,
         sidecar=(
-            "// sspi's sidecar: src/sspi.c, SSPI's handles and buffers (secur32 and\n"
-            "// crypt32 are loaded at run time: nothing to link), compiled only into\n"
-            "// programs that call it.\n"
-            "c_sources = [\"src/sspi.c\"];\n"
-            "\n"
-            "// Programs, not the package's modules.\n"
-            "exclude = [\"examples\", \"test\", \"scripts\"];\n"),
+            "// sspi's sidecar. sspi has no C: its extern blocks bind Windows'\n"
+            "// DLLs, which other platforms do not have, and \"-\" leaves them\n"
+            "// unopened there.\n"
+            "dylibs_macos = [\"secur32=-\", \"crypt32=-\", \"kernel32=-\"];\n"
+            "dylibs_linux = [\"secur32=-\", \"crypt32=-\", \"kernel32=-\"];\n"),
         exclude=[
             # The live check builds gslib's TLS server (crypto/tls/tools) and goose-ntlm.
             "sspi/scripts/sspi_check.py",

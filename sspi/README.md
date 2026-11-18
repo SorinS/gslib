@@ -27,9 +27,14 @@ fn main() {
 }
 ```
 
-It is Windows only. Elsewhere every call returns
-`SEC_E_UNSUPPORTED_FUNCTION`, so a program that uses it builds and runs on
-every platform and asks `available()` first.
+It is Windows only, with no C: secur32's and crypt32's functions are bound
+by Goose `extern` blocks. Elsewhere every call returns
+`SEC_E_UNSUPPORTED_FUNCTION`, so a program that uses it builds on every
+platform and asks `available()` first. It also runs everywhere with a
+goose whose runtime leaves the libraries `gslib.build` spells `-` unopened
+(see below); with an older goose, a program that calls sspi starts only
+on Windows, since goose binds an extern block's library as the program
+starts.
 
 ## The core
 
@@ -53,8 +58,9 @@ every platform and asks `available()` first.
 Results are SSPI's status codes: `OK` (SEC_E_OK, 0), `SEC_I_*` (> 0, a
 step that goes on), `SEC_E_*` and `CERT_E_*` (< 0, errors, the int32
 HRESULTs widened). `sspi.goose` names the common ones. Credentials and
-contexts are ids (> 0) whose handles the C half keeps. A context is used
-from one thread at a time.
+contexts are ids (> 0), slots of tables kept per thread: an id is used on
+the thread that made it (or in a worker spawned after it was made), by one
+thread at a time.
 
 ## Schannel
 
@@ -98,20 +104,30 @@ out. Channel bindings over HTTPS are not sent.
 
 ## How it works
 
-`src/sspi.c` holds SSPI's handles in two tables, and Goose sees their
-ids. A context also keeps the bytes it was given and has not used: a TLS
-record split over two reads, what comes after a handshake message
-(SECBUFFER_EXTRA), plaintext not yet taken, the bytes of a message after
-the handshake. So Goose only moves bytes between the socket and these
-functions (`gsspi_feed`, `gsspi_step`, `gsspi_decrypt`, `gsspi_encrypt`).
+`sspi/native.goose` binds SSPI from secur32.dll (and crypt32.dll for the
+certificate Schannel hands out) with `extern "secur32" { ... }` blocks, as
+Go's alexbrainman/sspi binds them through syscall without cgo. SSPI takes
+pointers inside its structures (a SecBufferDesc's buffers, a SecBuffer's
+bytes, a credential's strings), some of them null, so every structure it
+reads or writes is laid out by hand, Win64's layout, in memory from
+kernel32's LocalAlloc, written and read with RtlMoveMemory: a pointer is a
+`u64`. The layouts were checked against MSVC's `offsetof`.
 
-The C looks up secur32's and crypt32's functions when first used, and
-declares the structures SSPI takes itself rather than including
-`<sspi.h>` and `<schannel.h>`. Every C compiler goose drives (TinyCC
-under `goose run`, MSVC, clang-cl, clang, MinGW gcc) has `<windows.h>`,
-not all have those, and nothing needs linking. Schannel's credentials
-are SCH_CREDENTIALS, which TLS 1.3 needs, or SCHANNEL_CRED where the
-system predates it (before Windows 10 1809).
+Credentials and contexts are slots of two tables of such blocks. A
+context's block holds its SSPI handle and its state, and points to the
+bytes it keeps: what it was given and has not used (a TLS record split
+over two reads, what comes after a handshake message, SECBUFFER_EXTRA),
+plaintext not yet taken, the bytes of a message after the handshake. So
+the rest only moves bytes between the socket and these functions
+(`gsspi_feed`, `gsspi_step`, `gsspi_decrypt`, `gsspi_encrypt`).
+Schannel's credentials are SCH_CREDENTIALS, which TLS 1.3 needs, or
+SCHANNEL_CRED where the system predates it (before Windows 10 1809).
+
+goose opens an extern block's library, and binds every member a call can
+reach, as the program starts, so off Windows a program that calls sspi
+would stop there. `gslib.build` spells secur32, crypt32 and kernel32 `-`
+for macOS and Linux: a goose whose runtime knows that spelling leaves them
+unopened, and the calls, which check the platform first, never reach them.
 
 ## Example and tests
 
@@ -137,6 +153,8 @@ server in one process (NTLM, or Kerberos in a domain), then signs,
 verifies, seals and unseals across it and alters a message to see it
 refused, and makes a ClientHello through Schannel. Elsewhere it checks
 that every call says `SEC_E_UNSUPPORTED_FUNCTION`; the output is the same.
+With a goose that cannot start it off Windows, `run_tests.py`
+type-checks it there instead.
 
 The live check builds the examples, gslib's TLS server
 (`crypto/tls/tools/peer`, relayed to a local socket) and `goose-ntlm`. It

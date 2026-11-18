@@ -1,5 +1,5 @@
 // sspi: what is the same on every platform: status codes and their
-// text, the package lines the C half writes, and the WWW-Authenticate
+// text, the package lines sspi.native writes, and the WWW-Authenticate
 // values the Negotiate helper reads.
 
 import std;

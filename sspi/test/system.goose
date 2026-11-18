@@ -2,7 +2,8 @@
 // a client and a server in this process (Kerberos in a domain, NTLM
 // otherwise), the messages it signs and seals, and Schannel's
 // credentials. On Windows; elsewhere every call says
-// SEC_E_UNSUPPORTED_FUNCTION, and the lines printed are the same.
+// SEC_E_UNSUPPORTED_FUNCTION, and the lines printed are the same (with a
+// goose that starts it there: sspi/README.md).
 
 import std;
 import gslib from "../..";

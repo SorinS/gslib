@@ -4,17 +4,21 @@
 // which http, ldap, dns, krb5 and the tools use, pkcs11's module loading
 // (pkcs11/src/p11.c), service's service managers (service/src/service.c),
 // sys's operating system calls (sys/src: files, processes and terminals,
-// which mime and tpm2 use too) and sspi's SSPI, built only into programs
-// that call them.
+// which mime and tpm2 use too), built only into programs that call them.
+// sspi has no C: secur32 and crypt32 are bound by its extern blocks.
 c_sources = ["entropy/src/entropy.c", "net/src/net.c", "pkcs11/src/p11.c", "service/src/service.c",
-             "sys/src/posix.c", "sys/src/unix.c", "sys/src/win.c", "sys/src/winreg.c", "sys/src/winmgmt.c", "sys/src/spawn.c", "sys/src/winspawn.c", "sys/src/gssys_stubs.c", "sspi/src/sspi.c"];
+             "sys/src/posix.c", "sys/src/unix.c", "sys/src/win.c", "sys/src/winreg.c", "sys/src/winmgmt.c", "sys/src/spawn.c", "sys/src/winspawn.c", "sys/src/gssys_stubs.c"];
 // pkcs11/src/p11.c loads PKCS#11 modules: dlopen, in libdl before glibc 2.34.
 c_libs_linux = ["dl"];
 // service/src/service.c: the service control manager and the event log;
 // sys/src: accounts, groups and shares (netapi32), sessions (wtsapi32);
-// sspi/src/sspi.c loads secur32 and crypt32 itself; entropy/src/entropy.c:
-// BCryptGenRandom.
+// entropy/src/entropy.c: BCryptGenRandom.
 c_libs_windows = ["ws2_32", "advapi32", "netapi32", "wtsapi32", "bcrypt"];
+// sspi's extern blocks bind Windows' DLLs, which other platforms do not
+// have: "-" leaves them unopened there (a goose whose runtime knows the
+// spelling; before it, a program that calls sspi starts on Windows only).
+dylibs_macos = ["secur32=-", "crypt32=-", "kernel32=-"];
+dylibs_linux = ["secur32=-", "crypt32=-", "kernel32=-"];
 
 // The examples, the fuzz targets, and programs of each library (tests, tools), not the package's own
 // modules: the JIT's symbol table does not look for externs there.

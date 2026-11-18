@@ -880,8 +880,11 @@ Authorization: Negotiate header from the Windows login (Kerberos in a
 domain, NTLM otherwise) or from a user's name and password, so the server
 never sees a password. Underneath, the core layer gets credentials,
 builds client and server contexts a token at a time, and signs and seals
-messages. Off Windows every call says SEC_E_UNSUPPORTED_FUNCTION, so
-programs build everywhere. The live check (`make live-sspi`,
+messages. It has no C: secur32 is bound by Goose extern blocks, its
+structures laid out in memory from kernel32. Off Windows every call says
+SEC_E_UNSUPPORTED_FUNCTION, so programs build everywhere (and run there
+with a goose whose runtime leaves the libraries gslib.build spells `-`
+unopened). The live check (`make live-sspi`,
 sspi/scripts/sspi_check.py) runs Schannel against gslib's own TLS server
 and public sites, and Negotiate against gslib's NTLM acceptor. Kerberos
 was tried against an Active Directory domain: SSPI's tickets went to a
@@ -1054,9 +1057,10 @@ The C is the OS's random bytes (`entropy/src/entropy.c`), net's sockets
 (`net/src/net.c`, behind `net.goose`: `import gslib.net;`, then
 `net::dial`), sys's system calls (`sys/src`, which mime and tpm2 use
 too), pkcs11's module loading (`pkcs11/src/p11.c`), service's service
-managers and sspi's SSPI, named in `gslib.build` and compiled only into
-programs that call them. Libraries and tools reach the system through net
-and sys rather than C of their own.
+managers, named in `gslib.build` and compiled only into programs that
+call them. Libraries and tools reach the system through net and sys
+rather than C of their own, and Windows' DLLs through Goose extern blocks
+(sspi's secur32).
 
 ## Layout
 
@@ -1084,7 +1088,7 @@ radius.goose, radius/                 radius, the same
 webauthn.goose, webauthn/             webauthn, the same
 service.goose, service/, service/src/ service, the same, and its C
 sys.goose, sys/, sys/src/             sys and its modules (registry, windows, unix, term, process), the same, and its C
-sspi.goose, sspi/, sspi/src/          sspi, the same, and its C
+sspi.goose, sspi/                     sspi, the same
 examples/<lib>/                       each library's examples (excluded too)
 scripts/run_all.py            every library's unit tests
 scripts/split.py              the standalone repositories, synced from here

@@ -6,6 +6,11 @@ Every test/*.goose runs under the in-process JIT at -O0 and -O2 and with
 and, if test/expected/<name>.txt exists, prints exactly that. The examples
 run once. --native also builds and runs the tests with the C compiler.
 
+Off Windows, a program that calls SSPI starts only with a goose whose
+runtime leaves gslib.build's "-" libraries unopened; with an older one,
+which binds an extern block's library as the program starts and finds no
+secur32, it is type-checked instead.
+
     python3 scripts/run_tests.py [--goose PATH] [--native] [--update] [-k NAME]
 
 The compiler is --goose, else $GOOSE, else `goose` on PATH, else
@@ -14,6 +19,7 @@ The compiler is --goose, else $GOOSE, else `goose` on PATH, else
 
 import argparse
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -23,6 +29,12 @@ ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 # None: only type-checked: the examples need a server (scripts/sspi_check.py runs
 # them on Windows).
 EXAMPLE_ARGS = {"https_get": None, "negotiate_get": None, "packages": []}
+ON_WINDOWS = platform.system() == "Windows"
+
+
+def cannot_start(rc, err):
+    """A goose that binds Windows' DLLs off Windows: the program never started."""
+    return rc != 0 and not ON_WINDOWS and "cannot load " in err and "(lib-." in err
 
 
 def find_goose(arg):
@@ -83,6 +95,11 @@ def main():
     for t in tests:
         name = t[:-6]
         expected = os.path.join(test_dir, "expected", name + ".txt")
+        rc, out, err = run([goose, "-O0", t], test_dir)
+        if cannot_start(rc, err):
+            rc, out, err = run([goose, "check", t], test_dir)
+            check(f"{t} (type-checked: this goose cannot start it off Windows)", rc, out, err, None)
+            continue
         for flags in (["-O0"], ["-O2"], ["--debug"]):
             rc, out, err = run([goose, *flags, t], test_dir)
             if args.update and flags == ["-O0"] and rc == 0:
@@ -103,6 +120,8 @@ def main():
         ex_args = EXAMPLE_ARGS.get(e[:-6], [])
         cmd = [goose, "check", e] if ex_args is None else [goose, e, "--", *ex_args]
         rc, out, err = run(cmd, ex_dir)
+        if cannot_start(rc, err):
+            rc, out, err = run([goose, "check", e], ex_dir)
         check(f"examples/sspi/{e}", rc, out, err, None)
 
     print(f"\n{passed} passed, {len(failed)} failed")
