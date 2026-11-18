@@ -65,6 +65,18 @@ Connection: close from either side, and every error. Read after that, a
 connection reports `EV_CLOSED`, not an error: an error is reported once,
 as the event that closed it.
 
+## Client certificates held elsewhere
+
+A client certificate whose key is in a TPM or on a token is set with
+`tls::set_client_certificate(c.tlscfg, chain)`, the chain alone, and the
+key signs through a signer passed last to `get`, `head`, `post`,
+`post_form`, `request`, `fetch`, `fetch_stream` (after it, the body's
+block), `read_body`, `read_all` and `close_body` (x509's README describes
+signers). goose-http's `--cert` and `--key` work this way: the key stays
+out of the TLS configuration and signs through a signer, as a TPM's
+would; interop.py checks it against a Python server that requires a
+client certificate, with P-256 and RSA keys over TLS 1.3 and 1.2.
+
 ## Strictness
 
 Two parsers that read one byte stream as different messages are how
@@ -127,7 +139,7 @@ options, HTTP/2 over TLS unless `--http1.1`, and over TCP with
 `--http2-prior-knowledge`: `-L`, `--max-redirs`, `-u` with `--basic`/`--digest`/`--anyauth`,
 `--oauth2-bearer`, `-x` (http, https, socks5, socks5h) and `--noproxy`
 (else the proxy environment variables, as curl reads them), `-b`/`-c`
-cookie files, `--compressed`, `-I`, `-i`, `-o`, `-A`, `-e`, `--cacert`,
+cookie files, `--compressed`, `-I`, `-i`, `-o`, `-A`, `-e`, `--cacert`, `--cert` and `--key` (a client certificate, its key signing through a signer),
 `-k`, `--tls-max`, `--connect-timeout`, `-m`, `--rate`, and `-T` to
 upload a file or stdin as it is read (chunks for stdin; Expect:
 100-continue over 1 MiB, `--expect100-timeout`), as curl does. It keeps a

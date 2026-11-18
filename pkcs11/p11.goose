@@ -18,6 +18,12 @@ namespace p11;
 import std;
 import pkcs11;
 import pkcs11.constants;
+import crypto.bignum;
+import crypto.bignum.rsa;
+import crypto.bignum.ec;
+import encoding.asn1;
+import crypto.x509;
+import crypto.x509.keys;
 
 let ERR_NO_OBJECT: u64 = 0x100000010;          // a find that wanted one object found none
 let ERR_MULTIPLE_OBJECTS: u64 = 0x100000011;   // ... or more than one
@@ -310,4 +316,85 @@ fn decrypt(k: SecretKey, mech: const u8[:], ciphertext: const u8[:]) -> u8[>..],
     if rv != pkcs11::CKR_OK { return out, rv; }
     let pt, rv2 = pkcs11::decrypt(o.ctx, o.session, ciphertext);
     return pt, rv2;
+}
+
+// --- Keys held on the token, for TLS, SSH, x509 and JWS ---------------------------------------
+
+// The x509 key standing for a token's key pair in a configuration (a TLS
+// server's, an SSH host's, an issuer's): the public key's
+// SubjectPublicKeyInfo, from CKA_EC_PARAMS and CKA_EC_POINT (P-256, P-384,
+// P-521, Ed25519) or CKA_MODULUS and CKA_PUBLIC_EXPONENT, as an
+// x509::external_key. The signing is then done by sign_data with the
+// private key, passed as the signer to the call that signs.
+fn x509_key(k: PublicKey) -> x509::PrivateKey, bool {
+    let o = k.object;
+    var alg: u8[>..] = [];
+    var key: u8[>..] = [];
+    let ec_types: u64[2] = [pkcs11::CKA_EC_PARAMS, pkcs11::CKA_EC_POINT];
+    let a, ra = pkcs11::get_attribute_value(o.ctx, o.session, o.handle, ec_types);
+    let params, okp = pkcs11::attr_value(a, pkcs11::CKA_EC_PARAMS);
+    let point, okpt = pkcs11::attr_value(a, pkcs11::CKA_EC_POINT);
+    if ra == pkcs11::CKR_OK && okp && okpt && params.len > 0 {
+        if params == pkcs11::EC_PARAMS_ED25519[..] {
+            asn1::put_oid(alg, "1.3.101.112");
+        } else {
+            asn1::put_oid(alg, "1.2.840.10045.2.1");
+            alg.append(params);                        // the named curve's OID, DER
+        }
+        key.append(pkcs11::ec_point(point));
+    } else {
+        let rsa_types: u64[2] = [pkcs11::CKA_MODULUS, pkcs11::CKA_PUBLIC_EXPONENT];
+        let b, rb = pkcs11::get_attribute_value(o.ctx, o.session, o.handle, rsa_types);
+        let n, okn = pkcs11::attr_value(b, pkcs11::CKA_MODULUS);
+        let e, oke = pkcs11::attr_value(b, pkcs11::CKA_PUBLIC_EXPONENT);
+        if rb != pkcs11::CKR_OK || !okn || !oke { return x509::empty_key(), false; }
+        asn1::put_oid(alg, "1.2.840.113549.1.1.1");
+        asn1::put_null(alg);
+        var rk: u8[>..] = [];
+        asn1::put_uint(rk, n);
+        asn1::put_uint(rk, e);
+        asn1::put(key, asn1::SEQUENCE, rk);
+    }
+    var body: u8[>..] = [];
+    asn1::put(body, asn1::SEQUENCE, alg);
+    asn1::put_bits(body, key);
+    var spki: u8[>..] = [];
+    asn1::put(spki, asn1::SEQUENCE, body);
+    let x, ok = x509::external_key(spki);
+    return x, ok;
+}
+
+// A signer for a token's private key (x509::sign_data describes signers):
+// x509's algorithm and hash as the token's mechanisms over the digest it
+// is given (CKM_ECDSA, CKM_RSA_PKCS over the DigestInfo, CKM_RSA_PKCS_PSS
+// with MGF1 and a salt as long as the hash), CKM_EDDSA over the message
+// for Ed25519; the answer as x509 signs (ECDSA as DER). Empty when the
+// token refuses. The session must be logged in; a block names the key:
+//
+//   tls::feed(c, cfg, input, out, app) { k, alg, h, data => p11::sign_data(key, alg, h, data) }
+fn sign_data(k: PrivateKey, alg: i64, h: i64, data: const u8[:]) -> u8[>..] {
+    var out: u8[>..] = [];
+    let hm = if h == 256 { pkcs11::CKM_SHA256 } else if h == 384 { pkcs11::CKM_SHA384 } else if h == 512 { pkcs11::CKM_SHA512 } else { 0 };
+    let mgf = if h == 256 { pkcs11::CKG_MGF1_SHA256 } else if h == 384 { pkcs11::CKG_MGF1_SHA384 } else { pkcs11::CKG_MGF1_SHA512 };
+    if alg == x509::SIG_ED25519 {
+        let sig, rv = sign(k, pkcs11::mechanism(pkcs11::CKM_EDDSA), data);
+        if rv == pkcs11::CKR_OK { out.append(sig); }
+        return out;
+    }
+    if hm == 0 || data.len != bignum::hash_len(h) { return out; }
+    if alg == x509::SIG_ECDSA {
+        let raw, rv = sign(k, pkcs11::mechanism(pkcs11::CKM_ECDSA), data);
+        if rv != pkcs11::CKR_OK || raw.len == 0 || raw.len % 2 != 0 || raw.len > 132 { return out; }
+        out.append(bignum::ecdsa_sig_to_der(raw));
+    } else if alg == x509::SIG_RSA_PKCS1 {
+        var t = bignum::digest_info(h);
+        t.append(data);
+        let sig, rv = sign(k, pkcs11::mechanism(pkcs11::CKM_RSA_PKCS), t);
+        if rv == pkcs11::CKR_OK { out.append(sig); }
+    } else if alg == x509::SIG_RSA_PSS {
+        let m = pkcs11::mechanism_pss(pkcs11::CKM_RSA_PKCS_PSS, hm, mgf, bignum::hash_len(h) as! u64);
+        let sig, rv = sign(k, m, data);
+        if rv == pkcs11::CKR_OK { out.append(sig); }
+    }
+    return out;
 }

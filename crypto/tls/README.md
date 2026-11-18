@@ -150,6 +150,26 @@ with whether it was checked. As in Go, a ticket is not taken when:
 - the certificate has expired;
 - certificates are checked now and this one was not.
 
+### Keys held elsewhere
+
+A server or client whose private key is in a TPM, on a PKCS#11 token or
+in a remote service gives its configuration the certificate chain alone:
+`server_config(chain)` and `set_client_certificate(cfg, chain)` take the
+leaf's public key as an `x509::external_key`. The handshake's signatures
+(CertificateVerify, TLS 1.2's ServerKeyExchange and client
+CertificateVerify) are asked of a signer passed last to `feed`,
+`client_feed` or `server_feed`, as x509's README describes signers:
+
+    tls::server_feed(c, cfg, input, out, app) { k, alg, h, data => tpm2::sign_data(t, key, s, alg, h, data) }
+
+A signer that returns nothing ends the handshake with internal_error, as
+Go's does. The TLS 1.2 RSA key exchange, which decrypts with the key, is
+never chosen for a key held elsewhere. TLS 1.3's RSA-PSS needs a salt as
+long as the hash, which some TPMs do not use (swtpm does).
+test/signer.goose covers every key type in TLS 1.3, P-256 and RSA in TLS
+1.2, client certificates in both, a failing signer and none; example:
+`examples/tls/key_elsewhere.goose`.
+
 ### Resumption
 
 Resumption works as in Go's crypto/tls, with PSK and (EC)DHE
@@ -382,6 +402,7 @@ In gslib's `examples/tls/`, run from gslib's top as `goose examples/tls/<name>.g
 - `new_curves.goose`: X448 and brainpoolP512r1tls13 (by a HelloRetryRequest), an Ed448 server certificate and a Brainpool client certificate from a Brainpool CA, in TLS 1.3 and 1.2.
 - `ech.goose`: Encrypted Client Hello, and retry configs after a stale one.
 - `records.goose`: the key schedule and the record layer on their own.
+- `key_elsewhere.goose`: a server whose configuration holds only its certificate, its handshake signed by a signer passed to feed, as a TPM's or a token's would be.
 - `https_get.goose`: a TLS client over a socket, checked against the system's roots: `HOST [PORT [PATH]]`. Needs a live server; `run_tests.py` only type-checks it.
 
 ## Tests

@@ -90,6 +90,18 @@ initialized taken as it is), `info`, `slots`, `destroy`; a `Slot`'s
 `derive_value` of a `PrivateKey`, `verify` and `encrypt` of a
 `PublicKey`, `encrypt` and `decrypt` of a `SecretKey`.
 
+### Keys used by TLS, SSH, x509 and JWS
+
+`p11::x509_key(public_key)` reads a token key pair's public half (EC
+params and point, Ed25519's, or RSA's modulus and exponent) as an
+`x509::external_key`, and `p11::sign_data(private_key, alg, h, data)` is
+a signer for the private half (x509's README describes signers):
+CKM_ECDSA over the digest (its r || s turned into DER), CKM_RSA_PKCS over
+the DigestInfo, CKM_RSA_PKCS_PSS with MGF1 and a salt as long as the
+hash, CKM_EDDSA over the message. test/signer.goose uses P-256, RSA and
+Ed25519 keys on SoftHSM2 for a certificate, TLS servers, an SSH host key
+and a JWT; example: `examples/pkcs11/signer.goose`.
+
 ## How it works
 
 `pkcs11/src/p11.c`, in the package's sidecar, loads the module (`dlopen`,
@@ -133,6 +145,7 @@ against a fresh SoftHSM token.
 - `sign_verify.goose`: RSA and P-256 key pairs made on the token, signing and verifying, and checking with crypto/bignum.
 - `aes_encrypt.goose`: an AES key kept on the token: GCM, CBC in pieces, wrapping and unwrapping a key.
 - `p11_keys.goose`: the p11 layer: Module, Slot, Session, Object, signing, encryption and ECDH.
+- `signer.goose`: a key pair on the token signing a certificate, a CSR and a JWT through `p11::sign_data`, each checked with the public key alone.
 
 ## Tests
 

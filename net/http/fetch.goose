@@ -345,7 +345,11 @@ fn ntlm_challenge(fields: const u8[:], scheme: i64) -> u8[>..], bool {
 // cannot be followed past max_redirects gives the last response with
 // ERR_REDIRECTS (its body closed), as Go gives it with an error.
 fn fetch(c: Client&, method0: const u8[:], url_text: const u8[:], fields: const u8[:], body: const u8[:]) -> Response {
-    return fetch_core(c, method0, url_text, fields, body, false, 0, false) { out: u8[>..]&, start: bool => false };
+    return fetch(c, method0, url_text, fields, body, x509::sign_data);
+}
+
+fn fetch<S>(c: Client&, method0: const u8[:], url_text: const u8[:], fields: const u8[:], body: const u8[:]) -> Response {
+    return fetch_core(c, method0, url_text, fields, body, false, 0, false, S) { out: u8[>..]&, start: bool => false };
 }
 
 // fetch, the body read as it is sent: F(out, start) appends the next of
@@ -360,11 +364,16 @@ fn fetch(c: Client&, method0: const u8[:], url_text: const u8[:], fields: const 
 // body goes, and the hop goes ahead.
 fn fetch_stream<F>(c: Client&, method0: const u8[:], url_text: const u8[:], fields: const u8[:], length: i64,
                    rewindable: bool) -> Response {
-    return fetch_core(c, method0, url_text, fields, "", true, length, rewindable) { out: u8[>..]&, start: bool => F(out, start) };
+    return fetch_stream(c, method0, url_text, fields, length, rewindable, x509::sign_data, F);
 }
 
-fn fetch_core<F>(c: Client&, method0: const u8[:], url_text: const u8[:], fields: const u8[:], body: const u8[:],
-                 stream: bool, length: i64, rewindable: bool) -> Response {
+fn fetch_stream<S, F>(c: Client&, method0: const u8[:], url_text: const u8[:], fields: const u8[:], length: i64,
+                      rewindable: bool) -> Response {
+    return fetch_core(c, method0, url_text, fields, "", true, length, rewindable, S) { out: u8[>..]&, start: bool => F(out, start) };
+}
+
+fn fetch_core<S, F>(c: Client&, method0: const u8[:], url_text: const u8[:], fields: const u8[:], body: const u8[:],
+                    stream: bool, length: i64, rewindable: bool) -> Response {
     c.deadline = if c.opt.timeout_ms > 0 { clock_ns() + c.opt.timeout_ms * 1000000 } else { 0 };
     let u0, ue = url_parse(url_text);
     if ue != URL_OK || url_check_http(u0) != URL_OK { return empty_response(ERR_URL); }
@@ -457,8 +466,8 @@ fn fetch_core<F>(c: Client&, method0: const u8[:], url_text: const u8[:], fields
             if has_pcred { basic_credentials(c.proxy_authz, pu_user, pu_pass); }
         }
         let streaming = stream && include_body;
-        var r = if streaming { begin_request(c, method, cur, fields_without(f, "Transfer-Encoding"), length) }
-                else { round_trip(c, method, cur, f, if include_body { body } else { "" }) };
+        var r = if streaming { begin_request(c, method, cur, fields_without(f, "Transfer-Encoding"), length, S) }
+                else { round_trip(c, method, cur, f, if include_body { body } else { "" }, S) };
         if streaming && r.err == ERR_NONE {
             var piece: u8[>..] = [];
             var more = true;
@@ -468,9 +477,9 @@ fn fetch_core<F>(c: Client&, method0: const u8[:], url_text: const u8[:], fields
                 more = F(piece, start);
                 start = false;
                 consumed = true;
-                if piece.len > 0 && write_body(c, r, piece) == ERR_REQUEST { break; }
+                if piece.len > 0 && write_body(c, r, piece, S) == ERR_REQUEST { break; }
             }
-            end_request(c, r, "");
+            end_request(c, r, "", S);
         }
         // A hop that sends the body again needs one that is still to read.
         let resend_ok = !streaming || !consumed || rewindable;
@@ -521,7 +530,7 @@ fn fetch_core<F>(c: Client&, method0: const u8[:], url_text: const u8[:], fields
                 if ntlm::authenticate(ntlm_ctx, tok, time_ns() / 1000000000, t3) == ntlm::OK {
                     // The body read whole (not close_body's 2 KB), so the
                     // connection goes back to the pool for the AUTHENTICATE.
-                    read_all(c, r);
+                    read_all(c, r, S);
                     authz.clear();
                     authz.append(ntlm::http_header(ntlm_scheme, t3));
                     ntlm_step = 2;
@@ -542,7 +551,7 @@ fn fetch_core<F>(c: Client&, method0: const u8[:], url_text: const u8[:], fields
                 ntlm_ctx = ntlm::initiator(cred, spn, 0);
                 var t1: u8[>..] = [];
                 if ce == ntlm::OK && ntlm::negotiate(ntlm_ctx, t1) == ntlm::OK {
-                    read_all(c, r);
+                    read_all(c, r, S);
                     authz.clear();
                     authz.append(ntlm::http_header(scheme, t1));
                     auth_tried = true;
@@ -567,7 +576,7 @@ fn fetch_core<F>(c: Client&, method0: const u8[:], url_text: const u8[:], fields
                 // that asks for Basic again) would get the same 401.
                 let sent, had = field_value(f, "Authorization");
                 if a.len > 0 && !(had && sent == a[..]) && resend_ok {
-                    close_body(c, r);
+                    close_body(c, r, S);
                     authz.clear();
                     authz.append(a);
                     auth_tried = true;
@@ -595,7 +604,7 @@ fn fetch_core<F>(c: Client&, method0: const u8[:], url_text: const u8[:], fields
                 let a = answer_challenge(response_fields(r), "Proxy-Authenticate", pu_user, pu_pass, AUTH_ANY, method,
                                          target, if include_body { body } else { "" }, chosen);
                 if a.len > 0 && a[..] != c.proxy_authz[..] && resend_ok {
-                    close_body(c, r);
+                    close_body(c, r, S);
                     c.proxy_authz.clear();
                     c.proxy_authz.append(a);
                     proxy_tried = true;
@@ -618,13 +627,13 @@ fn fetch_core<F>(c: Client&, method0: const u8[:], url_text: const u8[:], fields
         }
         let next, le = url_resolve(cur, loc);
         if le != URL_OK {
-            close_body(c, r);
+            close_body(c, r, S);
             r.err = ERR_PROTOCOL;
             r.redirects = redirects;
             return r;
         }
         if redirects >= c.opt.max_redirects {
-            close_body(c, r);
+            close_body(c, r, S);
             r.err = ERR_REDIRECTS;
             r.redirects = redirects;
             return r;
@@ -640,7 +649,7 @@ fn fetch_core<F>(c: Client&, method0: const u8[:], url_text: const u8[:], fields
         if !strip_sensitive && url_host(u0) != url_host(next) && !same_site_for_credentials(u0, next) {
             strip_sensitive = true;
         }
-        close_body(c, r);
+        close_body(c, r, S);
         prev = copy(cur);
         cur = copy(next);
         redirects++;
@@ -663,22 +672,43 @@ fn finish_response(c: Client&, r: Response&, want_gzip: bool, redirects: i64) {
 }
 
 // fetch, and the body read whole into r.body.
+//
+// Each of these takes a signer last (x509::sign_data describes them) for a
+// client certificate whose key is held elsewhere: set it with
+// tls::set_client_certificate(c.tlscfg, chain), the chain alone, and pass
+// the signer that holds the key:
+//
+//   var r = http::get(c, url) { k, alg, h, data => tpm2::sign_data(t, key, s, alg, h, data) };
 fn request(c: Client&, method: const u8[:], url_text: const u8[:], fields: const u8[:], body: const u8[:]) -> Response {
-    var r = fetch(c, method, url_text, fields, body);
-    if r.err == ERR_NONE { read_all(c, r); }
+    return request(c, method, url_text, fields, body, x509::sign_data);
+}
+
+fn request<S>(c: Client&, method: const u8[:], url_text: const u8[:], fields: const u8[:], body: const u8[:]) -> Response {
+    var r = fetch(c, method, url_text, fields, body, S);
+    if r.err == ERR_NONE { read_all(c, r, S); }
     return r;
 }
 
 fn get(c: Client&, url_text: const u8[:]) -> Response { request(c, "GET", url_text, "", "") }
 fn head(c: Client&, url_text: const u8[:]) -> Response { request(c, "HEAD", url_text, "", "") }
+fn get<S>(c: Client&, url_text: const u8[:]) -> Response { request(c, "GET", url_text, "", "", S) }
+fn head<S>(c: Client&, url_text: const u8[:]) -> Response { request(c, "HEAD", url_text, "", "", S) }
 
 fn post(c: Client&, url_text: const u8[:], content_type: const u8[:], body: const u8[:]) -> Response {
+    return post(c, url_text, content_type, body, x509::sign_data);
+}
+
+fn post<S>(c: Client&, url_text: const u8[:], content_type: const u8[:], body: const u8[:]) -> Response {
     var f: u8[>..] = [];
     if content_type.len > 0 && !add_field(f, "Content-Type", content_type) { return empty_response(ERR_REQUEST); }
-    return request(c, "POST", url_text, f, body);
+    return request(c, "POST", url_text, f, body, S);
 }
 
 // POST of a form built with form_add (Go's PostForm).
 fn post_form(c: Client&, url_text: const u8[:], form: const u8[:]) -> Response {
     return post(c, url_text, "application/x-www-form-urlencoded", form);
+}
+
+fn post_form<S>(c: Client&, url_text: const u8[:], form: const u8[:]) -> Response {
+    return post(c, url_text, "application/x-www-form-urlencoded", form, S);
 }

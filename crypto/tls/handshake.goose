@@ -223,6 +223,17 @@ fn client_config_pool(server_name: const u8[:], roots: const x509::CertPool&) ->
 // its key signs with and, if the server names the CAs it accepts, one of
 // its certificates was issued by one of them (as Go picks one); otherwise
 // the client sends none. False if the key does not parse.
+// The same for a key held elsewhere: the chain alone, the leaf's public key
+// standing for the key, and the handshake fed with a signer (feed).
+fn set_client_certificate(cfg: ClientConfig&, chain: const u8[:]) -> bool {
+    let k, ok = leaf_key(chain);
+    if !ok || chain.len > cfg.cert_chain.cap { return false; }
+    cfg.cert_key = k;
+    cfg.cert_chain.clear();
+    cfg.cert_chain.append(chain);
+    return true;
+}
+
 fn set_client_certificate(cfg: ClientConfig&, chain: const u8[:], key_der: const u8[:]) -> bool {
     let k, ok = x509::parse_private_key(key_der);
     if !ok || chain.len > cfg.cert_chain.cap { return false; }
@@ -302,6 +313,28 @@ fn server_config(chain: const u8[:], key_der: const u8[:]) -> ServerConfig, bool
     if chain.len > s.chain.cap { return s, false; }
     s.chain.append(chain);
     return s, ok;
+}
+
+// The key held elsewhere whose certificate leads chain (concatenated DER):
+// x509::external_key of the leaf.
+fn leaf_key(chain: const u8[:]) -> x509::PrivateKey, bool {
+    let t, ok = asn1::read(chain, 0, chain.len);
+    if !ok { return x509::empty_key(), false; }
+    let leaf, e = x509::parse(chain[t.start..t.end]);
+    if e != x509::OK { return x509::empty_key(), false; }
+    let k, okk = x509::external_key(leaf);
+    return k, okk;
+}
+
+// A server whose key is held elsewhere (a TPM, a PKCS#11 token): the chain
+// alone, its leaf's public key standing for the key. Its handshakes are fed
+// with a signer (feed); the TLS 1.2 RSA key exchange, which decrypts with
+// the key, is never chosen.
+fn server_config(chain: const u8[:]) -> ServerConfig, bool {
+    var s, ok = server_config(chain, "");
+    let k, okk = leaf_key(chain);
+    s.key = k;
+    return s, okk && s.chain.len == chain.len;
 }
 
 // One connection, either side.
@@ -867,9 +900,15 @@ fn pick_scheme(key: const x509::PrivateKey&, peer: const u16[:]) -> u16 {
     return 0;
 }
 
-// A signature with a scheme, and false when signing fails (x509::sign):
-// the handshake then ends with internal_error, as Go's does.
+// A signature with a scheme by the signer F (x509::sign_with), and false
+// when signing fails: the handshake then ends with internal_error, as Go's
+// does.
 fn sign(key: const x509::PrivateKey&, scheme: u16, msg: const u8[:]) -> u8[>..], bool {
+    let sig, ok = sign(key, scheme, msg, x509::sign_data);
+    return sig, ok;
+}
+
+fn sign<F>(key: const x509::PrivateKey&, scheme: u16, msg: const u8[:]) -> u8[>..], bool {
     var alg = x509::SIG_RSA_PSS;
     var h: i64 = 512;
     if scheme == x509::ED25519 { alg = x509::SIG_ED25519; h = 0; }
@@ -895,7 +934,7 @@ fn sign(key: const x509::PrivateKey&, scheme: u16, msg: const u8[:]) -> u8[>..],
     else if scheme == x509::RSA_PKCS1_SHA512 { alg = x509::SIG_RSA_PKCS1; h = 512; }
     else if scheme == x509::RSA_PSS_RSAE_SHA256 { h = 256; }
     else if scheme == x509::RSA_PSS_RSAE_SHA384 { h = 384; }
-    let sig, ok = x509::sign(key, alg, h, msg);
+    let sig, ok = x509::sign_with(key, alg, h, msg, F);
     return sig, ok;
 }
 
@@ -1683,9 +1722,9 @@ fn certificate_message(context: const u8[:], chain: const u8[:]) -> u8[>..], boo
 
 // A CertificateVerify by `key` over the transcript hash `th`, and false
 // when signing fails.
-fn certificate_verify_message(key: const x509::PrivateKey&, scheme: u16, server_side: bool,
+fn certificate_verify_message<F>(key: const x509::PrivateKey&, scheme: u16, server_side: bool,
                               th: const u8[:]) -> u8[>..], bool {
-    let sig, ok = sign(key, scheme, cv_content(server_side, th));
+    let sig, ok = sign(key, scheme, cv_content(server_side, th), F);
     if !ok {
         var none: u8[>..] = [];
         return none, false;
@@ -1697,7 +1736,7 @@ fn certificate_verify_message(key: const x509::PrivateKey&, scheme: u16, server_
     return handshake_message(HS_CERTIFICATE_VERIFY, cv), true;
 }
 
-fn client_finished(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: u8[>..]&) -> i64 {
+fn client_finished<F>(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: u8[>..]&) -> i64 {
     if m.len - 4 != c.suite.hash / 8 { return fail(c, ALERT_DECODE_ERROR, out); }
     if !finished_ok(c.suite.hash, c.sch.s_hs, transcript_hash(c.th), m[4..]) {
         return fail(c, ALERT_DECRYPT_ERROR, out);
@@ -1718,7 +1757,7 @@ fn client_finished(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: u8[>
         let cm, okm = certificate_message(c.cr_context, cfg.cert_chain);
         if !okm { return fail(c, ALERT_INTERNAL_ERROR, out); }
         send_hs(c, cm, out);
-        let cv, okv = certificate_verify_message(cfg.cert_key, c.cert_scheme, false, transcript_hash(c.th));
+        let cv, okv = certificate_verify_message(cfg.cert_key, c.cert_scheme, false, transcript_hash(c.th), F);
         if !okv { return fail(c, ALERT_INTERNAL_ERROR, out); }
         send_hs(c, cv, out);
     }
@@ -1734,9 +1773,9 @@ fn client_finished(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: u8[>
     return 0;
 }
 
-fn client_message(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: u8[>..]&) -> i64 {
+fn client_message<F>(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: u8[>..]&) -> i64 {
     let t = m[0];
-    if c.version == VERSION_TLS12 { return client_message12(c, cfg, m, out); }
+    if c.version == VERSION_TLS12 { return client_message12(c, cfg, m, out, F); }
     if c.state == ST_WAIT_SH && t == HS_SERVER_HELLO { return client_server_hello(c, cfg, m, out); }
     if c.state == ST_WAIT_EE && t == HS_ENCRYPTED_EXTENSIONS { return client_encrypted_extensions(c, cfg, m, out); }
     if c.state == ST_WAIT_CERT_CR && t == HS_CERTIFICATE_REQUEST { return client_certificate_request(c, cfg, m, out); }
@@ -1748,7 +1787,7 @@ fn client_message(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: u8[>.
         if r == 0 { c.state = ST_WAIT_FINISHED; }
         return r;
     }
-    if c.state == ST_WAIT_FINISHED && t == HS_FINISHED { return client_finished(c, cfg, m, out); }
+    if c.state == ST_WAIT_FINISHED && t == HS_FINISHED { return client_finished(c, cfg, m, out, F); }
     if c.state == ST_CONNECTED && t == HS_NEW_SESSION_TICKET { return client_ticket(c, cfg, m, out); }
     if c.state == ST_CONNECTED { return post_handshake(c, m, out); }
     return fail(c, ALERT_UNEXPECTED_MESSAGE, out);
@@ -2189,7 +2228,7 @@ fn ech_retry_list(cfg: const ServerConfig&) -> u8[>..] {
     return ech_config_list(configs);
 }
 
-fn server_client_hello(c: Conn&, cfg: const ServerConfig&, m: const u8[:], out: u8[>..]&) -> i64 {
+fn server_client_hello<F>(c: Conn&, cfg: const ServerConfig&, m: const u8[:], out: u8[>..]&) -> i64 {
     let h, ok = parse_hello(m);
     if !ok { return fail(c, if h.alert != 0 { h.alert } else { ALERT_DECODE_ERROR }, out); }
     // A legacy_version below TLS 1.0 is no version this server has.
@@ -2205,7 +2244,7 @@ fn server_client_hello(c: Conn&, cfg: const ServerConfig&, m: const u8[:], out: 
     let v12 = (if h.has_versions { h.has_versions12 } else { h.version >= 0x0303 }) &&
               cfg.min_version <= VERSION_TLS12 && cfg.max_version >= VERSION_TLS12 && cfg.suites12.len > 0;
     if !v13 {
-        if v12 && !second && !c.ech_confirm { return server_client_hello12(c, cfg, m, h, out); }
+        if v12 && !second && !c.ech_confirm { return server_client_hello12(c, cfg, m, h, out, F); }
         // TLS_FALLBACK_SCSV from a client that could do better is told so,
         // even when its version is one this server lacks (RFC 7507 §3).
         if in_u16_list(m, h.suites, TLS_FALLBACK_SCSV) && client_max_version(h) < cfg.max_version {
@@ -2351,7 +2390,7 @@ fn server_client_hello(c: Conn&, cfg: const ServerConfig&, m: const u8[:], out: 
     // if any, comes from the ticket.
     if !c.resumed {
         if cfg.client_auth != NO_CLIENT_CERT { send_certificate_request(c, cfg, out); }
-        let e = send_certificate(c, cfg, scheme, out);
+        let e = send_certificate(c, cfg, scheme, out, F);
         if e != 0 { return e; }
     }
     let fin = finished_data(s.hash, c.sch.s_hs, transcript_hash(c.th));
@@ -2420,11 +2459,11 @@ fn send_certificate_request(c: Conn&, cfg: const ServerConfig&, out: u8[>..]&) {
 }
 
 // Certificate and CertificateVerify.
-fn send_certificate(c: Conn&, cfg: const ServerConfig&, scheme: u16, out: u8[>..]&) -> i64 {
+fn send_certificate<F>(c: Conn&, cfg: const ServerConfig&, scheme: u16, out: u8[>..]&) -> i64 {
     let cm, ok = certificate_message("", cfg.chain);
     if !ok { return fail(c, ALERT_INTERNAL_ERROR, out); }
     send_hs(c, cm, out);
-    let cv, okv = certificate_verify_message(cfg.key, scheme, true, transcript_hash(c.th));
+    let cv, okv = certificate_verify_message(cfg.key, scheme, true, transcript_hash(c.th), F);
     if !okv { return fail(c, ALERT_INTERNAL_ERROR, out); }
     send_hs(c, cv, out);
     return 0;
@@ -2522,13 +2561,13 @@ fn send_session_ticket(c: Conn&, cfg: const ServerConfig&, out: u8[>..]&) -> boo
     return true;
 }
 
-fn server_message(c: Conn&, cfg: const ServerConfig&, m: const u8[:], out: u8[>..]&) -> i64 {
+fn server_message<F>(c: Conn&, cfg: const ServerConfig&, m: const u8[:], out: u8[>..]&) -> i64 {
     let t = m[0];
     if c.version == VERSION_TLS12 { return server_message12(c, cfg, m, out); }
     if (c.state == ST_WAIT_CH || c.state == ST_WAIT_CH2) && t == HS_CLIENT_HELLO {
         let ch, re = server_ech(c, cfg, m, out);
         if re != 0 { return re; }
-        let r = server_client_hello(c, cfg, ch, out);
+        let r = server_client_hello(c, cfg, ch, out, F);
         if r == 0 && c.hs.len != 0 { return fail(c, ALERT_UNEXPECTED_MESSAGE, out); }
         return r;
     }
@@ -2584,12 +2623,12 @@ fn post_handshake(c: Conn&, m: const u8[:], out: u8[>..]&) -> i64 {
 }
 
 // A handshake message to the side whose configuration cfg is.
-fn role_message(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: u8[>..]&) -> i64 { client_message(c, cfg, m, out) }
-fn role_message(c: Conn&, cfg: const ServerConfig&, m: const u8[:], out: u8[>..]&) -> i64 { server_message(c, cfg, m, out) }
+fn role_message<F>(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: u8[>..]&) -> i64 { client_message(c, cfg, m, out, F) }
+fn role_message<F>(c: Conn&, cfg: const ServerConfig&, m: const u8[:], out: u8[>..]&) -> i64 { server_message(c, cfg, m, out, F) }
 
 // One whole record. cfg is the side's own configuration, a ClientConfig or
 // a ServerConfig: this and feed are compiled once for each.
-fn handle_record(c: Conn&, cfg, rec: const u8[:], out: u8[>..]&, app: u8[>..]&) -> i64 {
+fn handle_record<F>(c: Conn&, cfg, rec: const u8[:], out: u8[>..]&, app: u8[>..]&) -> i64 {
     let outer = rec[0];
     var ctype = outer;
     var payload: u8[>..] = [];
@@ -2687,7 +2726,7 @@ fn handle_record(c: Conn&, cfg, rec: const u8[:], out: u8[>..]&, app: u8[>..]&) 
         var rest: u8[..65540] = [];
         rest.append(c.hs[n..]);
         c.hs = rest;
-        let r = role_message(c, cfg, msg, out);
+        let r = role_message(c, cfg, msg, out, F);
         if r != 0 { return r; }
         // A change of read keys (after ServerHello) must fall at a record boundary.
         if c.hs.len > 0 && c.state == ST_WAIT_EE { return fail(c, ALERT_UNEXPECTED_MESSAGE, out); }
@@ -2701,8 +2740,18 @@ fn handle_record(c: Conn&, cfg, rec: const u8[:], out: u8[>..]&, app: u8[>..]&) 
 
 // Feeds received bytes; appends what to send to `out` and application
 // data to `app`. Returns 0, or -1 once the connection has failed (the
-// alert, already in `out` when it was ours, is in c.alert).
+// alert, already in `out` when it was ours, is in c.alert). Its own
+// certificate's signature (a server's, or a client's when one is asked
+// for) is made by the key in cfg; for a key held elsewhere (an
+// x509::external_key in cfg) pass a signer as the last argument, as
+// x509::sign_data describes:
+//
+//   tls::feed(c, cfg, input, out, app) { k, alg, h, data => tpm2::sign_data(t, key, alg, h, data) }
 fn feed(c: Conn&, cfg, input: const u8[:], out: u8[>..]&, app: u8[>..]&) -> i64 {
+    return feed(c, cfg, input, out, app, x509::sign_data);
+}
+
+fn feed<F>(c: Conn&, cfg, input: const u8[:], out: u8[>..]&, app: u8[>..]&) -> i64 {
     var off = 0;
     while off < input.len {
         if c.state == ST_FAILED { return -1; }
@@ -2725,7 +2774,7 @@ fn feed(c: Conn&, cfg, input: const u8[:], out: u8[>..]&, app: u8[>..]&) -> i64 
         var rec: u8[>..] = [];
         rec.append(c.inbuf);
         c.inbuf.clear();
-        let r = handle_record(c, cfg, rec, out, app);
+        let r = handle_record(c, cfg, rec, out, app, F);
         if r != 0 { return r; }
     }
     return if c.state == ST_FAILED { -1 } else { 0 };
@@ -2737,4 +2786,13 @@ fn client_feed(c: Conn&, cfg: const ClientConfig&, input: const u8[:], out: u8[>
 
 fn server_feed(c: Conn&, cfg: const ServerConfig&, input: const u8[:], out: u8[>..]&, app: u8[>..]&) -> i64 {
     return feed(c, cfg, input, out, app);
+}
+
+// The same, with a signer for a key held elsewhere (feed).
+fn client_feed<F>(c: Conn&, cfg: const ClientConfig&, input: const u8[:], out: u8[>..]&, app: u8[>..]&) -> i64 {
+    return feed(c, cfg, input, out, app, F);
+}
+
+fn server_feed<F>(c: Conn&, cfg: const ServerConfig&, input: const u8[:], out: u8[>..]&, app: u8[>..]&) -> i64 {
+    return feed(c, cfg, input, out, app, F);
 }

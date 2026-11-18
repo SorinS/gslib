@@ -18,6 +18,10 @@ import std;
 import tpm2;
 import tpm2.transport;
 import tpm2.session;
+import crypto.bignum;
+import crypto.bignum.ec;
+import crypto.x509;
+import crypto.x509.keys;
 
 // --- Structures ---------------------------------------------------------------------
 
@@ -424,6 +428,55 @@ fn sign(t: Tpm&, key: Entity, s: Session&, digest: const u8[:], scheme: u16, h: 
     let sig = read_signature(r);
     if !r.ok || left(r) != 0 { return sig, ERR_MALFORMED; }
     return sig, OK;
+}
+
+// --- Keys held in the TPM, for TLS, SSH, x509 and JWS -------------------------------------
+
+// The x509 key standing for a TPM signing key in a configuration (a TLS
+// server's, an SSH host's, an issuer's): its public area as an
+// x509::external_key. The signing is then done by sign_data, passed as the
+// signer to the call that signs.
+fn x509_key(p: Public) -> x509::PrivateKey, bool {
+    let spki, ok = public_to_spki(p);
+    if !ok { return x509::empty_key(), false; }
+    let k, okk = x509::external_key(spki);
+    return k, okk;
+}
+
+// A signer for a loaded, unrestricted TPM signing key (x509::sign_data
+// describes signers): x509's algorithm and hash as TPM2_Sign's scheme
+// (SIG_ECDSA as ALG_ECDSA, SIG_RSA_PKCS1 as ALG_RSASSA, SIG_RSA_PSS as
+// ALG_RSAPSS; SHA-256, SHA-384, SHA-512), data the digest, and the answer
+// as x509 signs (ECDSA as DER). Empty when the TPM refuses, or for what a
+// TPM does not sign (Ed25519, ML-DSA). The key's authorization is in key
+// (object_of) and s; t and s are the caller's, which a block names:
+//
+//   tls::feed(c, cfg, input, out, app) { k, alg, h, data => tpm2::sign_data(t, key, s, alg, h, data) }
+//
+// A TPM's RSA-PSS salt may be as long as the key allows, not the hash's
+// length that TLS 1.3 requires; such a TPM's RSA keys suit TLS 1.2 and
+// PKCS #1 signatures, and its ECDSA keys TLS 1.3.
+fn sign_data(t: Tpm&, key: Entity, s: Session&, alg: i64, h: i64, data: const u8[:]) -> u8[>..] {
+    var out: u8[>..] = [];
+    let scheme = if alg == x509::SIG_ECDSA { ALG_ECDSA } else if alg == x509::SIG_RSA_PKCS1 { ALG_RSASSA }
+                 else if alg == x509::SIG_RSA_PSS { ALG_RSAPSS } else { ALG_NULL };
+    let th = if h == 256 { ALG_SHA256 } else if h == 384 { ALG_SHA384 } else if h == 512 { ALG_SHA512 } else { ALG_NULL };
+    if scheme == ALG_NULL || th == ALG_NULL || data.len != bignum::hash_len(h) { return out; }
+    let sig, e = sign(t, key, s, data, scheme, th);
+    if e != OK { return out; }
+    if scheme == ALG_ECDSA {
+        let n = ::max(sig.r.len, sig.s.len);
+        if n == 0 || n > 66 { return out; }
+        var raw: u8[>..] = [];
+        for _ in n - sig.r.len { raw.push(0); }
+        raw.append(sig.r);
+        for _ in n - sig.s.len { raw.push(0); }
+        raw.append(sig.s);
+        out.append(bignum::ecdsa_sig_to_der(raw));
+    } else {
+        out.append(sig.sig);
+    }
+    return out;
 }
 
 // TPM2_VerifySignature: the TPM checks a signature with a loaded key and

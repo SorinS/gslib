@@ -392,6 +392,61 @@ def concurrency_cases(httpd, www, cert, key, port_re, servers):
         ts.close()
 
 
+def client_cert_cases(gh, tmp, cert, key):
+    """goose-http with a client certificate (--cert, --key) against a Python
+    HTTPS server that requires one: the TLS configuration holds only the
+    certificate and the key signs through a signer, as a TPM's would. P-256
+    and RSA keys, TLS 1.3 and 1.2; and refused without one."""
+    import http.server
+    ca, ca_key = os.path.join(tmp, "cc_ca.pem"), os.path.join(tmp, "cc_ca.key")
+    subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes",
+                    "-keyout", ca_key, "-out", ca, "-days", "2", "-subj", "/CN=Client CA"], check=True, capture_output=True)
+    ext = os.path.join(tmp, "cc_ext.cnf")
+    with open(ext, "w") as f:
+        f.write("extendedKeyUsage = clientAuth\n")
+    clients = {}
+    for name, newkey in (("p256", ["-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256"]), ("rsa", ["-newkey", "rsa:2048"])):
+        ck, csr, cc = (os.path.join(tmp, f"cc_{name}{x}") for x in (".key", ".csr", ".pem"))
+        subprocess.run(["openssl", "req", "-new", *newkey, "-nodes", "-keyout", ck, "-out", csr, "-subj", f"/CN=client {name}"],
+                       check=True, capture_output=True)
+        subprocess.run(["openssl", "x509", "-req", "-in", csr, "-CA", ca, "-CAkey", ca_key, "-CAcreateserial", "-days", "2",
+                        "-extfile", ext, "-out", cc], check=True, capture_output=True)
+        clients[name] = (cc, ck)
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            peer = self.connection.getpeercert() or {}
+            cn = dict(x[0] for x in peer.get("subject", ())).get("commonName", "none")
+            body = f"hello, {cn}".encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        def log_message(self, *a):
+            pass
+
+    for tls in ("1.3", "1.2"):
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(cert, key)
+        ctx.verify_mode = ssl.CERT_REQUIRED
+        ctx.load_verify_locations(ca)
+        v = ssl.TLSVersion.TLSv1_3 if tls == "1.3" else ssl.TLSVersion.TLSv1_2
+        ctx.minimum_version = ctx.maximum_version = v
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        url = f"https://127.0.0.1:{srv.server_address[1]}/"
+        try:
+            for name, (cc, ck) in clients.items():
+                rc, out, err = run([gh, "-s", "--cacert", cert, "--cert", cc, "--key", ck, url])
+                check(f"client certificate {name}, TLS {tls}: its key signs through a signer",
+                      rc == 0 and out == f"hello, client {name}".encode(), (out + err).decode(errors="replace")[:300])
+            rc, out, err = run([gh, "-s", "--cacert", cert, url])
+            check(f"client certificate, TLS {tls}: none sent, refused", rc != 0, out[:100])
+        finally:
+            srv.shutdown()
+
+
 def goose_client_cases(gh, port, tls, ca, tag):
     scheme = "https" if tls else "http"
     host = "localhost" if tls else "127.0.0.1"
@@ -1033,6 +1088,8 @@ def main():
         goose_client_cases(gh, g0.port, None, cert, "goose-http to go tcp")
         goose_client_cases(gh, g12.port, "1.2", cert, "goose-http to go 1.2")
         goose_client_cases(gh, g13.port, "1.3", cert, "goose-http to go 1.3")
+        if not only or "client certificate" in only:
+            client_cert_cases(gh, tmp, cert, key)
         env_base = {k: v for k, v in os.environ.items() if k.lower() not in
                     ("http_proxy", "https_proxy", "no_proxy", "all_proxy", "request_method")}
         # By HTTP/2: Go's server offering h2 (with a limit of 2 streams and

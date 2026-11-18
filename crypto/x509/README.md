@@ -291,6 +291,36 @@ it is the curve's own hash (SHA-256, -384 and -512 for the three
 brainpool curves), and for ML-DSA (and SLH-DSA) the key's own set. For DSA it
 is SHA-256, as in openssl.
 
+## Keys held elsewhere
+
+A key in a TPM, on a PKCS#11 token or in a remote service is a
+`PrivateKey` holding only its SubjectPublicKeyInfo: `external_key(spki)`,
+or `external_key(cert)` for the key a certificate names; `is_external(k)`
+says which. It stands for the key in configurations (its kind and
+`marshal_public_key` are the real key's), and `sign` and `sign_digest`
+refuse it. The calls that sign take a signer as their last argument,
+which does the signing, as Go's crypto.Signer:
+
+    F(key: const PrivateKey&, alg: i64, h: i64, data: const u8[:]) -> u8[>..]
+
+alg is one of `SIG_*` and h the hash (`SIG_MLDSA` and `SIG_SLHDSA`: the
+parameter set); data is the digest by h of what is signed, except for
+the algorithms that sign the message itself (`signs_message`: Ed25519,
+Ed448, ML-DSA, SLH-DSA), which get the message (`data_to_sign` makes
+either). The signer returns the signature as `sign` would (RSA as is,
+ECDSA and DSA as DER; RSA-PSS with a salt as long as the hash), or nothing
+when it cannot sign. `sign_data` is the signer for keys in memory, which
+the calls given none use, and `sign_with(k, alg, h, msg, F)` signs a
+message through F. `create_certificate`, `create_csr`,
+`create_csr_attrs`, `create_crl`, `ocsp_create_response`, `cms_sign` and
+`cms_sign_with` take a signer; a certificate or CSR made through one has
+its signature checked against the public key before it is returned
+(`ERR_BAD_SIGNATURE` otherwise), as Go checks a crypto.Signer's. tpm2 and
+pkcs11 give signers for their keys (`tpm2::sign_data`, `p11::sign_data`).
+test/signer.goose makes a root, a CSR, a certificate, a CRL, an OCSP
+response and CMS through a signer for P-256, P-384, RSA, Ed25519 and
+ML-DSA-44 issuers, each checked.
+
 ## Creating certificates, requests and CRLs
 
 ```goose

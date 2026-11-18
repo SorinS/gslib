@@ -8,7 +8,9 @@
            provision one, a second swtpm with EK certificates in NV
 
 Against each: scripts/live.goose (every command of tpm2, each result checked
-in software), and goose-tpm's commands. Then goose-tpm against a fake TPM
+in software), and goose-tpm's commands; against swtpm also
+scripts/signer.goose (keys that never leave the TPM signing certificates, a
+CSR, TLS and SSH handshakes and a JWT through tpm2::sign_data). Then goose-tpm against a fake TPM
 whose responses lie (oversized, truncated, a wrong tag, a TPM2B past the end):
 each must be refused, never believed or crashed on.
 
@@ -134,8 +136,8 @@ class Results:
         print(f"skip  {label}: {why}")
 
 
-def run_live(goose, spec, label, res, known, extra=()):
-    p = subprocess.run([goose, os.path.join("scripts", "live.goose"), "--", "--tpm", spec, *extra],
+def run_live(goose, spec, label, res, known, extra=(), script="live.goose"):
+    p = subprocess.run([goose, os.path.join("scripts", script), "--", "--tpm", spec, *extra],
                        cwd=ROOT, capture_output=True, text=True, timeout=900)
     seen = False
     for line in p.stdout.splitlines():
@@ -150,7 +152,7 @@ def run_live(goose, spec, label, res, known, extra=()):
             name, _, why = line[6:].partition(": ")
             res.skip(f"{label}: {name}", why)
     if not seen or "runtime error" in p.stderr or p.returncode not in (0, 1):
-        res.fail(f"{label}: live.goose ran", (p.stderr or p.stdout).strip()[-400:])
+        res.fail(f"{label}: {script} ran", (p.stderr or p.stdout).strip()[-400:])
 
 
 def tool(cmd, tmp, *args, ok=True):
@@ -386,6 +388,7 @@ def main():
                             res.fail(f"{label}: tool: ekcert", err)
                     else:
                         run_live(goose, spec, label, res, [])
+                        run_live(goose, spec, f"{label} signer", res, [], script="signer.goose")
                         run_tool(gt, spec, label, tmp, res, [])
                     stop(p)
     finally:

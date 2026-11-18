@@ -932,6 +932,45 @@ groups and Ed448 in TLS 1.2, checked against OpenSSL 4.1; example:
 `examples/tls/new_curves.goose`, and jwx's PEM reads and writes Ed448
 and X448 keys as OKP JWKs.
 
+## Keys held elsewhere: TPMs, tokens and signers
+
+A private key that lives in a TPM, on a PKCS#11 token or HSM, or in a
+remote signing service can be used wherever gslib signs: a TLS server's
+or client's certificate (TLS 1.3 and 1.2), an SSH host key or user key,
+certificates, CSRs, CRLs and OCSP responses made by x509, CMS SignedData,
+JWS and JWT, and an HTTPS client's certificate. It works as Go's
+crypto.Signer does. A configuration holds the key's public half, an
+`x509::external_key` made from its SubjectPublicKeyInfo or from its
+certificate, and the call that signs takes a signer as its last argument:
+a function or block given x509's algorithm, the hash and the digest (the
+message itself for Ed25519, Ed448 and ML-DSA), which returns the
+signature. Goose has no interfaces and keeps no function in a struct, so
+the signer is passed to the call rather than stored in the configuration,
+and a block may name the caller's own TPM or PKCS#11 session:
+
+    tls::server_feed(c, cfg, input, out, app) { k, alg, h, data => tpm2::sign_data(t, key, s, alg, h, data) }
+
+The calls without a signer sign with keys in memory as before, and
+tls, ssh, x509 and jwx gain no dependency: the signers come from tpm2
+(`tpm2::sign_data`, `tpm2::x509_key` for a TPM key's public half) and
+pkcs11 (`p11::sign_data`, `p11::x509_key`). TLS never chooses the RSA key
+exchange, which would need to decrypt, for such a key. x509 checks the
+signature a signer returns on the certificates and CSRs it makes, as Go
+checks a crypto.Signer's, so a signer answering with another key's
+signature is caught.
+
+Tested in memory with a signer holding the key apart, for every key type
+TLS 1.3 and 1.2 sign with, SSH's Ed25519, ECDSA and RSA host and user
+keys, x509's certificates, CSRs, CRLs, OCSP and CMS, and JWS and JWT; live
+against swtpm, a P-256 and an RSA key made in the TPM signing a
+certificate, a CSR, TLS 1.3 and 1.2 handshakes, an SSH login and a JWT,
+and an HTTPS server answering curl and openssl; against SoftHSM2, P-256,
+RSA and Ed25519 keys on the token doing the same; and goose-http with a
+client certificate (`--cert`, `--key`, the key signing through a signer)
+against a Python server that requires one. Examples:
+`examples/tls/key_elsewhere.goose`, `examples/tpm2/tls_server.goose` and
+`examples/pkcs11/signer.goose`.
+
 ## Using it
 
 A program declares the package once, in its root file, and imports the

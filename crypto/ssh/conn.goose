@@ -651,7 +651,7 @@ fn send_newkeys(c: Conn&, out: u8[>..]&) {
 
 // The server: the client's public value; it answers with its host key,
 // its public value and the signature of H, then NEWKEYS.
-fn server_kex_init(c: Conn&, cfg: const ServerConfig&, m: const u8[:], out: u8[>..]&) -> i64 {
+fn server_kex_init<F>(c: Conn&, cfg: const ServerConfig&, m: const u8[:], out: u8[>..]&) -> i64 {
     var r = rd_at(1, m.len);
     var theirs = empty_rd();
     if c.kx.method == KEX_DH {
@@ -677,7 +677,7 @@ fn server_kex_init(c: Conn&, cfg: const ServerConfig&, m: const u8[:], out: u8[>
     b.push(MSG_KEX_ECDH_REPLY);
     put_string(b, key.public.blob);
     put_kex_value(b, c.kx, c.kx.mine);
-    let sig, oks = sign(key, c.host_key_alg, h);
+    let sig, oks = signed_by(key, c.host_key_alg, h, F);
     if !oks { return fail(c, DISCONNECT_KEY_EXCHANGE_FAILED, "host key signing failed", out); }
     put_string(b, sig);
     send_packet(c, b, out);
@@ -1018,7 +1018,7 @@ fn next_auth(c: Conn&, cfg: const ClientConfig&, methods: const u8[:], out: u8[>
     return false;
 }
 
-fn client_auth(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: u8[>..]&, events: u8[>..]&) -> i64 {
+fn client_auth<F>(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: u8[>..]&, events: u8[>..]&) -> i64 {
     let t = m[0];
     var r = rd_at(1, m.len);
     if t == MSG_USERAUTH_BANNER {
@@ -1053,7 +1053,7 @@ fn client_auth(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: u8[>..]&
         put_bool(b, true);
         put_string(b, a);
         put_string(b, k.public.blob);
-        let sig, oks = sign(k, a, pk_signed_data(c.session_id, c.user, a, k.public.blob));
+        let sig, oks = signed_by(k, a, pk_signed_data(c.session_id, c.user, a, k.public.blob), F);
         if !oks { return fail(c, DISCONNECT_PROTOCOL_ERROR, "signing failed", out); }
         put_string(b, sig);
         send_packet(c, b, out);
@@ -1727,26 +1727,26 @@ fn connection_message(c: Conn&, m: const u8[:], out: u8[>..]&, events: u8[>..]&)
 
 // A key exchange message (30 to 49) to the side whose configuration cfg is:
 // the server takes the client's ECDH_INIT, the client the server's reply.
-fn role_kex_message(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: u8[>..]&, events: u8[>..]&) -> i64 {
+fn role_kex_message<F>(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: u8[>..]&, events: u8[>..]&) -> i64 {
     if m[0] == MSG_KEX_ECDH_REPLY { return client_kex_reply(c, cfg, m, out, events); }
     return fail(c, DISCONNECT_PROTOCOL_ERROR, "unexpected KEX message", out);
 }
 
-fn role_kex_message(c: Conn&, cfg: const ServerConfig&, m: const u8[:], out: u8[>..]&, events: u8[>..]&) -> i64 {
-    if m[0] == MSG_KEX_ECDH_INIT { return server_kex_init(c, cfg, m, out); }
+fn role_kex_message<F>(c: Conn&, cfg: const ServerConfig&, m: const u8[:], out: u8[>..]&, events: u8[>..]&) -> i64 {
+    if m[0] == MSG_KEX_ECDH_INIT { return server_kex_init(c, cfg, m, out, F); }
     return fail(c, DISCONNECT_PROTOCOL_ERROR, "unexpected KEX message", out);
 }
 
 // An authentication message to the side whose configuration cfg is.
-fn role_auth(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: u8[>..]&, events: u8[>..]&) -> i64 {
-    client_auth(c, cfg, m, out, events)
+fn role_auth<F>(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: u8[>..]&, events: u8[>..]&) -> i64 {
+    client_auth(c, cfg, m, out, events, F)
 }
 
-fn role_auth(c: Conn&, cfg: const ServerConfig&, m: const u8[:], out: u8[>..]&, events: u8[>..]&) -> i64 {
+fn role_auth<F>(c: Conn&, cfg: const ServerConfig&, m: const u8[:], out: u8[>..]&, events: u8[>..]&) -> i64 {
     server_auth(c, cfg, m, out, events)
 }
 
-fn handle_message(c: Conn&, cfg, m: const u8[:], out: u8[>..]&, events: u8[>..]&) -> i64 {
+fn handle_message<F>(c: Conn&, cfg, m: const u8[:], out: u8[>..]&, events: u8[>..]&) -> i64 {
     if m.len == 0 { return fail(c, DISCONNECT_PROTOCOL_ERROR, "empty packet", out); }
     let t = m[0];
     let first_kex = c.kex_count == 0;
@@ -1770,7 +1770,7 @@ fn handle_message(c: Conn&, cfg, m: const u8[:], out: u8[>..]&, events: u8[>..]&
         if !c.in_kex || c.peer_kexinit.len == 0 || c.sent_newkeys {
             return fail(c, DISCONNECT_PROTOCOL_ERROR, "unexpected KEX message", out);
         }
-        return role_kex_message(c, cfg, m, out, events);
+        return role_kex_message(c, cfg, m, out, events, F);
     }
     if t == MSG_NEWKEYS { return on_newkeys(c, m, out); }
     if c.state == ST_KEX || c.state == ST_VERSION {
@@ -1817,7 +1817,7 @@ fn handle_message(c: Conn&, cfg, m: const u8[:], out: u8[>..]&, events: u8[>..]&
         return fail(c, DISCONNECT_PROTOCOL_ERROR, "unexpected message before authentication", out);
     }
     if c.state == ST_AUTH {
-        if t >= 50 && t <= 79 { return role_auth(c, cfg, m, out, events); }
+        if t >= 50 && t <= 79 { return role_auth(c, cfg, m, out, events, F); }
         return fail(c, DISCONNECT_PROTOCOL_ERROR, "unexpected message during authentication", out);
     }
     if c.state == ST_CONNECTED {
@@ -1866,8 +1866,17 @@ fn take_version(c: Conn&, out: u8[>..]&) -> i64 {
 
 // Feeds received bytes; appends what to send to `out` and what happened to
 // `events`. Returns 0, or -1 once the connection has failed (c.reason and
-// c.message say why).
+// c.message say why). A server's host key, or a client's user key, held
+// elsewhere (ssh::private_key of an x509::external_key) signs through a
+// signer passed last, as x509::sign_data describes it; the signer is
+// given the x509 key, so one signer can tell several keys apart:
+//
+//   ssh::client_feed(c, cfg, input, out, events) { k, alg, h, data => tpm2::sign_data(t, key, alg, h, data) }
 fn feed(c: Conn&, cfg, input: const u8[:], out: u8[>..]&, events: u8[>..]&) -> i64 {
+    return feed(c, cfg, input, out, events, x509::sign_data);
+}
+
+fn feed<F>(c: Conn&, cfg, input: const u8[:], out: u8[>..]&, events: u8[>..]&) -> i64 {
     var off = 0;
     while off < input.len || c.inbuf.len > 0 {
         if c.state == ST_FAILED { return -1; }
@@ -1895,7 +1904,7 @@ fn feed(c: Conn&, cfg, input: const u8[:], out: u8[>..]&, events: u8[>..]&) -> i
             c.inbuf.clear();
             c.inbuf.append(rest);
             progressed = true;
-            if handle_message(c, cfg, payload, out, events) != 0 { return -1; }
+            if handle_message(c, cfg, payload, out, events, F) != 0 { return -1; }
             if c.state == ST_CLOSED { return 0; }
         }
         // Rekey once enough has gone either way, in bytes (rekey_bytes, 0
@@ -1918,6 +1927,25 @@ fn client_feed(c: Conn&, cfg: const ClientConfig&, input: const u8[:], out: u8[>
 
 fn server_feed(c: Conn&, cfg: const ServerConfig&, input: const u8[:], out: u8[>..]&, events: u8[>..]&) -> i64 {
     return feed(c, cfg, input, out, events);
+}
+
+// The same, with a signer for keys held elsewhere (feed).
+fn client_feed<F>(c: Conn&, cfg: const ClientConfig&, input: const u8[:], out: u8[>..]&, events: u8[>..]&) -> i64 {
+    return feed(c, cfg, input, out, events, F);
+}
+
+fn server_feed<F>(c: Conn&, cfg: const ServerConfig&, input: const u8[:], out: u8[>..]&, events: u8[>..]&) -> i64 {
+    return feed(c, cfg, input, out, events, F);
+}
+
+// A signature by k: in memory, or for a key held elsewhere through F.
+fn signed_by<F>(k: const PrivateKey&, alg: const u8[:], data: const u8[:]) -> u8[>..], bool {
+    if x509::is_external(k.key) {
+        let s, ok = sign(k, alg, data, F);
+        return s, ok;
+    }
+    let s, ok = sign(k, alg, data);
+    return s, ok;
 }
 
 // Rekeying from the application's side.

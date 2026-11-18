@@ -59,6 +59,18 @@ below).
   ls -l longnames. Where OpenSSH departs from the draft it follows OpenSSH:
   SYMLINK takes the target first.
 
+## Keys held elsewhere
+
+A host key or user key in a TPM or on a PKCS#11 token is
+`ssh::private_key(x509::external_key(spki))`: its public key, for
+`add_host_key`, `add_key` and authorized_keys. The signatures are asked
+of a signer passed last to `feed`, `client_feed` or `server_feed` (x509's
+README describes signers); it is given the x509 key, so one signer can
+serve several keys. Ed25519, ECDSA (P-256, P-384, P-521, the DER
+signature turned into SSH's two mpints) and RSA with rsa-sha2-256 and
+-512; ssh-rsa's SHA-1 is not asked of a signer. test/signer.goose logs in
+with host and user keys of each kind held elsewhere.
+
 ## The programs
 
 ```bash

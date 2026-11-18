@@ -26,6 +26,10 @@
 //   -c FILE             the cookies at the end, written to a cookies.txt
 //   --compressed        ask for gzip and decode it
 //   --cacert FILE       trust these roots (PEM), not the system's; -k checks nothing
+//   --cert FILE, --key FILE   a client certificate (PEM, the chain) and its key
+//                       (PEM: PKCS #8, SEC 1 or PKCS #1), for servers that ask;
+//                       the TLS configuration holds only the certificate and
+//                       the key signs through a signer, as a TPM's would
 //   --tls-max 1.2|1.3   the highest TLS version
 //   --http1.1           HTTP/1.1 only (HTTP/2 is offered over TLS by default);
 //   --http2-prior-knowledge   HTTP/2 over TCP too, without asking
@@ -43,6 +47,7 @@ import gslib from "../../..";
 import gslib.crypto.bignum;
 import gslib.encoding.asn1;
 import gslib.crypto.x509;
+import gslib.crypto.x509.keys;
 import gslib.crypto.tls;
 import gslib.crypto.tls.handshake;
 import gslib.net.http;
@@ -132,7 +137,7 @@ fn upload_to(c: http::Client&, method: const u8[:], url: const u8[:], fields: co
     var failed = false;
     // A file is read again for a hop that sends it again (curl rewinds it
     // too); standard input cannot be.
-    var r = http::fetch_stream(c, method, target, f, size, size >= 0) { out: u8[>..]&, start: bool =>
+    var r = http::fetch_stream(c, method, target, f, size, size >= 0, client_signer) { out: u8[>..]&, start: bool =>
         if start && size >= 0 && sys::seek(fd, 0, sys::SEEK_SET) != 0 { failed = true; }
         let at = out.len;
         out.resize(at + 65536, 0);
@@ -142,6 +147,15 @@ fn upload_to(c: http::Client&, method: const u8[:], url: const u8[:], fields: co
     if path != "-" { sys::close(fd); }
     if failed { die("reading the -T file failed"); }
     return r;
+}
+
+// The client certificate's key: kept here, out of the TLS configuration,
+// and used by the signer the requests are given, as a key in a TPM or on a
+// token would be (tpm2::sign_data, p11::sign_data).
+var client_key = x509::empty_key();
+
+fn client_signer(k: const x509::PrivateKey&, alg: i64, h: i64, data: const u8[:]) -> u8[>..] {
+    return x509::sign_data(client_key, alg, h, data);
 }
 
 fn main() {
@@ -165,6 +179,8 @@ fn main() {
     var cookies_on = false;
     var cookie_out: u8[>..] = [];
     var cacert: u8[>..] = [];
+    var cert_file: u8[>..] = [];
+    var key_file: u8[>..] = [];
     var tls12 = false;
     var interval_ms: i64 = 0;
     var upload: u8[>..] = [];
@@ -226,6 +242,8 @@ fn main() {
         else if s == "--http2-prior-knowledge" { c.opt.h2c = true; i++; }
         else if s == "--compressed" { c.opt.compression = true; i++; }
         else if s == "--cacert" && has_next { cacert.clear(); cacert.append(next); i += 2; }
+        else if s == "--cert" && has_next { cert_file.clear(); cert_file.append(next); i += 2; }
+        else if s == "--key" && has_next { key_file.clear(); key_file.append(next); i += 2; }
         else if s == "-k" || s == "--insecure" { c.opt.insecure = true; i++; }
         else if s == "--tls-max" && has_next {
             if next == "1.2" { tls12 = true; } else if next != "1.3" { die("--tls-max is 1.2 or 1.3"); }
@@ -262,6 +280,30 @@ fn main() {
         for d in ders { der.append(d); }
         if !http::set_roots_der(c, der) { die("no certificate in --cacert"); }
     }
+    if cert_file.len > 0 || key_file.len > 0 {
+        if cert_file.len == 0 || key_file.len == 0 { die("--cert and --key go together"); }
+        var text: u8[>..] = [];
+        if !read_file(cert_file, text) { die("cannot read --cert"); }
+        let ders, ok = asn1::pem_decode(text, "CERTIFICATE");
+        var chain: u8[>..] = [];
+        for d in ders { chain.append(d); }
+        if !tls::set_client_certificate(c.tlscfg, chain) { die("no certificate in --cert"); }
+        var ktext: u8[>..] = [];
+        if !read_file(key_file, ktext) { die("cannot read --key"); }
+        var found = false;
+        let labels: const u8[:][3] = ["PRIVATE KEY", "EC PRIVATE KEY", "RSA PRIVATE KEY"];
+        for label in labels {
+            let kd, okd = asn1::pem_decode(ktext, label);
+            for d in kd {
+                if !found && okd {
+                    let k, okk = x509::parse_private_key(d);
+                    if okk { client_key = k; found = true; }
+                }
+            }
+        }
+        if !found { die("no private key in --key"); }
+        if x509::marshal_public_key(client_key) != x509::marshal_public_key(c.tlscfg.cert_key) { die("--key is not --cert's"); }
+    }
     if tls12 { c.tlscfg.max_version = tls::VERSION_TLS12; }
     if has_proxy {
         if !http::set_proxy(c, proxy, no_proxy) { die("-x: not an http, https, socks5 or socks5h URL"); }
@@ -287,7 +329,7 @@ fn main() {
                 if last_start >= 0 && now < last_start + interval_ms { sleep_ms(last_start + interval_ms - now); }
                 last_start = clock_ns() / 1000000;
             }
-            var r = if upload.len > 0 { upload_to(c, method, us, fields, upload, no_expect) } else { http::fetch(c, method, us, fields, data) };
+            var r = if upload.len > 0 { upload_to(c, method, us, fields, upload, no_expect) } else { http::fetch(c, method, us, fields, data, client_signer) };
             if r.err != http::ERR_NONE {
                 if r.err == http::ERR_REDIRECTS { say("too many redirects at ", http::response_url(r)); }
                 else { say(http::client_error_text(r.err), if r.status > 0 { " (the proxy answered with a refusal)" } else { "" }); }
@@ -318,7 +360,7 @@ fn main() {
                 var chunk: u8[>..] = [];
                 while !r.body_done {
                     chunk.clear();
-                    let n = http::read_body(c, r, chunk);
+                    let n = http::read_body(c, r, chunk, client_signer);
                     if n < 0 { say(http::client_error_text(-n), ""); status = 1; break; }
                     if !head_only { out.append(chunk); }
                     if out.len > (1 << 20) {

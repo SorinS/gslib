@@ -26,6 +26,8 @@ import crypto.bignum.ed25519;
 import crypto.bignum.ed448;
 import crypto.bignum.hmac;
 import crypto.bignum.mldsa;
+import crypto.x509;
+import crypto.x509.keys;
 
 // The header parameters RFC 7515 §4.1 and RFC 7797 define. Others, a
 // caller's own, go in `extra` when signing (JSON members, without braces:
@@ -262,36 +264,83 @@ fn check_crit(h: const Header&) -> i64 {
 // The signature of input by alg with key; ERR_KEY for a key that does not
 // fit or is not private.
 fn sign_bytes(input: const u8[:], alg: i64, key: const jwk::Key&) -> u8[>..], i64 {
+    let sig, err = sign_bytes(input, alg, key, sign_jwk);
+    return sig, err;
+}
+
+// The signer for a private JWK in memory, as a signer answers (x509's
+// algorithms and form: ECDSA as DER): what the calls given no signer use.
+// Empty for a public key, or one that does not fit.
+fn sign_jwk(key: const jwk::Key&, alg: i64, h: i64, data: const u8[:]) -> u8[>..] {
+    var out: u8[>..] = [];
+    if !key.private { return out; }
+    var ok = true;
+    if alg == x509::SIG_RSA_PKCS1 {
+        let s, oks = bignum::rsa_sign_pkcs1_digest(key.rsa, data, h);
+        out.append(s);
+        ok = oks;
+    } else if alg == x509::SIG_RSA_PSS {
+        // The salt is as long as the hash (RFC 7518 §3.5).
+        let s, oks = bignum::rsa_sign_pss_digest(key.rsa, data, bignum::hash_len(h), h);
+        out.append(s);
+        ok = oks;
+    } else if alg == x509::SIG_ECDSA {
+        let c = jwk::curve(key.crv);
+        out.append(bignum::ecdsa_sig_to_der(bignum::ecdsa_sign_digest(c, key.d, data, h)));
+    } else if alg == x509::SIG_MLDSA {
+        // Hedged, with the empty context (RFC 9964 §5).
+        out.append(bignum::mldsa_sign(h, key.d, data));
+    } else if alg == x509::SIG_ED448 {
+        // Ed448 with the empty context (RFC 8037 §3.1).
+        out.append(bignum::ed448_sign(key.d, data));
+    } else {
+        out.append(bignum::ed25519_sign(key.d, data));
+    }
+    if !ok { out.clear(); }
+    return out;
+}
+
+// x509's algorithm and hash for a JWS one (on key's curve, for EdDSA), as
+// a signer is asked for them: ES256 is ECDSA with SHA-256, EdDSA on Ed448
+// is SIG_ED448, ML-DSA-65's hash its set (65).
+fn x509_alg(alg: i64, crv: i64) -> i64, i64 {
+    let h = jwa::hash_of(alg);
+    if jwa::is_rsa_pkcs1(alg) { return x509::SIG_RSA_PKCS1, h; }
+    if jwa::is_rsa_pss(alg) { return x509::SIG_RSA_PSS, h; }
+    if jwa::is_ecdsa(alg) { return x509::SIG_ECDSA, h; }
+    if jwa::is_mldsa(alg) { return x509::SIG_MLDSA, jwa::mldsa_set(alg); }
+    if alg == jwa::ED448 || (alg == jwa::EDDSA && crv == jwa::CRV_ED448) { return x509::SIG_ED448, 0; }
+    return x509::SIG_ED25519, 0;
+}
+
+// The signature of input by alg through a signer F (x509::sign_data
+// describes it): for a key held elsewhere, key is its public JWK. F is
+// called with key, x509's name for the algorithm and hash, and the digest
+// (the message, for EdDSA and ML-DSA); it answers as x509 signs, and an
+// ECDSA signature, DER, goes into the JWS as r || s. HMAC signs with the
+// key in memory whatever F is.
+fn sign_bytes<F>(input: const u8[:], alg: i64, key: const jwk::Key&) -> u8[>..], i64 {
     var out: u8[>..] = [];
     if alg == jwa::NONE { return out, jwx::OK; }
     if !jwa::is_signature(alg) { return out, jwx::ERR_UNSUPPORTED; }
-    if !jwk::fits(key, alg) || !key.private { return out, jwx::ERR_KEY; }
-    let h = jwa::hash_of(alg);
-    var ok = true;
+    if !jwk::fits(key, alg) { return out, jwx::ERR_KEY; }
     if jwa::is_hmac(alg) {
-        out.append(bignum::hmac(h, key.k, input));
-    } else if jwa::is_rsa_pkcs1(alg) {
-        let s, oks = bignum::rsa_sign_pkcs1(key.rsa, input, h);
-        out.append(s);
-        ok = oks;
-    } else if jwa::is_rsa_pss(alg) {
-        // The salt is as long as the hash (RFC 7518 §3.5).
-        let s, oks = bignum::rsa_sign_pss(key.rsa, input, bignum::hash_len(h), h);
-        out.append(s);
-        ok = oks;
-    } else if jwa::is_ecdsa(alg) {
-        let c = jwk::curve(key.crv);
-        out.append(bignum::ecdsa_sign(c, key.d, input));
-    } else if jwa::is_mldsa(alg) {
-        // Hedged, with the empty context (RFC 9964 §5).
-        out.append(bignum::mldsa_sign(jwa::mldsa_set(alg), key.d, input));
-    } else if key.crv == jwa::CRV_ED448 {
-        // Ed448 with the empty context (RFC 8037 §3.1).
-        out.append(bignum::ed448_sign(key.d, input));
-    } else {
-        out.append(bignum::ed25519_sign(key.d, input));
+        if !key.private { return out, jwx::ERR_KEY; }
+        out.append(bignum::hmac(jwa::hash_of(alg), key.k, input));
+        return out, jwx::OK;
     }
-    return out, if ok { jwx::OK } else { jwx::ERR_KEY };
+    let xa, h = x509_alg(alg, key.crv);
+    let sig = F(key, xa, h, x509::data_to_sign(xa, h, input));
+    if sig.len == 0 { return out, jwx::ERR_KEY; }
+    if jwa::is_ecdsa(alg) {
+        let c = jwk::curve(key.crv);
+        let raw, ok = bignum::ecdsa_sig_from_der(c, sig);
+        if !ok { return out, jwx::ERR_KEY; }
+        out.append(raw);
+    } else {
+        out.append(sig);
+    }
+    return out, jwx::OK;
 }
 
 // OK when sig is alg's signature of input under key (public or private).
@@ -342,11 +391,17 @@ fn signing_input(protected_b64: const u8[:], payload: const u8[:], b64: bool) ->
 // a '.' unless detached (RFC 7797 §5.2).
 fn sign_with(payload: const u8[:], key: const jwk::Key&, h: const Header&, extra: const u8[:] = "",
              detached: bool = false) -> u8[>..], i64 {
+    let r0, r1 = sign_with(payload, key, h, extra, detached, sign_jwk);
+    return r0, r1;
+}
+
+fn sign_with<F>(payload: const u8[:], key: const jwk::Key&, h: const Header&, extra: const u8[:] = "",
+             detached: bool = false) -> u8[>..], i64 {
     var out: u8[>..] = [];
     if !h.b64 && !detached && find(payload, ".") >= 0 { return out, jwx::ERR_MALFORMED; }
     let protected_b64 = jwx::b64_encode(header_json(h, extra));
     let input = signing_input(protected_b64, payload, h.b64);
-    let sig, err = sign_bytes(input, h.alg, key);
+    let sig, err = sign_bytes(input, h.alg, key, F);
     if err != jwx::OK { return out, err; }
     if detached {
         out.append(protected_b64);
@@ -360,18 +415,31 @@ fn sign_with(payload: const u8[:], key: const jwk::Key&, h: const Header&, extra
 }
 
 // A compact JWS of payload by alg with key. The key's "kid", if it has one,
-// goes in the header, as jwx puts it there.
+// goes in the header, as jwx puts it there. sign, sign_with and sign_json
+// take a signer last for a key held elsewhere, key then being its public
+// JWK: x509::sign_data describes the signer, and sign_bytes how JWS asks
+// it.
 fn sign(payload: const u8[:], alg: i64, key: const jwk::Key&) -> u8[>..], i64 {
+    let r0, r1 = sign(payload, alg, key, sign_jwk);
+    return r0, r1;
+}
+
+fn sign<F>(payload: const u8[:], alg: i64, key: const jwk::Key&) -> u8[>..], i64 {
     var h = Header { .. };
     h.alg = alg;
     h.kid.append(key.kid);
-    let out, err = sign_with(payload, key, h);
+    let out, err = sign_with(payload, key, h, "", false, F);
     return out, err;
 }
 
 // A JWS in the JSON serialization, one signature per signer: general, or
 // flattened when there is one signer and `flattened` is true.
 fn sign_json(payload: const u8[:], signers: const Signer[:], flattened: bool = false) -> u8[>..], i64 {
+    let r0, r1 = sign_json(payload, signers, flattened, sign_jwk);
+    return r0, r1;
+}
+
+fn sign_json<F>(payload: const u8[:], signers: const Signer[:], flattened: bool = false) -> u8[>..], i64 {
     var out: u8[>..] = [];
     if signers.len == 0 || (flattened && signers.len != 1) { return out, jwx::ERR_MALFORMED; }
     let b64 = signers[0].header.b64;
@@ -393,7 +461,7 @@ fn sign_json(payload: const u8[:], signers: const Signer[:], flattened: bool = f
         if kidded.kid.len == 0 && s.unprotected.len == 0 { kidded.kid.append(s.key.kid); }
         let protected_b64 = jwx::b64_encode(header_json(kidded, s.extra));
         let input = signing_input(protected_b64, payload, b64);
-        let sig, err = sign_bytes(input, s.header.alg, s.key);
+        let sig, err = sign_bytes(input, s.header.alg, s.key, F);
         if err != jwx::OK { return out, err; }
         if !flattened {
             if !first { out.push(','); }

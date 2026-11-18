@@ -183,11 +183,29 @@ fn parse_public_key(blob: const u8[:]) -> PublicKey, bool {
     return k, true;
 }
 
-// The public key of a private key.
+// The public key of a private key, or of one held elsewhere
+// (x509::external_key).
 fn public_of(key: const x509::PrivateKey&) -> PublicKey, bool {
     var k = no_public_key();
     k.kind = key.kind;
-    if key.kind == x509::KEY_ED25519 {
+    if x509::is_external(key) {
+        let b = x509::public_key_bytes(key);
+        if key.kind == x509::KEY_ED25519 || is_ecdsa(key.kind) {
+            k.point.append(b);
+        } else if key.kind == x509::KEY_RSA {
+            // RSAPublicKey ::= SEQUENCE { modulus, publicExponent }
+            let t, ok = asn1::parse(b);
+            let f, okc = asn1::children(b, t);
+            if !ok || !okc || f.len != 2 { return k, false; }
+            let n, okn = asn1::read_uint(b, f[0]);
+            let e, oke = asn1::read_uint(b, f[1]);
+            if !okn || !oke { return k, false; }
+            k.n.append(n);
+            k.e.append(e);
+        } else {
+            return k, false;
+        }
+    } else if key.kind == x509::KEY_ED25519 {
         k.point.append(bignum::ed25519_public(key.seed));
     } else if is_ecdsa(key.kind) {
         let c = curve_of(key.kind);
@@ -212,6 +230,49 @@ fn rsa_hash(alg: const u8[:]) -> i64 {
 // ECDSA's is mpint r, mpint s. Empty and false when RSA's private
 // operation fails its check (a fault), as Go's Signer returns an error.
 fn sign(k: const PrivateKey&, alg: const u8[:], data: const u8[:]) -> u8[>..], bool {
+    if x509::is_external(k.key) {
+        let s, ok = sign(k, alg, data, x509::sign_data);       // refused: no signer
+        return s, ok;
+    }
+    return sign_in_memory(k, alg, data);
+}
+
+// x509's algorithm and hash for an SSH signature algorithm on a key kind.
+fn x509_alg(kind: i64, alg: const u8[:]) -> i64, i64 {
+    if kind == x509::KEY_ED25519 { return x509::SIG_ED25519, 0; }
+    if is_ecdsa(kind) {
+        return x509::SIG_ECDSA, if kind == x509::KEY_EC_P256 { 256 } else if kind == x509::KEY_EC_P384 { 384 } else { 512 };
+    }
+    return x509::SIG_RSA_PKCS1, rsa_hash(alg);
+}
+
+// The same by a signer F (x509::sign_data describes it), for a key held
+// elsewhere: k.key its x509::external_key. F is asked for x509's algorithm
+// and hash and given the digest (the message, for Ed25519); its ECDSA
+// signature, DER, becomes SSH's mpint r, mpint s. ssh-rsa's SHA-1 is not
+// asked of a signer: false.
+fn sign<F>(k: const PrivateKey&, alg: const u8[:], data: const u8[:]) -> u8[>..], bool {
+    var out: u8[>..] = [];
+    if !sig_fits(k.key.kind, alg) { return out, false; }
+    let xa, h = x509_alg(k.key.kind, alg);
+    let sig, ok = x509::sign_with(k.key, xa, h, data, F);
+    if !ok { return out, false; }
+    put_string(out, alg);
+    if is_ecdsa(k.key.kind) {
+        let c = curve_of(k.key.kind);
+        let raw, okr = bignum::ecdsa_sig_from_der(c, sig);
+        if !okr { out.clear(); return out, false; }
+        var rs: u8[>..] = [];
+        put_mpint(rs, raw[..c.len]);
+        put_mpint(rs, raw[c.len..]);
+        put_string(out, rs);
+    } else {
+        put_string(out, sig);
+    }
+    return out, true;
+}
+
+fn sign_in_memory(k: const PrivateKey&, alg: const u8[:], data: const u8[:]) -> u8[>..], bool {
     assert(sig_fits(k.key.kind, alg));
     var out: u8[>..] = [];
     put_string(out, alg);

@@ -85,9 +85,14 @@ fn cv_alg12(s: u16) -> i64, i64, i64 {
 // CertificateVerify's signature over the handshake messages so far, by a
 // scheme of CV_SCHEMES12; false when signing fails.
 fn cv_sign12(key: const x509::PrivateKey&, s: u16, log: const Log12&) -> u8[>..], bool {
-    let alg, h, salt = cv_alg12(s);
-    let sig, ok = x509::sign_digest(key, alg, h, log12_digest(log, h));
+    let sig, ok = cv_sign12(key, s, log, x509::sign_data);
     return sig, ok;
+}
+
+fn cv_sign12<F>(key: const x509::PrivateKey&, s: u16, log: const Log12&) -> u8[>..], bool {
+    let alg, h, salt = cv_alg12(s);
+    let sig = F(key, alg, h, log12_digest(log, h));
+    return sig, sig.len > 0;
 }
 
 // Whether a CertificateVerify signature is the leaf's, by a scheme of
@@ -389,7 +394,7 @@ fn client_certificate_request12(c: Conn&, cfg: const ClientConfig&, m: const u8[
 // ServerHelloDone, and the client's flight: [Certificate],
 // ClientKeyExchange, [CertificateVerify over the messages so far],
 // change_cipher_spec, Finished.
-fn client_server_hello_done12(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: u8[>..]&) -> i64 {
+fn client_server_hello_done12<F>(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: u8[>..]&) -> i64 {
     if m.len != 4 { return fail(c, ALERT_DECODE_ERROR, out); }
     hs_add(c, m);
     if c.cert_requested {
@@ -431,7 +436,7 @@ fn client_server_hello_done12(c: Conn&, cfg: const ClientConfig&, m: const u8[:]
     send_hs(c, handshake_message(HS_CLIENT_KEY_EXCHANGE, cke), out);
     set48(c.master, master_secret12(c.suite.hash, pms, c.ems, transcript_hash(c.th), c.random, c.peer_random));
     if c.cert_scheme != 0 {
-        let sig, oks = cv_sign12(cfg.cert_key, c.cert_scheme, c.log);
+        let sig, oks = cv_sign12(cfg.cert_key, c.cert_scheme, c.log, F);
         if !oks { return fail(c, ALERT_INTERNAL_ERROR, out); }
         var cv: u8[>..] = [];
         put_u16(cv, c.cert_scheme);
@@ -494,7 +499,7 @@ fn client_finished12(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: u8
     return 0;
 }
 
-fn client_message12(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: u8[>..]&) -> i64 {
+fn client_message12<F>(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: u8[>..]&) -> i64 {
     let t = m[0];
     if t == HS_HELLO_REQUEST {
         // Renegotiation is refused, with a warning (RFC 5746 §4.2); a
@@ -510,7 +515,7 @@ fn client_message12(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: u8[
     if c.state == ST12_WAIT_SKE && t == HS_SERVER_KEY_EXCHANGE { return client_server_key_exchange12(c, cfg, m, out); }
     if c.state == ST12_WAIT_CR_SHD && t == HS_CERTIFICATE_REQUEST { return client_certificate_request12(c, cfg, m, out); }
     if (c.state == ST12_WAIT_CR_SHD || c.state == ST12_WAIT_SHD) && t == HS_SERVER_HELLO_DONE {
-        return client_server_hello_done12(c, cfg, m, out);
+        return client_server_hello_done12(c, cfg, m, out, F);
     }
     if c.state == ST12_WAIT_CCS && t == HS_NEW_SESSION_TICKET { return client_new_session_ticket12(c, cfg, m, out); }
     if c.state == ST12_WAIT_FINISHED && t == HS_FINISHED { return client_finished12(c, cfg, m, out); }
@@ -521,7 +526,7 @@ fn client_message12(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: u8[
 
 // A ClientHello that gets TLS 1.2: the suite, ECDHE group and signature
 // scheme, resumption, and the server's flight.
-fn server_client_hello12(c: Conn&, cfg: const ServerConfig&, m: const u8[:], h: const Hello&, out: u8[>..]&) -> i64 {
+fn server_client_hello12<F>(c: Conn&, cfg: const ServerConfig&, m: const u8[:], h: const Hello&, out: u8[>..]&) -> i64 {
     c.version = VERSION_TLS12;
     // TLS_FALLBACK_SCSV from a client that could do better (RFC 7507).
     if in_u16_list(m, h.suites, TLS_FALLBACK_SCSV) && client_max_version(h) < cfg.max_version {
@@ -551,8 +556,9 @@ fn server_client_hello12(c: Conn&, cfg: const ServerConfig&, m: const u8[:], h: 
     var chosen: u16 = 0;
     for id in cfg.suites12 {
         let st, okst = suite(id);
+        // The RSA key exchange decrypts with the key: not one held elsewhere.
         if chosen == 0 && okst && is_tls12_suite(st) && in_u16_list(m, h.suites, id) && kx_fits(st.kx, cfg.key.kind) &&
-           (st.kx == KX_RSA || (group != 0 && scheme != 0)) {
+           (st.kx == KX_RSA || (group != 0 && scheme != 0)) && !(st.kx == KX_RSA && x509::is_external(cfg.key)) {
             chosen = id;
         }
     }
@@ -664,7 +670,7 @@ fn server_client_hello12(c: Conn&, cfg: const ServerConfig&, m: const u8[:], h: 
         signed.append(c.peer_random);
         signed.append(c.random);
         signed.append(ske);
-        let sig, oks = sign(cfg.key, scheme, signed);
+        let sig, oks = sign(cfg.key, scheme, signed, F);
         if !oks { return fail(c, ALERT_INTERNAL_ERROR, out); }
         put_u16(ske, scheme);
         put_u16(ske, sig.len as! u16);

@@ -316,13 +316,22 @@ fn validate(c: const Claims&, v: Validator) -> i64 {
 
 // --- Tokens -------------------------------------------------------------------------------
 
-// A signed token (JWS compact, "typ": "JWT") of the claims.
+// A signed token (JWS compact, "typ": "JWT") of the claims. For a key held
+// elsewhere (a TPM, a PKCS#11 token) key is its public JWK (jwk::from_spki)
+// and a signer, as jws::sign takes it, comes last:
+//
+//   jwt::sign(claims, jwa::ES256, pub) { k, alg, h, data => tpm2::sign_data(t, key, alg, h, data) }
 fn sign(c: const Claims&, alg: i64, key: const jwk::Key&) -> u8[>..], i64 {
+    let r0, r1 = sign(c, alg, key, jws::sign_jwk);
+    return r0, r1;
+}
+
+fn sign<F>(c: const Claims&, alg: i64, key: const jwk::Key&) -> u8[>..], i64 {
     var h = jws::Header { .. };
     h.alg = alg;
     h.typ.append("JWT");
     h.kid.append(key.kid);
-    let out, err = jws::sign_with(marshal(c), key, h);
+    let out, err = jws::sign_with(marshal(c), key, h, "", false, F);
     return out, err;
 }
 

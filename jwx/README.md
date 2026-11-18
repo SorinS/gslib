@@ -177,6 +177,15 @@ ML-DSA they are.
 - `sign_bytes(input, alg, key)`, `verify_bytes(input, sig, alg, key)`:
   the signature algorithms alone.
 
+A key held elsewhere (a TPM's, a token's) is its public JWK
+(`jwk::from_spki`), and `jws::sign`, `sign_with`, `sign_json` and
+`jwt::sign` take a signer last, as x509's README describes signers: it is
+given the JWK, x509's algorithm and hash (ES256 is ECDSA with SHA-256,
+EdDSA on Ed448 is Ed448, ML-DSA-65's hash its set) and the digest, or the
+message for EdDSA and ML-DSA; an ECDSA signature comes back DER and goes
+into the JWS as r || s. HMAC always signs with the key in memory.
+test/signer.goose signs every family through a signer and verifies.
+
 ### jwe
 
 - `encrypt(plaintext, alg, enc, key, zip = false)`: compact, to the

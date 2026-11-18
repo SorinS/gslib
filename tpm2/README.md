@@ -145,6 +145,25 @@ extend, or a second), and refuses a log it cannot read whole.
 Name), encIdentity = AES-CFB of the TPM2B credential, the integrity HMAC
 over encIdentity ‖ Name.
 
+### Keys used by TLS, SSH, x509 and JWS
+
+A signing key made in the TPM can serve the rest of gslib without
+leaving it. `x509_key(public)` is its public area as an
+`x509::external_key`, for a TLS, SSH or x509 configuration, and
+`sign_data(t, key, s, alg, h, data)` is a signer (x509's README describes
+them) for a loaded, unrestricted signing key: x509's algorithm and hash
+become TPM2_Sign's scheme (ECDSA, RSASSA, RSAPSS with SHA-256, -384 or
+-512) and the answer comes back as x509 signs (ECDSA as DER). A block
+passes it on with the caller's TPM and session:
+
+    tls::server_feed(c, cfg, input, out, app) { k, alg, h, data => tpm2::sign_data(t, key, s, alg, h, data) }
+
+scripts/signer.goose, run by interop.py against swtpm, signs a
+certificate, a CSR, TLS 1.3 and 1.2 handshakes, an SSH login and a JWT
+with P-256 and RSA keys in the TPM. Example:
+`examples/tpm2/tls_server.goose`, an HTTPS server whose key never leaves
+the TPM.
+
 ## goose-tpm
 
 ```
@@ -194,6 +213,9 @@ goose-tpm --tpm tcp:127.0.0.1:2321 unseal --in sealed --pcrs 7 --auth-file pin
   ActivateCredential on the TPM, a quote and its verification.
 - `seal.goose` (needs a TPM): seal to PCR 16 and a PIN through a salted,
   encrypting session; unseal; extend PCR 16; refused.
+- `tls_server.goose` (needs a TPM): an HTTPS server whose P-256 key is
+  made in the TPM and never leaves it, its certificate and handshakes
+  signed by `sign_data`: `-- TPM [PORT]`, then `curl -k`.
 
 The first two run with the tests; the others are type-checked there and
 run by hand: `goose examples/tpm2/attest.goose -- tcp:127.0.0.1:2321`.

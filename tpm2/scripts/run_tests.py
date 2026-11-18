@@ -21,7 +21,7 @@ import sys
 import tempfile
 
 ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
-EXAMPLE_ARGS = {"attest": None, "seal": None}
+EXAMPLE_ARGS = {"attest": None, "seal": None, "tls_server": None}
 
 
 def find_goose(arg):
