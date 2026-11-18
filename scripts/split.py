@@ -206,6 +206,16 @@ SPLITS = {
             "and http needs ntlm. They are in gslib (`ntlm/tools`, `ntlm/scripts`,\n"
             "`examples/ntlm`).\n"),
     ),
+    "radius": dict(
+        repo="radiusgoose", new=True,
+        gitignore=["__pycache__/"],
+        fixups=[
+            ("README.md", "make test-radius                                  # or: cd radius && python3 scripts/run_tests.py",
+             "python3 scripts/run_tests.py"),
+            ("README.md", "make interop-radius                               # Linux with Docker",
+             "python3 scripts/interop.py                        # Linux with Docker"),
+        ],
+    ),
     "service": dict(
         repo="servicegoose", new=True,
         sidecar=(
