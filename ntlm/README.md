@@ -42,7 +42,7 @@ And outside the package's own directory:
 
 | Where | What |
 |---|---|
-| `krb5.spnego` | NTLM as SPNEGO's mechanism (1.3.6.1.4.1.311.2.2.10, [MS-SPNG]): `SpnegoNtlm`, `spnego_ntlm_initiator`, `spnego_ntlm_init`, `spnego_ntlm_init_continue`, `spnego_ntlm_acceptor`, `spnego_ntlm_accept` (a bare NTLMSSP token in place of SPNEGO taken too), `spnego_ntlm_session`; mechListMIC with the NTLM keys both ways |
+| `krb5.spnego` | NTLM as SPNEGO's mechanism (1.3.6.1.4.1.311.2.2.10, [MS-SPNG]): `SpnegoNtlm`, `spnego_ntlm_initiator`, `spnego_ntlm_init`, `spnego_ntlm_init_continue`, `spnego_ntlm_acceptor`, `spnego_ntlm_accept` (a bare NTLMSSP token in place of SPNEGO taken too), `spnego_ntlm_session`; mechListMIC with the NTLM keys both ways (none for anonymous NTLM, which has no keys) |
 | `net/http` (`http.fetch`) | `AUTH_NTLM` (and `AUTH_ANY`, which ranks NTLM after Digest and before Basic): a 401's `WWW-Authenticate: NTLM`, or `Negotiate` alone, answered with raw NTLMSSP over the same HTTP/1.1 connection, the server certificate's tls-server-end-point as the channel binding over https, `HTTP/host` as the target name; goose-http's `--ntlm` |
 | `mail.sasl` | `AUTH_NTLM` for SMTP, POP3 and IMAP (Exchange's `AUTH NTLM`): the NEGOTIATE as the initial response, the AUTHENTICATE for the CHALLENGE; only when asked for |
 

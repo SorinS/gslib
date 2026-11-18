@@ -17,7 +17,8 @@
 // spnego_ntlm_* functions at the end, on gslib's ntlm: both sides, a raw
 // NTLMSSP token in place of SPNEGO taken too, and mechListMIC signed and
 // checked with the NTLM session's keys (the RC4 state reset after each,
-// as Windows does). They return ntlm's error codes.
+// as Windows does; anonymous NTLM has no keys and sends and takes none).
+// They return ntlm's error codes.
 
 namespace krb5;
 
@@ -457,14 +458,21 @@ fn spnego_ntlm_init_continue(ctx: SpnegoNtlm&, token: const u8[:], now: i64, out
         var auth: u8[>..] = [];
         let e = ntlm::authenticate(ctx.ini, resp, now, auth);
         if e != ntlm::OK { return true, e; }
+        // Anonymous NTLM has no keys, so no mechListMIC either way.
         var m: u8[>..] = [];
-        let me = spnego_ntlm_my_mic(ctx, m);
-        if me != ntlm::OK { return true, me; }
+        if spnego_ntlm_session(ctx).keys {
+            let me = spnego_ntlm_my_mic(ctx, m);
+            if me != ntlm::OK { return true, me; }
+        }
         spnego_resp_token(out, -1, "", auth, m);
         return false, ntlm::OK;
     }
     // The acceptor's verdict, with its mechListMIC.
     if state != NEG_ACCEPT_COMPLETED || resp.len > 0 { return true, ntlm::ERR_MALFORMED; }
+    if !spnego_ntlm_session(ctx).keys {
+        ctx.complete = true;
+        return true, ntlm::OK;
+    }
     if mic.len == 0 { return true, ntlm::ERR_MIC; }
     let ce = spnego_ntlm_check_mic(ctx, mic);
     if ce != ntlm::OK { return true, ce; }

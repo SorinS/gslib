@@ -85,6 +85,7 @@ LIBRARIES = {
     "oauth": "oauth", "tsp": "tsp", "est": "est", "scep": "scep",
     "saml": "saml", "webauthn": "webauthn", "ntlm": "ntlm", "tpm2": "tpm2",
     "radius": "radius",
+    "smb": "smb",
     "service": "service", "sys": "sys", "sspi": "sspi",
 }
 
@@ -214,6 +215,25 @@ SPLITS = {
              "python3 scripts/run_tests.py"),
             ("README.md", "make interop-radius                               # Linux with Docker",
              "python3 scripts/interop.py                        # Linux with Docker"),
+        ],
+    ),
+    "krb5": dict(
+        repo="krb5goose", new=True,
+        gitignore=["__pycache__/"],
+        fixups=[
+            ("README.md", "`make test-krb5` (`scripts/run_tests.py`, every", "`python3 scripts/run_tests.py` (every"),
+            ("README.md", "`make interop-krb5` (`scripts/interop.py`, macOS", "`python3 scripts/interop.py` (macOS"),
+        ],
+    ),
+    "smb": dict(
+        repo="smbgoose", new=True,
+        gitignore=["__pycache__/"],
+        fixups=[
+            ("README.md", "make test-smb                                     # or: cd smb && python3 scripts/run_tests.py",
+             "python3 scripts/run_tests.py"),
+            ("README.md", "make interop-smb                                  # Linux with Docker",
+             "python3 scripts/interop.py                        # Linux with Docker"),
+            ("README.md", "`scripts/interop.py` (`make interop-smb`)", "`scripts/interop.py`"),
         ],
     ),
     "service": dict(
