@@ -34,6 +34,7 @@ later.
 | `saml` | SAML 2.0 Web Browser SSO and Single Logout, service provider and identity provider: the HTTP-Redirect binding (DEFLATE, the query signed and checked over the bytes as received) and HTTP-POST; Responses checked as the profile asks, reading only what xml's signature verification says is signed (all eight XSW attacks, the comment-in-NameID bug, replay refused), encrypted assertions; signed and encrypted Responses made; metadata read, verified and written; goose-saml (metadata, an SP, a test IdP, verify) | [README](saml/README.md) |
 | `ntlm` | NTLM authentication ([MS-NLMP]), NTLMv2 only (no LM or NTLMv1 response is ever made, and the acceptor refuses them): NEGOTIATE, CHALLENGE and AUTHENTICATE with their AV_PAIRs, an initiator and an acceptor (the NT hash looked up through a block) checking NTProofStr, the MIC, the time, channel bindings (tls-server-end-point) and the target name; signing and sealing; NTLM inside SPNEGO (krb5), over HTTP (net/http's fetch, `AUTH_NTLM`) and in SMTP/POP3/IMAP AUTH (mail); goose-ntlm (compute, decode, a test HTTP server, a client) | [README](ntlm/README.md) |
 | `tpm2` | TPM 2.0, as go-tpm with go-tpm-tools' checks: raw TCP (swtpm), the Microsoft simulator's protocol and Linux's /dev/tpmrm0; password, HMAC (bound, salted by RSA-OAEP or ECDH) and policy sessions with AES-CFB parameter encryption; the TCG EK and SRK templates, keys, signing, RSA-OAEP, ECDH, NV and EK certificates, PCRs, sealing to PCR policies; a policy calculator; Quote, Certify, CertifyCreation and ActivateCredential, with their verification, MakeCredential and TCG event log replay in software; goose-tpm | [README](tpm2/README.md) |
+| `radius` | RADIUS, both sides, as FreeRADIUS speaks it: packets and their authenticators with the Message-Authenticator always first (BlastRADIUS), hidden attributes (User-Password, CHAP, Tunnel-Password, MS-MPPE keys), a client over UDP and RadSec (RADIUS over TLS) with PAP, CHAP, MS-CHAPv2, EAP, accounting, Status-Server, CoA and Disconnect, a server's handling of each request; EAP peer and server for MD5, MS-CHAPv2, EAP-TLS, PEAP and TTLS over TLS 1.2 and 1.3 with their keys; goose-radtest and goose-radiusd | [README](radius/README.md) |
 | `webauthn` | WebAuthn Level 3 and passkeys for a relying party: registration and authentication options as the L3 JSON has them; registrations checked whole (clientDataJSON, the attestation object, authenticator data and its flags, the algorithm) with every attestation format but SafetyNet: none, packed, fido-u2f, tpm, android-key, apple, chained to the RP's roots by x509; authentications against the stored credential record (signature, user handle, counter, backup flags); FIDO MDS3 BLOBs verified and searched; goose-webauthn (options, verify, MDS, a demo RP for a real browser) | [README](webauthn/README.md) |
 | `net/http` | HTTP/1.1 and HTTP/2, server and client: a client with Go's policy (redirects, cookies, credentials, proxies, gzip, TLS session resumption, streaming uploads, several responses at once), URLs, cookies, HPACK; goose-http and goose-httpd | [README](net/http/README.md) |
 | `net` | Sockets and IP addresses, as Go's net and net/netip: TCP connections and listeners with timeouts, UDP connected or answering many, Unix-domain sockets, waiting on several sockets, the system resolver; addresses parsed, printed (RFC 5952), classified and checked against prefixes; host:port; Punycode host names; what http, ldap, dns, krb5 and the tools' servers talk through (POSIX and Winsock) | [README](net/README.md) |
@@ -41,9 +42,9 @@ later.
 | `sys` | The operating system's own calls, as Go's golang.org/x/sys, os/user and x/term with go-win64api's Windows management, on Windows, Linux and macOS: the host, processes (list, arguments, executable, kill), users and groups, files by path and by descriptor (stat, links, locks, pipes, memory maps), errors sorted portably; the Windows registry; local accounts and groups, sessions, services, shares and installed software; signals as values, limits, usage and sysctl; terminals and consoles; its FFI generated from one table, as mksyscall | [README](sys/README.md) |
 | `sspi` | Windows' SSPI, as Go's alexbrainman/sspi: security packages, credentials (the login's or a password's), contexts a token at a time, sign/verify/seal/unseal; a TLS client on Windows' own Schannel (the system's roots, policy and TLS 1.3, peer certificate for x509, manual validation for test servers); HTTP Negotiate (RFC 4559) from the Windows login, Kerberos in a domain and NTLM otherwise, or as a user by password | [README](sspi/README.md) |
 
-## entropy, net, dns, pkcs11, jwx, mail, openpgp, acme, oauth, tsp, xml, est, scep, saml, ntlm, tpm2, webauthn, service, sys and sspi
+## entropy, net, dns, pkcs11, jwx, mail, openpgp, acme, oauth, tsp, xml, est, scep, saml, ntlm, tpm2, webauthn, radius, service, sys and sspi
 
-These twenty have the most to say beyond their table rows: what each
+These twenty-one have the most to say beyond their table rows: what each
 module does, how it was built and how it was tested. Each README has the
 full API.
 
@@ -706,6 +707,43 @@ refuses the same tampered responses, each one's options are answered
 and checked by the others, and goose-webauthn's options are read by all
 three. The real FIDO MDS3 BLOB verifies too.
 
+### radius: RADIUS, RadSec and EAP
+
+`radius` is RADIUS for both ends of a network's logins: the NAS (a
+switch, an access point, a VPN concentrator) asking, and the server
+answering, with EAP inside for 802.1X. Packets are numbers and bytes in
+wire order, with helpers for the standard attributes and Microsoft's;
+every Access-Request and every answer to one carries a
+Message-Authenticator as its first attribute, and the client and server
+require one, which is what BlastRADIUS (CVE-2024-3596) asks of both
+ends. The client retransmits over UDP the same bytes each time and
+drops answers that do not check, or runs over RadSec (RFC 6614) with
+TLS certificates both ways; it does PAP, CHAP, MS-CHAPv2 (checking the
+server's proof), accounting, Status-Server, CoA and Disconnect, and a
+whole EAP conversation with the State carried, checking at the end that
+the MS-MPPE keys in the Access-Accept are the supplicant's own MSK. The
+server's `handle` takes a request's bytes and gives the answer's, the
+passwords from a block, EAP conversations kept by their State between
+requests. EAP's peer and server are step functions that know nothing of
+RADIUS: MD5-Challenge, MS-CHAPv2, EAP-TLS (RFC 5216, and RFC 9190 over
+TLS 1.3 with its commitment message), PEAPv0 with EAP-MS-CHAPv2 inside
+and the Result TLV, and TTLS with PAP or MS-CHAPv2 inside; TLS messages
+in fragments both ways; the keys from TLS 1.2's PRF or TLS 1.3's
+exporter (RFC 9427), for which `crypto/tls` gained `tls::export_keys`.
+goose-radtest makes one exchange of any method as radtest and eapol_test
+do, and goose-radiusd is a small server with RadSec and a NAS's CoA
+port.
+
+Tested against RFC 2865 §7.1's packets, RFC 2759's MS-CHAPv2 and RFC
+3079's key vectors byte for byte, every method peer against server in
+memory over TLS 1.2 and 1.3 with small fragments, wrong passwords,
+missing certificates and untrusted servers; and live (`make
+interop-radius`, Docker) against FreeRADIUS 3.2.10, wpa_supplicant's
+eapol_test and radclient, both ways, every method on both TLS
+versions, RadSec both ways (FreeRADIUS proxying over it too), with the
+MS-MPPE keys matching the MSK on every side: 57 checks. A libFuzzer
+target covers the parser, EAP's reassembly and the server's handling.
+
 ### service: system services
 
 `service` makes a Goose program a system service on the three platforms
@@ -1042,6 +1080,7 @@ scep.goose, scep/                     scep, the same
 saml.goose, saml/                     saml, the same
 ntlm.goose, ntlm/                     ntlm, the same
 tpm2.goose, tpm2/                     tpm2, the same
+radius.goose, radius/                 radius, the same
 webauthn.goose, webauthn/             webauthn, the same
 service.goose, service/, service/src/ service, the same, and its C
 sys.goose, sys/, sys/src/             sys and its modules (registry, windows, unix, term, process), the same, and its C

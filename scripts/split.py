@@ -84,6 +84,7 @@ LIBRARIES = {
     "pkcs11": "pkcs11", "dns": "dns", "mail": "mail", "acme": "acme",
     "oauth": "oauth", "tsp": "tsp", "est": "est", "scep": "scep",
     "saml": "saml", "webauthn": "webauthn", "ntlm": "ntlm", "tpm2": "tpm2",
+    "radius": "radius",
     "service": "service", "sys": "sys", "sspi": "sspi",
 }
 

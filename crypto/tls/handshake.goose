@@ -492,6 +492,25 @@ fn ech_retry_configs(c: const Conn&) -> u8[>..] {
     return out;
 }
 
+// Keying material exported from the connection (RFC 5705, RFC 8446
+// §7.5): `len` bytes for `label` and `context` (TLS 1.2 without a
+// context when has_context is false; TLS 1.3 takes an absent context as
+// empty), the same on both ends. EAP-TLS, PEAP and TTLS take their keys
+// so. Empty before the handshake is done or after the secrets are wiped.
+fn export_keys(c: const Conn&, label: const u8[:], context: const u8[:], has_context: bool, len: i64) -> u8[>..] {
+    var out: u8[>..] = [];
+    if c.state != ST_CONNECTED || c.wiped || len <= 0 { return out; }
+    if c.version == VERSION_TLS13 {
+        out.append(export_keying_material(c.suite.hash, c.sch.exporter, label, context, len));
+    } else if c.version == VERSION_TLS12 {
+        var cr = c.random;
+        var sr = c.peer_random;
+        if c.is_server { cr = c.peer_random; sr = c.random; }
+        out.append(export12(c.suite.hash, c.master, label, context, has_context, cr, sr, len));
+    }
+    return out;
+}
+
 fn failed(c: const Conn&) -> bool { c.state == ST_FAILED }
 fn closed(c: const Conn&) -> bool { c.state == ST_CLOSED }
 

@@ -328,7 +328,10 @@ master secret. Each takes the transcript hash at its point in the
 handshake. `traffic_key` and `traffic_iv` turn a traffic secret into AEAD
 keys. `finished_data` and `finished_ok` (constant time) handle Finished,
 `next_traffic_secret` handles KeyUpdate, and `export_keying_material` is
-the exporter. `hkdf_expand_label` and `derive_secret` are public for
+the exporter; a connection's own, either version, is
+`tls::export_keys(c, label, context, has_context, len)`, the same bytes
+on both ends once the handshake is done (what EAP-TLS, PEAP and TTLS
+take their keys from: gslib's `radius`). `hkdf_expand_label` and `derive_secret` are public for
 anything else. For TLS 1.2: `prf12`, `master_secret12` (extended or not),
 `key_block12`, `finished12` and `export12` (RFC 5705).
 
@@ -366,7 +369,7 @@ versions Go 1.27 and OpenSSL 3.6 interoperate with.
 | RFC 5077 | Session tickets for TLS 1.2, stateless on the server | `tls.handshake12`, `tls.session` |
 | RFC 5746 | Secure renegotiation: renegotiation_info and its SCSV (renegotiation itself is refused) | `tls.handshake12` |
 | RFC 7507 | TLS_FALLBACK_SCSV | `tls.handshake12` |
-| RFC 5705 | Keying material exporter for TLS 1.2 (`export12`; TLS 1.3's is RFC 8446 §7.5) | `tls.schedule` |
+| RFC 5705 | Keying material exporter for TLS 1.2 (`export12`; TLS 1.3's is RFC 8446 §7.5; a connection's, `export_keys`) | `tls.schedule`, `tls.handshake` |
 | RFC 6066 §3 | Server Name Indication | `tls.handshake` |
 | RFC 7301 | ALPN | `tls.handshake` |
 | RFC 9849 | Encrypted Client Hello, client and server, with HelloRetryRequest and retry configs | `tls.ech`, `tls.handshake` |
