@@ -385,15 +385,14 @@ fn first_item(a: const Attrs&) -> const u8[:] {
     return a.enc[..n];
 }
 
-// Add Attribute (1.x), or Set Attribute's, of 2.0, nearest: the first of
-// the attributes.
+// Add Attribute: the first of the attributes, added to those the object
+// has (another Name, Link, ...; set_attribute replaces instead).
 fn add_attribute<C>(c: C&, uid: const u8[:], a: const Attrs&) -> i64 {
     var resp: u8[>..] = [];
     var doc: Node[>..] = [];
     let v = c.version;
     let item = first_item(a);
-    let op = if is_v2(v) { OP_SET_ATTRIBUTE } else { OP_ADD_ATTRIBUTE };
-    let p, e = call(c, op, resp, doc) { out =>
+    let p, e = call(c, OP_ADD_ATTRIBUTE, resp, doc) { out =>
         put_uid(out, uid);
         put_one(out, item, v, TAG_NEW_ATTRIBUTE);
     };

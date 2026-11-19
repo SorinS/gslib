@@ -74,6 +74,7 @@ struct Stream {
     aad: u8[..1024],
     tag: u8[..16],
     check: u8[..1024],         // a signature or MAC to verify, given with any part
+    sent: i64,                 // bytes of output already given (streamed by prefix)
     pending: u8[..65536],
 }
 
@@ -90,6 +91,15 @@ struct Server {
     // is the ID Placeholder, the others what 2.0's Unique Identifier
     // enumeration names (the last Create's, Register's, ...).
     batch_ids: u8[..64][18],
+    // 2.1's references to earlier items of the batch: each item's Unique
+    // Identifier, by its place (a Unique Identifier as an Integer), and
+    // the Data the last of each cryptographic operation gave (Data as an
+    // Enumeration naming the operation).
+    item_uids: u8[..64][64],
+    item_n: i64,
+    data_ops: u32[4],          // the last four items' Data: their operation and place
+    data_at: i64[4],
+    data_out: u8[..65536][4],
     ca_cert: u8[..16384],      // Certify's and Re-certify's issuer, DER; none: they are refused
     ca_key: u8[..16384],       // its private key, PKCS #8 DER
     streams: Stream[4],
@@ -110,7 +120,7 @@ struct Server {
 }
 
 fn server() -> Server {
-    var s = Server { next_id: 1, now: 0, max_objects: 100000, lease_time: 3600, live: 0, vendor: [], batch_ids: [[]; 18], ca_cert: [], ca_key: [], streams: [empty_stream(); 4], version: Version { major: 1, minor: 0 },
+    var s = Server { next_id: 1, now: 0, max_objects: 100000, lease_time: 3600, live: 0, vendor: [], batch_ids: [[]; 18], item_uids: [[]; 64], item_n: 0, data_ops: [0; 4], data_at: [-1; 4], data_out: [[]; 4], ca_cert: [], ca_key: [], streams: [empty_stream(); 4], version: Version { major: 1, minor: 0 },
                      pending: [empty_pending(); 8], tickets: [empty_ticket(); 16], users: [empty_user(); 8],
                      require_auth: false, defaults: [], constraints: [], groups: [], log_count: 0, last_log: [],
                      endpoint_role: ENDPOINT_SERVER, p11: [empty_p11(); 4], objects: [] };
@@ -119,7 +129,7 @@ fn server() -> Server {
 }
 
 fn empty_stream() -> Stream {
-    Stream { corr: [], op: 0, owner: [], uid: [], params: CryptoParams { .. }, iv: [], aad: [], tag: [], check: [], pending: [] }
+    Stream { corr: [], op: 0, owner: [], uid: [], params: CryptoParams { .. }, iv: [], aad: [], tag: [], check: [], sent: 0, pending: [] }
 }
 
 fn now_of(s: const Server&) -> i64 { if s.now != 0 { s.now } else { time_ns() / 1000000000 } }
@@ -290,7 +300,8 @@ fn server_only(tag: u32) -> bool {
     // A certificate's, from the certificate itself.
     tag == TAG_CERTIFICATE_TYPE || tag == TAG_CERTIFICATE_LENGTH || tag == TAG_CERTIFICATE_IDENTIFIER ||
     tag == TAG_CERTIFICATE_SUBJECT || tag == TAG_CERTIFICATE_ISSUER || tag == TAG_X_509_CERTIFICATE_IDENTIFIER ||
-    tag == TAG_X_509_CERTIFICATE_SUBJECT || tag == TAG_X_509_CERTIFICATE_ISSUER || tag == TAG_DIGITAL_SIGNATURE_ALGORITHM
+    tag == TAG_X_509_CERTIFICATE_SUBJECT || tag == TAG_X_509_CERTIFICATE_ISSUER || tag == TAG_DIGITAL_SIGNATURE_ALGORITHM ||
+    is_name_field(tag)
 }
 
 // A client's attributes without the ones only the server sets (for an
@@ -396,7 +407,8 @@ fn server_attrs(s: const Server&, o: const Object&, uid: const u8[:], a: Attrs&)
         put_enum(d, TAG_HASHING_ALGORITHM, HASH_SHA_256);
         put_bytes(d, TAG_DIGEST_VALUE, bignum::hash_bits(256, o.material));
         if o.obj_type == OBJ_SYMMETRIC_KEY || o.obj_type == OBJ_SECRET_DATA { put_enum(d, TAG_KEY_FORMAT_TYPE, FMT_RAW); }
-        else if o.obj_type == OBJ_CERTIFICATE { put_enum(d, TAG_KEY_FORMAT_TYPE, FMT_X_509); }
+        // A certificate's: Raw before 2.1 (the 1.4 and 2.0 test cases), X_509 from it.
+        else if o.obj_type == OBJ_CERTIFICATE { put_enum(d, TAG_KEY_FORMAT_TYPE, if version_lt(v, V2_1) { FMT_RAW } else { FMT_X_509 }); }
         else if o.key_format != 0 { put_enum(d, TAG_KEY_FORMAT_TYPE, o.key_format); }
         end(d, st);
         a.enc.append(d);
@@ -427,8 +439,9 @@ fn server_attrs(s: const Server&, o: const Object&, uid: const u8[:], a: Attrs&)
     if !version_lt(v, V1_4) && !has_attr(a, TAG_FRESH) { attr_bool(a, TAG_FRESH, true); }
     // 2.0 has the Key Format Type an attribute too.
     let keyish = o.obj_type == OBJ_SYMMETRIC_KEY || o.obj_type == OBJ_PRIVATE_KEY || o.obj_type == OBJ_PUBLIC_KEY ||
-                 o.obj_type == OBJ_SECRET_DATA || o.obj_type == OBJ_SPLIT_KEY;
+                 o.obj_type == OBJ_SECRET_DATA || o.obj_type == OBJ_SPLIT_KEY || o.obj_type == OBJ_PGP_KEY;
     if is_v2(v) && keyish && o.key_format != 0 && !has_attr(a, TAG_KEY_FORMAT_TYPE) { attr_enum(a, TAG_KEY_FORMAT_TYPE, o.key_format); }
+    if is_v2(v) && o.obj_type == OBJ_CERTIFICATE && !has_attr(a, TAG_KEY_FORMAT_TYPE) { attr_enum(a, TAG_KEY_FORMAT_TYPE, if version_lt(v, V2_1) { FMT_RAW } else { FMT_X_509 }); }
     if s.lease_time != 0 && !has_attr(a, TAG_LEASE_TIME) { attr_interval(a, TAG_LEASE_TIME, s.lease_time); }
     // A key registered without its Key Value (Key Value Location).
     let has_value = o.material.len > 0 || o.wrapped;
@@ -670,6 +683,77 @@ fn note_ids(s: Server&, op: u32, pl: const u8[:]) {
     if which != 0 || op == OP_RECOVER { keep_id(s, UID_ID_PLACEHOLDER, u); }
 }
 
+// After an item done: its Unique Identifier at its place in the batch,
+// and its Data, for the items after it (2.1).
+fn note_item(s: Server&, op: u32, pl: const u8[:]) {
+    let k = s.item_n;
+    s.item_n++;
+    var doc: Node[>..] = [];
+    var wrap: u8[>..] = [];
+    let w = begin(wrap, TAG_RESPONSE_PAYLOAD);
+    wrap.append(pl);
+    end(wrap, w);
+    let r, e = decode(wrap, Options { .. }, doc);
+    if e != OK { return; }
+    if k < 64 {
+        let u, uok = child_text(wrap, doc, r, TAG_UNIQUE_IDENTIFIER);
+        s.item_uids[k].clear();
+        if uok { s.item_uids[k].append(u[..::min(u.len, 64)]); }
+    }
+    let d, dok = child_bytes(wrap, doc, r, TAG_DATA);
+    if !dok || d.len > 65536 { return; }
+    let slot = k % 4;
+    s.data_ops[slot] = op;
+    s.data_at[slot] = k;
+    s.data_out[slot].clear();
+    s.data_out[slot].append(d);
+}
+
+// Whether a payload refers to earlier items: a Unique Identifier that is
+// an Integer, or Data that is an Enumeration or an Integer.
+fn refers_back(buf: const u8[:], doc: const Node[:], p: i64) -> bool {
+    if p < 0 { return false; }
+    return is_type(doc, child(doc, p, TAG_UNIQUE_IDENTIFIER), INTEGER) ||
+           is_type(doc, child(doc, p, TAG_DATA), ENUMERATION) || is_type(doc, child(doc, p, TAG_DATA), INTEGER);
+}
+
+// The payload p with its references put in: a Unique Identifier's place
+// (0 the batch's first item, -1 the one before this) by that item's
+// identifier; Data naming an operation, or an item's place, by the Data
+// that operation last gave, or that item gave (of the last four).
+fn resolve_refs(s: const Server&, buf: const u8[:], doc: const Node[:], p: i64, out: u8[>..]&) -> Outcome {
+    let st = begin(out, TAG_REQUEST_PAYLOAD);
+    var k = if doc[p].count > 0 { p + 1 } else { -1 };
+    while k >= 0 {
+        if doc[k].tag == TAG_UNIQUE_IDENTIFIER && is_type(doc, k, INTEGER) {
+            let n, ok = as_int(buf, doc, k);
+            let at = if n < 0 { s.item_n + n } else { n as i64 };
+            if !ok || at < 0 || at >= s.item_n || at >= 64 || s.item_uids[at].len == 0 {
+                return fail(REASON_ITEM_NOT_FOUND, "no item there, or none with a Unique Identifier");
+            }
+            put_text(out, TAG_UNIQUE_IDENTIFIER, s.item_uids[at]);
+        } else if doc[k].tag == TAG_DATA && (is_type(doc, k, ENUMERATION) || is_type(doc, k, INTEGER)) {
+            var slot: i64 = -1;
+            var best: i64 = -1;
+            if is_type(doc, k, ENUMERATION) {
+                let op, ok = as_enum(buf, doc, k);
+                for j in 4 { if ok && s.data_ops[j] == op && s.data_at[j] > best { slot = j; best = s.data_at[j]; } }
+            } else {
+                let n, ok = as_int(buf, doc, k);
+                let at = if n < 0 { s.item_n + n } else { n as i64 };
+                for j in 4 { if ok && s.data_at[j] == at && at >= 0 { slot = j; } }
+            }
+            if slot < 0 { return fail(REASON_INVALID_FIELD, "no Data from that operation in the batch"); }
+            put_bytes(out, TAG_DATA, s.data_out[slot]);
+        } else {
+            out.append(raw(buf, doc, k));
+        }
+        k = doc[k].next;
+    }
+    end(out, st);
+    return done();
+}
+
 // --- Requests -------------------------------------------------------------------
 
 fn process(s: Server&, owner: const u8[:], v: Version, op: u32, buf: const u8[:], doc: const Node[:], p: i64, out: u8[>..]&) -> Outcome {
@@ -777,6 +861,8 @@ fn handle(s: Server&, owner: const u8[:], req: const u8[:], out: u8[>..]&) {
         return;
     }
     for k in 18 { s.batch_ids[k].clear(); }
+    s.item_n = 0;
+    for k in 4 { s.data_ops[k] = 0; s.data_at[k] = -1; s.data_out[k].clear(); }
     // Who the request acts as: the TLS identity, or a ticket's or user's.
     let who = authenticate(s, owner, req, r);
     var me: u8[>..] = [];
@@ -802,8 +888,12 @@ fn handle(s: Server&, owner: const u8[:], req: const u8[:], out: u8[>..]&) {
         var res = done();
         if who.reason != 0 {
             res = fail(who.reason, who.msg);
-        } else if delegated && (it.op == OP_LOGIN || it.op == OP_DELEGATED_LOGIN ||
-                                !rights_allow(s.tickets[who.ticket].rights, it.op, if it.payload >= 0 { uid_in(s, req, doc, it.payload) } else { "" })) {
+        } else if delegated && (it.op == OP_LOGIN ||
+                                !rights_allow(s, me, s.tickets[who.ticket].rights, it.op, if it.payload >= 0 { uid_in(s, req, doc, it.payload) } else { "" }) ||
+                                (it.op == OP_DELEGATED_LOGIN && (it.payload < 0 || child(doc, it.payload, TAG_RIGHTS) < 0 ||
+                                 !rights_within(raw(req, doc, child(doc, it.payload, TAG_RIGHTS)), s.tickets[who.ticket].rights)))) {
+            // A delegated ticket does what its Rights say, and delegates
+            // (Delegated Login, when its Rights allow it) no more than them.
             res = fail(REASON_NOT_AUTHORISED, "DENIED");
         } else if it.op == OP_POLL && supports(OP_POLL, v) {
             // The item polled for, written as its own.
@@ -813,6 +903,17 @@ fn handle(s: Server&, owner: const u8[:], req: const u8[:], out: u8[>..]&) {
             let k = defer_item(s, me, v, it.op, id, req, doc, it.payload);
             if k >= 0 { put_pending_item(items, it.op, id, s.pending[k].corr); n++; continue; }
             res = process(s, me, v, it.op, req, doc, it.payload, pl);
+        } else if refers_back(req, doc, it.payload) {
+            // 2.1: Unique Identifiers by place and Data by operation, put in.
+            var buf2: u8[>..] = [];
+            let rr = resolve_refs(s, req, doc, it.payload, buf2);
+            if rr.reason != 0 {
+                res = rr;
+            } else {
+                var doc2: Node[>..] = [];
+                let root2, e2 = decode(buf2, Options { .. }, doc2);
+                res = if e2 == OK { process(s, me, v, it.op, buf2, doc2, root2, pl) } else { fail(REASON_INVALID_MESSAGE, "the item is not read") };
+            }
         } else {
             res = process(s, me, v, it.op, req, doc, it.payload, pl);
         }
@@ -824,8 +925,9 @@ fn handle(s: Server&, owner: const u8[:], req: const u8[:], out: u8[>..]&) {
             if it.op == OP_PROCESS { process_after(s, me, req, doc, it.payload); }
             if it.op == OP_GET || it.op == OP_EXPORT { served(s, me, pl); }
             note_ids(s, it.op, pl);
+            note_item(s, it.op, pl);
             let b, p = begin_result(items, it.op, id, STATUS_SUCCESS, 0, "");
-            items.append(pl);
+            if !it.ephemeral { items.append(pl); }
             end_result(items, b, p);
             if undo {
                 done_ops.push(it.op);
@@ -858,6 +960,7 @@ fn handle(s: Server&, owner: const u8[:], req: const u8[:], out: u8[>..]&) {
             }
             let b, p = begin_result(items, it.op, id, STATUS_OPERATION_FAILED, reason_for(res.reason, v), res.msg);
             end_result(items, b, p);
+            s.item_n++;
             if r.batch_continue != BATCH_CONTINUE { stopped = true; }
         }
         n++;

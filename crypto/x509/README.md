@@ -16,7 +16,7 @@ CertificateVerify signatures.
 | `x509.crl` | `Crl`, `parse_crl`, `check_crl`, `crl_lookup`, `revocation_status` |
 | `x509.keys` | `PrivateKey`, key generation, PKCS #8 / SEC 1 / PKCS #1 / SPKI parsing and marshalling (brainpool, Ed448, X448, ML-DSA, SLH-DSA, ML-KEM and DSA included), signing |
 | `x509.ocsp` | OCSP (RFC 6960): `ocsp_create_request`, `ocsp_parse_request`, `ocsp_parse_response`, `ocsp_check_response`, `ocsp_create_response`, `ocsp_error_response` |
-| `x509.pkcs12` | `pkcs12_decode`: PKCS #12 files to their key and certificates |
+| `x509.pkcs12` | `pkcs12_decode`: PKCS #12 files to their key and certificates; `pkcs12_encode`: a key and certificates to one |
 | `x509.cms` | CMS SignedData (RFC 5652) with one signer: `cms_sign`, `cms_sign_with` (id-data, detached, signingTime, smimeCapabilities, key identifier, Ed25519, Ed448), `cms_unsigned`, `cms_parse_signed`, `cms_parse_signed_ber`, `cms_verify`, `cms_verify_detached`, `cms_signing_time`, `cms_content`, `cms_certs`, `cms_der` (BER to DER); ML-DSA signers (RFC 9882) and SHAKE digests; PKINIT's carrier and S/MIME's |
 | `x509.cms_env` | CMS EnvelopedData and AuthEnvelopedData (RFC 5652 §6, RFC 5083/5084): `cms_encrypt`, `cms_decrypt`, `cms_content_type`; RSA-OAEP and PKCS #1 v1.5 key transport, ECDH key agreement (RFC 5753; NIST and brainpool curves), X448 key agreement (RFC 8418), ML-KEM recipients (KEMRecipientInfo, RFC 9629 and RFC 9936), AES-CBC and AES-GCM |
 | `x509.create` | `Template`, `create_certificate`, `name_der`, SAN and name-constraint builders, `create_csr`, `parse_csr`, `check_csr`, `create_crl` | It builds on
@@ -396,6 +396,16 @@ file without a MAC is read only with the empty password; under any other
 it is ERR_BAD_SIGNATURE, as in Go, since nothing would hold its contents
 to the password.
 
+`pkcs12_encode(key, certs, password, iterations = 2048) -> pfx, err`
+writes one as openssl 3 does by default: the key (PKCS #8 DER, or empty)
+in a shrouded key bag and the certificates (DER concatenated, the key's
+first) in an encrypted SafeContents, both under PBES2 with PBKDF2 over
+HMAC-SHA-256 and AES-256-CBC, the whole under an HMAC-SHA-256 MAC keyed
+by the PKCS #12 KDF; the key and its certificate share a localKeyID.
+openssl 4.1 reads what it writes (the MAC, the key, the certificate; a
+wrong password refused). A password with a character past U+FFFF, which
+the KDF cannot take, is ERR_MALFORMED.
+
 ## CMS SignedData
 
 `cms_sign(content_type, content, key, signer, others, alg, h)` makes a
@@ -513,7 +523,7 @@ In gslib's `examples/x509/`, run from gslib's top as `goose examples/x509/<name>
 - `csr.goose`: a CSR made, checked against a name policy and issued; a changed one refused.
 - `crl.goose`: a CRL issued, read and looked up, and path validation with revocation checking.
 - `ocsp.goose`: an OCSP request and response, client and responder in one process, with a delegated responder.
-- `pkcs12.goose`: a .p12 read (`example.p12`, password `goose`), its key matched to its certificate and written as PKCS #8.
+- `pkcs12.goose`: a .p12 read (`example.p12`, password `goose`), its key matched to its certificate, written again under a new password and read back, and the key written as PKCS #8.
 - `cms_signed.goose`: CMS SignedData with ECDSA and RSA-PSS: signing, verifying signer and path, refusing changed content.
 - `cms_pq.goose`: post-quantum CMS with keys made on the spot: SignedData by ML-DSA-65 with its path to an ML-DSA CA, and AuthEnvelopedData to an ML-KEM-768 certificate; a changed signature and a wrong key refused.
 - `system_roots.goose`: the OS's root store loaded and used, with a private root added to a copy.
@@ -659,7 +669,8 @@ its arguments.
   passwords, each decoding to openssl's key and certificates; wrong
   passwords and changed bytes refused, the files without a MAC refused
   under a password. Go's x/crypto/pkcs12 reads the 12
-  legacy ones to the same keys (and refuses the rest).
+  legacy ones to the same keys (and refuses the rest). Each key and its
+  certificates are written again with `pkcs12_encode` and read back.
 - `cms_vectors`: SignedData from `openssl cms -sign` (24, from
   `scripts/cms_vectors.py`): RSA (PKCS #1 v1.5 and PSS), P-256, P-384 and
   P-521 over SHA-256, -384 and -512, signers by issuer and serial and by

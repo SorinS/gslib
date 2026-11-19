@@ -196,7 +196,24 @@ fn add_right(r: Rights&, ops: const u32[:], uids: const u8[..64][:]) {
     end(r.enc, k);
 }
 
+// A Right of some operations (none: any) on the objects of some Object
+// Groups.
+fn add_right_groups(r: Rights&, ops: const u32[:], groups: const u8[..64][:]) {
+    let k = begin(r.enc, TAG_RIGHT);
+    if ops.len > 0 {
+        let o = begin(r.enc, TAG_OPERATIONS);
+        for op in ops { put_enum(r.enc, TAG_OPERATION, op); }
+        end(r.enc, o);
+    }
+    let g = begin(r.enc, TAG_OBJECT_GROUPS);
+    for n in groups { put_text(r.enc, TAG_OBJECT_GROUP, n); }
+    end(r.enc, g);
+    end(r.enc, k);
+}
+
 // Delegated Login (2.0): a ticket that may do only what the Rights say.
+// A delegated ticket whose Rights allow Delegated Login makes others,
+// with Rights within its own.
 fn delegated_login<C>(c: C&, count: i32, lease: u32, r: const Rights&) -> u8[>..], i64 {
     var resp: u8[>..] = [];
     var doc: Node[>..] = [];

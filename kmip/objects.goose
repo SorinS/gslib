@@ -18,7 +18,7 @@ struct Object {
     key_format: u32,         // FMT_RAW, FMT_PKCS_8, ... (keys and secret data)
     alg: u32,                // ALG_AES, ALG_RSA, ... (keys)
     length: i32,             // bits (keys)
-    sub_type: u32,           // Certificate Type, Secret Data Type, Opaque Data Type
+    sub_type: u32,           // Certificate Type, Secret Data Type, Opaque Data Type, PGP Key Version
     wrapped: bool,           // the Key Block has Key Wrapping Data: material is wrapped
     wrapping: u8[..4096],    // that Key Wrapping Data, its TTLV as it came
     // A Split Key's (kmip.split): Split Key Parts, Key Part Identifier,
@@ -83,6 +83,20 @@ fn secret_data(kind: u32, secret: const u8[:]) -> Object {
     return o;
 }
 
+// A PGP Key (2.0): an OpenPGP key of the version given (4 for RFC 4880's),
+// public or private, as the bytes of its transferable key (binary or
+// armored), in Raw format; the algorithm and length are its key's. The
+// server keeps it as it came and does no cryptography with it.
+fn pgp_key(version: i32, alg: u32, length: i32, key: const u8[:]) -> Object {
+    var o = new_object(OBJ_PGP_KEY);
+    o.sub_type = version as! u32;
+    o.key_format = FMT_RAW;
+    o.alg = alg;
+    o.length = length;
+    o.material.append(key);
+    return o;
+}
+
 // Opaque Data, of a type KMIP leaves to its users (0x80000000 and up).
 fn opaque_data(kind: u32, data: const u8[:]) -> Object {
     var o = new_object(OBJ_OPAQUE_DATA);
@@ -144,7 +158,7 @@ fn put_key_block(out: u8[>..]&, o: const Object&) {
 fn put_object(out: u8[>..]&, o: const Object&) -> bool {
     if o.obj_type == OBJ_SPLIT_KEY { return put_split_key(out, o); }
     let tag = object_tag(o.obj_type);
-    if tag == 0 || o.obj_type == OBJ_PGP_KEY || o.obj_type == OBJ_CERTIFICATE_REQUEST { return false; }
+    if tag == 0 || o.obj_type == OBJ_CERTIFICATE_REQUEST { return false; }
     let s = begin(out, tag);
     if o.obj_type == OBJ_CERTIFICATE {
         put_enum(out, TAG_CERTIFICATE_TYPE, if o.sub_type != 0 { o.sub_type } else { CERT_X_509 });
@@ -154,6 +168,8 @@ fn put_object(out: u8[>..]&, o: const Object&) -> bool {
         put_bytes(out, TAG_OPAQUE_DATA_VALUE, o.material);
     } else {
         if o.obj_type == OBJ_SECRET_DATA { put_enum(out, TAG_SECRET_DATA_TYPE, o.sub_type); }
+        // A PGP Key (2.0): its version, then a Key Block kept as it came.
+        if o.obj_type == OBJ_PGP_KEY { put_int(out, TAG_PGP_KEY_VERSION, o.sub_type as! i32); }
         put_key_block(out, o);
     }
     end(out, s);
@@ -220,6 +236,11 @@ fn read_object(buf: const u8[:], doc: const Node[:], payload: i64, obj_type: u32
         let t, tok = child_enum(buf, doc, s, TAG_SECRET_DATA_TYPE);
         if !tok { return o, false; }
         o.sub_type = t;
+    }
+    if obj_type == OBJ_PGP_KEY {
+        let v, vok = child_int(buf, doc, s, TAG_PGP_KEY_VERSION);
+        if !vok || v < 0 { return o, false; }
+        o.sub_type = v as! u32;
     }
     let ok = read_key_block(buf, doc, child(doc, s, TAG_KEY_BLOCK), o);
     return o, ok;

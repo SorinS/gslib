@@ -186,10 +186,30 @@ fn authenticate(s: Server&, tls_owner: const u8[:], buf: const u8[:], r: const R
     return w;
 }
 
+// Whether the object uid (of owner) has one of the Object Group names
+// in the list at node g of the rights.
+fn in_groups(s: const Server&, owner: const u8[:], uid: const u8[:], rights: const u8[:], doc: const Node[:], g: i64) -> bool {
+    if uid.len == 0 { return false; }
+    let i = find_object(s, owner, uid);
+    if i < 0 { return false; }
+    let a = attrs_of(s.objects[i]);
+    var found = false;
+    each(doc, g) { j =>
+        let name, ok = as_text(rights, doc, j);
+        each_attr(a) { t, item =>
+            if t == TAG_OBJECT_GROUP {
+                let v, vok = item_value(item, TEXT_STRING);
+                if ok && vok && v == name { found = true; }
+            }
+        };
+    };
+    return found;
+}
+
 // Whether a delegated ticket's Rights let it do op on the object uid
 // ("" when the item names none): some Right whose Operations (if given)
-// hold op and whose Objects (if given) hold uid.
-fn rights_allow(rights: const u8[:], op: u32, uid: const u8[:]) -> bool {
+// hold op and whose Objects or Object Groups (if given) hold uid.
+fn rights_allow(s: const Server&, owner: const u8[:], rights: const u8[:], op: u32, uid: const u8[:]) -> bool {
     var doc: Node[>..] = [];
     let r, e = decode(rights, Options { .. }, doc);
     if e != OK { return false; }
@@ -197,21 +217,74 @@ fn rights_allow(rights: const u8[:], op: u32, uid: const u8[:]) -> bool {
     each(doc, r) { k =>
         if doc[k].tag == TAG_RIGHT {
             var op_ok = true;
-            var obj_ok = true;
             let ops = child(doc, k, TAG_OPERATIONS);
             if ops >= 0 {
                 op_ok = false;
                 each(doc, ops) { j => let o, ook = as_enum(rights, doc, j); if ook && o == op { op_ok = true; } };
             }
             let objs = child(doc, k, TAG_OBJECTS);
+            let groups = child(doc, k, TAG_OBJECT_GROUPS);
+            var obj_ok = objs < 0 && groups < 0;
             if objs >= 0 {
-                obj_ok = false;
                 each(doc, objs) { j => let u, uok = as_text(rights, doc, j); if uok && uid.len > 0 && u == uid { obj_ok = true; } };
             }
+            if groups >= 0 && in_groups(s, owner, uid, rights, doc, groups) { obj_ok = true; }
             if op_ok && obj_ok { ok = true; }
         }
     };
     return ok;
+}
+
+// The values of a list node (Operations, Objects, Object Groups) as raw
+// items, for comparing.
+fn list_has(buf: const u8[:], doc: const Node[:], list: i64, item: const u8[:]) -> bool {
+    var found = false;
+    each(doc, list) { j => if raw(buf, doc, j) == item { found = true; } };
+    return found;
+}
+
+// Whether every item of list a (in buf a) is in list b (in buf b).
+fn list_within(ab: const u8[:], ad: const Node[:], a: i64, bb: const u8[:], bd: const Node[:], b: i64) -> bool {
+    var ok = true;
+    each(ad, a) { j => if !list_has(bb, bd, b, raw(ab, ad, j)) { ok = false; } };
+    return ok;
+}
+
+// Whether Rights asked for (want, a Rights item) are within the ones a
+// delegated ticket has: each Right asked for is covered by one it has,
+// whose Operations (if it lists any) include the asked Right's, and
+// whose Objects and Object Groups (if it lists any) include the asked
+// Right's, of the same kind.
+fn rights_within(want: const u8[:], have: const u8[:]) -> bool {
+    var wd: Node[>..] = [];
+    let wr, we = decode(want, Options { .. }, wd);
+    var hd: Node[>..] = [];
+    let hr, he = decode(have, Options { .. }, hd);
+    if we != OK || he != OK { return false; }
+    var all = true;
+    each(wd, wr) { k =>
+        if wd[k].tag == TAG_RIGHT {
+            let wops = child(wd, k, TAG_OPERATIONS);
+            let wobj = child(wd, k, TAG_OBJECTS);
+            let wgrp = child(wd, k, TAG_OBJECT_GROUPS);
+            var covered = false;
+            each(hd, hr) { c =>
+                if hd[c].tag == TAG_RIGHT {
+                    let hops = child(hd, c, TAG_OPERATIONS);
+                    let hobj = child(hd, c, TAG_OBJECTS);
+                    let hgrp = child(hd, c, TAG_OBJECT_GROUPS);
+                    let ops_ok = hops < 0 || (wops >= 0 && list_within(want, wd, wops, have, hd, hops));
+                    let any = hobj < 0 && hgrp < 0;
+                    let obj_ok = wobj < 0 || (hobj >= 0 && list_within(want, wd, wobj, have, hd, hobj));
+                    let grp_ok = wgrp < 0 || (hgrp >= 0 && list_within(want, wd, wgrp, have, hd, hgrp));
+                    let named = (wobj >= 0 || wgrp >= 0) && obj_ok && grp_ok;
+                    if ops_ok && (any || named) { covered = true; }
+                }
+            };
+            if !covered { all = false; }
+        }
+    };
+    return all;
 }
 
 // --- Login, Delegated Login, Logout ------------------------------------------------

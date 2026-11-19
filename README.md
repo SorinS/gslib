@@ -874,7 +874,7 @@ and through XML and JSON; against published answers for what the server
 computes (RFC 3394, 5869, 6070 and 8439, SP 800-38B and 800-108); against
 OASIS's own test cases for KMIP 1.4, 2.0 and 2.1 (fetched, not kept
 here), 541 recorded conversations replayed against the in-memory server,
-of which 438 pass and the rest are listed in kmip's README by what they
+of which 467 pass and the rest are listed in kmip's README by what they
 need; and live (`make interop-kmip`, Docker) against PyKMIP's server in
 KMIP 1.0 to 2.0, goose-kmipd against gslib's client and PyKMIP's, and
 the HTTPS binding against curl. Two libFuzzer targets cover the TTLV

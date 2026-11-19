@@ -81,8 +81,10 @@ fn type_from_text(s: const u8[:]) -> u8 {
 // The tag an Enumeration or a mask under tag takes its names from: the
 // tag's own, or for an Attribute Value the attribute's (attr, from the
 // Attribute Name beside it; 0 when there is none or it is not named here).
+// Data as an Enumeration (2.1) names an operation of the batch.
 fn names_tag(tag: u32, attr: u32) -> u32 {
     if tag == TAG_ATTRIBUTE_VALUE { return attr; }
+    if tag == TAG_DATA { return TAG_OPERATION; }
     return tag;
 }
 

@@ -53,7 +53,7 @@ go in each request's Authentication when a server wants one.
 | `kmip/client.goose` | `Client`: `tls_config`, `dial`, `close`, `exchange`, `call` (one operation, its payload written by a block), `describe` (an error with the server's Result Reason and Message); `discover_versions`, `negotiate`, `query`; `create`, `create_key_pair`, `register`, `get`, `get_attributes`, `get_attribute_list`, `add_attribute`, `set_attribute`, `modify_attribute`, `delete_attribute`, `locate`, `activate`, `revoke`, `destroy`, `encrypt` and `decrypt` (`Sealed`: data, IV, AEAD tag), `sign`, `verify`, `mac`, `rng_retrieve`. The operations take any client type with `exchange`, `version` and the `last_*` fields: `Client`, `HttpClient`, or `Local` |
 | `kmip/client_ops.goose` | `get_as` (a format, a Key Wrap Type, a Key Wrapping Specification), `get_wrapped`, `export_object`, `import_object`; `rekey`, `rekey_key_pair`, `derive_key` (`Derivation`); `check`, `obtain_lease`, `get_usage_allocation`, `archive`, `recover`, `adjust_attribute`, `interop`; `mac_verify`, `hash`, `rng_seed`, `sign_digest`, `verify_digest`; `part` (any cryptographic operation in parts: `Part`, its Correlation Value) |
 | `kmip/client_pki.goose` | `certify`, `recertify`, `validate`, `create_split_key`, `join_split_key` |
-| `kmip/client_session.goose` | asynchronous items (`submit`, `poll`, `process_async`, `cancel`, `query_async`); tickets (`login`, `delegated_login` with Rights, `logout`); `log_message`, `ping`, `set_endpoint_role`, `reprovision`, `pkcs11`; `set_defaults`, `set_constraints`, `get_constraints`; the Query functions past 1.2's (`query_capabilities`, `query_profiles`, `query_enums`, `query_registration_methods`, `query_defaults`); `take_server_request` (a server's Notify or Put, answered) |
+| `kmip/client_session.goose` | asynchronous items (`submit`, `poll`, `process_async`, `cancel`, `query_async`); tickets (`login`, `delegated_login` with Rights on objects or Object Groups: `add_right`, `add_right_groups`; `logout`); `log_message`, `ping`, `set_endpoint_role`, `reprovision`, `pkcs11`; `set_defaults`, `set_constraints`, `get_constraints`; the Query functions past 1.2's (`query_capabilities`, `query_profiles`, `query_enums`, `query_registration_methods`, `query_defaults`); `take_server_request` (a server's Notify or Put, answered) |
 | `kmip/https.goose` | KMIP over HTTPS: `HttpClient` (`https_dial`, `exchange`, `close`), `MSG_TTLV`, `MSG_XML`, `MSG_JSON`, `content_type`, `encoding_of`, `encode_as`, `decode_as`; the server's side: `HttpConn` (`http_conn`), `http_serve` |
 | `kmip/text.goose` | what the XML and JSON encodings share: `tag_by_name`, `tag_from_text`, `tag_text`, `type_from_text`, `enum_by_name`, `enum_from_text`, `enum_text`, `is_mask`, `mask_text`, `mask_from_text`, `names_tag`, `put_from_text`, `value_text`, `datetime_text`, `datetime_from_text` |
 | `kmip/xml.goose` | KMIP's XML encoding: `to_xml`, `ttlv_to_xml`, `from_xml`, `xml_element_to_ttlv` |
@@ -84,9 +84,14 @@ takes:
   PKCS #1) and EC on P-224, P-256, P-384, P-521, secp256k1 and
   brainpoolP256r1, P384r1, P512r1. Register takes keys in any format
   (and without their value, kept elsewhere), certificates, secret data,
-  opaque data, split keys, wrapped keys as they are. Get gives a key in
-  any format it converts to, and Import and Export carry an object with
-  its attributes.
+  opaque data, split keys, PGP keys (kept as they come), wrapped keys as
+  they are, and a private key as PKCS #12 (opened with the password its
+  PKCS_12 Password Link names, which must be Active: the key is kept as
+  PKCS #8 and each certificate in the file registered, linked to the
+  next by PKCS_12 Certificate Links). Get gives a key in any format it
+  converts to, PKCS #12 too (the key, the certificates its links name,
+  under its password), and Import and Export carry an object with its
+  attributes.
 - **Wrapped keys.** A key registered wrapped is given as registered, or
   unwrapped with the key its Key Wrapping Data names (Key Wrap Type Not
   Wrapped). Get and Export wrap a key as a Key Wrapping Specification
@@ -96,8 +101,10 @@ takes:
 - **Cryptography.** Encrypt and Decrypt with symmetric keys in every
   mode of `kmip.crypto`, or RSA (OAEP, PKCS #1 v1.5) with a key pair;
   Sign and Signature Verify on data or a digest; MAC and MAC Verify
-  (HMAC, CMAC); Hash; each also in parts, ECB and CBC giving whole
-  blocks as they come. A key protects (encrypts, signs, wraps) only when
+  (HMAC, CMAC); Hash; each also in parts: ECB and CBC give whole blocks
+  as they come, CTR, CFB, OFB, ChaCha20 and the encryption of GCM and
+  ChaCha20-Poly1305 each part's data (the tag at the Final part), and
+  authenticated decryption nothing before the tag is checked. A key protects (encrypts, signs, wraps) only when
   Active and before its Protect Stop Date, and processes (decrypts,
   verifies) after its Process Start Date; Usage Limits are counted in
   bytes or objects.
@@ -122,7 +129,9 @@ takes:
   transparent one's TTLV), Short Unique Identifier, Fresh, Lease Time,
   Sensitive, Extractable, Always Sensitive, Never Extractable, Protection
   Storage Mask, Random Number Generator and Original Creation Date for
-  what it makes, a certificate's own attributes; a client that gives one
+  what it makes, a certificate's own attributes (its key's algorithm and
+  length, 1.x's Certificate Identifier, Subject and Issuer, 1.4's
+  Certificate Subject CN, Issuer C and the rest); a client that gives one
   of them is refused (Read Only Attribute). A Name belongs to one object
   only; Set Defaults' attributes fill in what a request leaves out and
   Set Constraints' are checked.
@@ -131,7 +140,13 @@ takes:
   certificate), or the user a ticket names; `add_user` and
   `require_auth` ask for a password. Batches stop at the first failure,
   go on, or undo what was done, as the request asks; the ID Placeholder
-  carries an item's object to the next; an item asked for
+  carries an item's object to the next, and 2.1's references an earlier
+  item's (a Unique Identifier naming an operation or an item's place,
+  Data naming an operation or a place: a Decrypt's output encrypted
+  again under another key without leaving the server, its item
+  Ephemeral). A delegated ticket does what its Rights allow, on the
+  objects or Object Groups they name, and delegates no more than them.
+  An item asked for
   asynchronously is kept for Process and Poll. Before 2.0 the Result
   Reasons 1.x does not have are given as the 1.x one nearest them.
 
@@ -234,12 +249,15 @@ Every test runs at -O0, -O2 and with `--debug`:
   ECDH on P-256 and secp256k1); Check, usage limits, leases, Archive and
   Recover, Adjust Attribute; MAC Verify, CMAC (SP 800-38B), Hash; RSA-OAEP
   with SHA-384 and MGF1 over SHA-256; ChaCha20 and ChaCha20-Poly1305
-  (RFC 8439); Triple DES; operations in parts; a batch undone; the ID
-  Placeholder; in 2.0 and 1.4: 147 checks.
-- `test/pki.goose`: Certify, Re-certify, Validate, Create and Join
-  Split Key in 1.0 to 2.0: 201 checks.
+  (RFC 8439); Triple DES; operations in parts (GCM and CTR as they
+  come); PGP keys; a batch undone; the ID Placeholder; in 2.0 and 1.4:
+  155 checks.
+- `test/pki.goose`: Certify, Re-certify, Validate, a certificate's
+  attributes, PKCS #12 both ways, Create and Join Split Key in 1.0 to
+  2.0: 223 checks.
 - `test/session.goose`: asynchronous items, tickets, users, the 2.x
-  operations, the Query functions, Rotate, Notify and Put: 74 checks.
+  operations, the Query functions, Rotate, Notify and Put, Rights on
+  Object Groups and delegated again: 79 checks.
 
 **OASIS's test cases.** OASIS publishes test cases for KMIP 1.4, 2.0
 and 2.1: the Profiles' mandatory and optional ones and the Test Cases
@@ -264,9 +282,9 @@ SHA-256) into `test/oasis-cache` (ignored by git), and
   a Result Message, Located Items, a Server Correlation Value and an
   Attribute Index of 0 may be on one side only.
 
-438 of the 541 pass: 58 of 68 of 1.4's mandatory profile cases, 75 of
-86 of 2.0's, 76 of 86 of 2.1's, 3, 4 and 4 of 7 optional ones, and 88 of
-110, 49 of 60 and 81 of 110 of the 1.4, 2.0 and 2.1 Test Cases. The
+467 of the 541 pass: 59 of 68 of 1.4's mandatory profile cases, 77 of
+86 of 2.0's, 78 of 86 of 2.1's, 3, 4 and 4 of 7 optional ones, and 91 of
+110, 54 of 60 and 97 of 110 of the 1.4, 2.0 and 2.1 Test Cases. The
 others, by what they need:
 
 - **A server set up otherwise** (12): objects that are there before the
@@ -276,13 +294,18 @@ others, by what they need:
 - **OASIS's files** (4 and more): one is not XML, one answers a 1.4
   request in 1.3, CS-AC-M-6 checks a `$MAC_DATA` no answer gives, and
   the Locate of TC-OFFSET and BL-M-4 expects objects of the run they
-  were recorded on.
+  were recorded on. Some contradict others: TC-PKCS12-2 Locates a
+  certificate by its serial number as a DER INTEGER and then expects it
+  without the header (this server gives the INTEGER, as the other cases
+  do); TC-CERTATTR-1-20 and TC-IMPEXP-5-20 give a certificate's Digest
+  and Key Format Type as Raw, 2.1's as X_509 (this server gives Raw
+  before 2.1); TC-PKCS12-1-14 wants the PKCS #12 bytes as a 1.x wrapped
+  Key Value; TC-PKCS12-2-20 a 2.1 Result Reason in 2.0.
 - **What this server does otherwise**: Certify refuses a request signed
-  with SHA-1 (TC-REKEY-9 to 12; as Go does); PGP keys (TC-PGP), PKCS #12
-  (TC-PKCS12), the Re-encrypt flows of 2.1 (TC-REENCRYPT), streaming GCM
-  giving data before the Final part (CS-BC-M-GCM-3), the server-to-client
-  Put received by the server (TC-NP), and a few Delegated Login rights
-  (TC-DLOGIN) and certificate attributes (TC-CERTATTR, TC-ECC-3, BL-M-10).
+  with SHA-1 (TC-REKEY-9 to 12; as Go does); the server-to-client Put
+  is not taken from a client (TC-NP: Put goes the other way); a Create
+  of a key length AES does not have is Invalid Field (TC-REENCRYPT-5
+  wants General Failure).
 
 `python3 scripts/oasis.py --replay -v` prints every file's first
 difference.
@@ -318,12 +341,11 @@ specifications and PyKMIP's `kmip/core/enums.py` (parsed, not run).
   to send requests), PKCS#11 functions past C_Initialize, C_GetInfo and
   C_Finalize, Attestation credentials, and Re-Provision invalidating the
   client's old certificate.
-- PGP keys, PKCS #12 containers, Certificate Request objects kept as
-  such, and Templates (deprecated in 1.3) are not kept; DSA, DH and ECMQV
-  keys are converted between formats but not made.
-- Streaming GCM, CCM, CTR, CFB and OFB give their data at the Final part
-  (ECB and CBC give whole blocks as they come); streams buffer at most 64
-  KiB, four at a time.
+- Certificate Request objects kept as such, and Templates (deprecated in
+  1.3), are not kept; PGP keys are kept but not used for cryptography;
+  DSA, DH and ECMQV keys are converted between formats but not made.
+- In parts, CCM and authenticated decryption give their data at the
+  Final part; streams buffer at most 64 KiB, four at a time.
 - Certify does not take requests signed with SHA-1, and Derive Key's
   PBKDF2 at most 200000 rounds in all (iterations times blocks of
   output, so that no request holds the server for long).
