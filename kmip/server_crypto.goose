@@ -134,6 +134,22 @@ fn block_streamed(o: const Object&, cp: const CryptoParams&) -> bool {
     return (mode == MODE_ECB || mode == MODE_CBC) && (o.alg == ALG_AES || o.alg == ALG_TRIPLE_DES);
 }
 
+// A mode whose output for the data so far is a prefix of its output for
+// more: CTR, CFB and OFB, ChaCha20, and the encryption of GCM and
+// ChaCha20-Poly1305 (the tag comes at the Final part). Each part is
+// answered with the output for its data, done over all the data so far
+// (at most 64 KiB). Authenticated decryption gives nothing until the tag
+// is checked at the Final part.
+fn prefix_streamed(o: const Object&, cp: const CryptoParams&, enc: bool) -> bool {
+    if cp.padding != 0 && cp.padding != PAD_NONE { return false; }
+    if o.alg == ALG_CHACHA20 { return true; }
+    if o.alg == ALG_CHACHA20_POLY1305 { return enc; }
+    if o.alg != ALG_AES && o.alg != ALG_TRIPLE_DES { return false; }
+    let mode = if cp.mode != 0 { cp.mode } else { MODE_CBC };
+    if mode == MODE_GCM { return enc && o.alg == ALG_AES; }
+    return mode == MODE_CTR || mode == MODE_CFB || mode == MODE_OFB;
+}
+
 fn op_crypt(s: Server&, owner: const u8[:], buf: const u8[:], doc: const Node[:], p: i64, out: u8[>..]&, enc: bool) -> Outcome {
     let op = if enc { OP_ENCRYPT } else { OP_DECRYPT };
     let pt, pok = parts_of(buf, doc, p);
@@ -244,6 +260,18 @@ fn op_crypt(s: Server&, owner: const u8[:], buf: const u8[:], doc: const Node[:]
             s.streams[k].pending.clear();
             s.streams[k].pending.append(rest);
         }
+    } else if prefix_streamed(o, cp, enc) {
+        var sy = sym();
+        sy.iv.append(s.streams[k].iv);
+        sy.aad.append(s.streams[k].aad);
+        var all: u8[>..] = [];
+        all.append(s.streams[k].pending);
+        var whole: u8[>..] = [];
+        let r = sym_crypt(o, cp, enc, all, sy, tag, whole);
+        if r != 0 { close_stream(s, k); return failed(r); }
+        res.append(whole[s.streams[k].sent..]);
+        s.streams[k].sent = whole.len;
+        if !pt.fin { tag.clear(); }
     } else if pt.fin {
         var sy = sym();
         sy.iv.append(s.streams[k].iv);

@@ -241,6 +241,7 @@ struct RequestItem {
     op: u32,
     id_off: i64, id_len: i64,
     payload: i64,
+    ephemeral: bool = false,      // 2.1: done, its payload not given back
 }
 
 struct Request {
@@ -323,6 +324,8 @@ fn parse_request(buf: const u8[:], doc: const Node[:], root: i64) -> Request, i6
         var it = RequestItem { op: op, id_off: -1, id_len: 0, payload: child(doc, b, TAG_REQUEST_PAYLOAD) };
         let id = child(doc, b, TAG_UNIQUE_BATCH_ITEM_ID);
         if is_type(doc, id, BYTE_STRING) { it.id_off = doc[id].off; it.id_len = doc[id].len; }
+        let eph, eok = child_bool(buf, doc, b, TAG_EPHEMERAL);
+        it.ephemeral = eok && eph;
         r.items.push(it);
         b = next_same(doc, b);
     }

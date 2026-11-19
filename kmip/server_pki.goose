@@ -28,6 +28,8 @@ import crypto.x509;
 import crypto.x509.keys;
 import crypto.x509.create;
 import crypto.x509.verify;
+import crypto.x509.pkcs12;
+import crypto.bignum.rsa;
 import encoding.asn1;
 
 // --- Certificates' attributes ----------------------------------------------------
@@ -71,8 +73,8 @@ fn cert_attrs(der: const u8[:], v: Version, a: Attrs&) -> bool {
     if e != x509::OK { return false; }
     let ct = item_of_enum(TAG_CERTIFICATE_TYPE, CERT_X_509);
     set_single(a, ct);
-    if version_lt(v, V1_1) {
-        // 1.0's: the names as text.
+    if version_lt(v, V2_0) {
+        // 1.0's, deprecated in 1.1 and gone in 2.0: the names as text.
         var id: u8[>..] = [];
         let s1 = begin(id, TAG_CERTIFICATE_IDENTIFIER);
         put_text(id, TAG_ISSUER, x509::name_text(c.der, c.issuer));
@@ -91,14 +93,14 @@ fn cert_attrs(der: const u8[:], v: Version, a: Attrs&) -> bool {
         put_text(iss, TAG_CERTIFICATE_ISSUER_DISTINGUISHED_NAME, x509::name_text(c.der, c.issuer));
         end(iss, s3);
         set_single(a, iss);
-        return true;
+        if version_lt(v, V1_1) { return true; }
     }
     let len = item_of_int(TAG_CERTIFICATE_LENGTH, der.len as! i32);
     set_single(a, len);
     var id: u8[>..] = [];
     let s1 = begin(id, TAG_X_509_CERTIFICATE_IDENTIFIER);
     put_bytes(id, TAG_ISSUER_DISTINGUISHED_NAME, c.der[c.issuer.start..c.issuer.end]);
-    put_bytes(id, TAG_CERTIFICATE_SERIAL_NUMBER, c.der[c.serial.off..c.serial.end]);
+    put_bytes(id, TAG_CERTIFICATE_SERIAL_NUMBER, c.der[c.serial.start..c.serial.end]);   // as OASIS's cases: the INTEGER, DER
     end(id, s1);
     set_single(a, id);
     var sub: u8[>..] = [];
@@ -114,7 +116,74 @@ fn cert_attrs(der: const u8[:], v: Version, a: Attrs&) -> bool {
     set_single(a, iss);
     let sg = sig_enum(c);
     if sg != 0 && !version_lt(v, V1_2) { let d = item_of_enum(TAG_DIGITAL_SIGNATURE_ALGORITHM, sg); set_single(a, d); }
+    let kalg, kbits = cert_key(c);
+    if kalg != 0 {
+        let ia = item_of_enum(TAG_CRYPTOGRAPHIC_ALGORITHM, kalg);
+        set_single(a, ia);
+        let il = item_of_int(TAG_CRYPTOGRAPHIC_LENGTH, kbits);
+        set_single(a, il);
+    }
+    for k in NAME_FIELDS.len { let g1 = remove_attr(a, NAME_FIELDS[k].subject, -1); let g2 = remove_attr(a, NAME_FIELDS[k].issuer, -1); }
+    if !version_lt(v, V1_4) {
+        put_name_fields(a, c.der, c.subject, true);
+        put_name_fields(a, c.der, c.issuer, false);
+    }
     return true;
+}
+
+// The algorithm and length of a certificate's key: RSA and its modulus's
+// bits, EC and its curve's; 0 for others.
+fn cert_key(c: const x509::Cert&) -> u32, i32 {
+    if c.key_type == x509::KEY_RSA {
+        // The subjectPublicKey BIT STRING holds RSAPublicKey after its unused-bits byte.
+        if c.key.end - c.key.off < 2 { return 0, 0; }
+        let ns, ok = der_uints(c.der[c.key.off + 1..c.key.end]);
+        if !ok || ns.len != 2 { return 0, 0; }
+        let bits = uint_bits(uint_at(c.der[c.key.off + 1..c.key.end], ns[0]));
+        if bits == 0 { return 0, 0; }
+        return ALG_RSA, bits as! i32;
+    }
+    if curve_of_kind(c.key_type) != 0 { return ALG_EC, x509::curve_of_key(c.key_type).bits as! i32; }
+    return 0, 0;
+}
+
+// The bits of a big-endian unsigned integer.
+fn uint_bits(n: const u8[:]) -> i64 {
+    var i = 0;
+    while i < n.len && n[i] == 0 { i++; }
+    if i == n.len { return 0; }
+    return (n.len - i) * 8 - (clz(n[i]) - 56);
+}
+
+// 1.4's attributes of each part of a certificate's subject and issuer
+// (Certificate Subject CN, Certificate Issuer C, ...), by the part's OID.
+struct NameField { oid: const u8[:], subject: u32, issuer: u32 }
+
+let NAME_FIELDS: NameField[12] = [
+    NameField { oid: "2.5.4.3", subject: TAG_CERTIFICATE_SUBJECT_CN, issuer: TAG_CERTIFICATE_ISSUER_CN },
+    NameField { oid: "2.5.4.10", subject: TAG_CERTIFICATE_SUBJECT_O, issuer: TAG_CERTIFICATE_ISSUER_O },
+    NameField { oid: "2.5.4.11", subject: TAG_CERTIFICATE_SUBJECT_OU, issuer: TAG_CERTIFICATE_ISSUER_OU },
+    NameField { oid: "1.2.840.113549.1.9.1", subject: TAG_CERTIFICATE_SUBJECT_EMAIL, issuer: TAG_CERTIFICATE_ISSUER_EMAIL },
+    NameField { oid: "2.5.4.6", subject: TAG_CERTIFICATE_SUBJECT_C, issuer: TAG_CERTIFICATE_ISSUER_C },
+    NameField { oid: "2.5.4.8", subject: TAG_CERTIFICATE_SUBJECT_ST, issuer: TAG_CERTIFICATE_ISSUER_ST },
+    NameField { oid: "2.5.4.7", subject: TAG_CERTIFICATE_SUBJECT_L, issuer: TAG_CERTIFICATE_ISSUER_L },
+    NameField { oid: "0.9.2342.19200300.100.1.1", subject: TAG_CERTIFICATE_SUBJECT_UID, issuer: TAG_CERTIFICATE_ISSUER_UID },
+    NameField { oid: "2.5.4.5", subject: TAG_CERTIFICATE_SUBJECT_SERIAL_NUMBER, issuer: TAG_CERTIFICATE_ISSUER_SERIAL_NUMBER },
+    NameField { oid: "2.5.4.12", subject: TAG_CERTIFICATE_SUBJECT_TITLE, issuer: TAG_CERTIFICATE_ISSUER_TITLE },
+    NameField { oid: "0.9.2342.19200300.100.1.25", subject: TAG_CERTIFICATE_SUBJECT_DC, issuer: TAG_CERTIFICATE_ISSUER_DC },
+    NameField { oid: "2.5.4.46", subject: TAG_CERTIFICATE_SUBJECT_DN_QUALIFIER, issuer: TAG_CERTIFICATE_ISSUER_DN_QUALIFIER },
+];
+
+fn put_name_fields(a: Attrs&, der: const u8[:], name: asn1::Tlv, subject: bool) {
+    for f in NAME_FIELDS {
+        for v in x509::name_values(der, name, f.oid) { attr_text(a, if subject { f.subject } else { f.issuer }, v); }
+    }
+}
+
+// One of 1.4's attributes of a part of a certificate's subject or issuer.
+fn is_name_field(tag: u32) -> bool {
+    return (tag >= TAG_CERTIFICATE_SUBJECT_CN && tag <= TAG_CERTIFICATE_SUBJECT_DN_QUALIFIER) ||
+           (tag >= TAG_CERTIFICATE_ISSUER_CN && tag <= TAG_CERTIFICATE_ISSUER_DN_QUALIFIER);
 }
 
 // --- Links ----------------------------------------------------------------------
@@ -644,5 +713,133 @@ fn op_join_split_key(s: Server&, owner: const u8[:], v: Version, buf: const u8[:
     let r = add_object(s, owner, o, a, uid);
     if r.reason != 0 { return r; }
     put_text(out, TAG_UNIQUE_IDENTIFIER, uid);
+    return done();
+}
+
+// --- PKCS #12 ---------------------------------------------------------------------
+
+// The password a private key's PKCS_12 Password Link names: Secret Data
+// that is Active (Wrong Key Lifecycle State otherwise, as the test cases
+// have it).
+fn pkcs12_password(s: const Server&, owner: const u8[:], a: const Attrs&, pw: u8[>..]&) -> Outcome {
+    let uid = link_of(a, LINK_PKCS12_PASSWORD);
+    if uid.len == 0 { return fail(REASON_INVALID_FIELD, "PKCS #12 needs a PKCS_12 Password Link"); }
+    let i = find_object(s, owner, uid);
+    if i < 0 { return fail(REASON_ITEM_NOT_FOUND, "no such password"); }
+    if s.objects[i].state != STATE_ACTIVE { return fail(REASON_WRONG_KEY_LIFECYCLE_STATE, "the password is not Active"); }
+    let o, ok = object_of(s.objects[i]);
+    if !ok || o.obj_type != OBJ_SECRET_DATA || o.wrapped { return fail(REASON_INVALID_OBJECT_TYPE, "the password is not Secret Data"); }
+    pw.append(o.material);
+    return done();
+}
+
+// The algorithm and length of a private key.
+fn private_alg(k: const x509::PrivateKey&) -> u32, i32 {
+    if k.kind == x509::KEY_RSA { return ALG_RSA, bignum::ct_bit_len(k.rsa.n) as! i32; }
+    if curve_of_kind(k.kind) != 0 { return ALG_EC, x509::curve_of_key(k.kind).bits as! i32; }
+    return 0, 0;
+}
+
+// A private key as PKCS #12: the key, the certificates its PKCS_12
+// Certificate Links name one after the other (the key's, then its
+// issuer's, ...), under the password of its PKCS_12 Password Link.
+fn pkcs12_of(s: const Server&, owner: const u8[:], o: const Object&, a: const Attrs&) -> Object, Outcome {
+    var r = new_object(OBJ_PRIVATE_KEY);
+    var pw: u8[>..] = [];
+    let po = pkcs12_password(s, owner, a, pw);
+    if po.reason != 0 { return r, po; }
+    let k, kok = private_of(o);
+    if !kok { return r, fail(REASON_KEY_FORMAT_TYPE_NOT_SUPPORTED, "the key does not go into PKCS #12"); }
+    var certs: u8[>..] = [];
+    var next = link_of(a, LINK_PKCS12_CERTIFICATE);
+    var n = 0;
+    while next.len > 0 && n < 10 {
+        let i = find_object(s, owner, next);
+        if i < 0 { break; }
+        let c, cok = object_of(s.objects[i]);
+        if !cok || c.obj_type != OBJ_CERTIFICATE { break; }
+        certs.append(c.material);
+        let ca = attrs_of(s.objects[i]);
+        next = link_of(ca, LINK_PKCS12_CERTIFICATE);
+        n++;
+    }
+    let pfx, e = x509::pkcs12_encode(x509::marshal_pkcs8(k), certs, pw);
+    if e != x509::OK { return r, fail(REASON_INVALID_FIELD, "the password does not go into PKCS #12"); }
+    r.key_format = FMT_PKCS_12;
+    r.material.append(pfx);
+    return r, done();
+}
+
+// Registers a private key given as PKCS #12, opened with the password of
+// its PKCS_12 Password Link: the key, kept as PKCS #8 with the attributes
+// given, and each certificate in the file, the key's first and then its
+// issuers', each linked to the next by a PKCS_12 Certificate Link (the
+// key to its own) and given the key's PKCS_12 Friendly Name. The key's
+// identifier into uid.
+fn register_pkcs12(s: Server&, owner: const u8[:], v: Version, o: const Object&, a: const Attrs&, uid: u8[>..]&) -> Outcome {
+    var pw: u8[>..] = [];
+    let po = pkcs12_password(s, owner, a, pw);
+    if po.reason != 0 { return po; }
+    let p8, certs, e = x509::pkcs12_decode(o.material, pw);
+    if e == x509::ERR_BAD_SIGNATURE { return fail(REASON_CRYPTOGRAPHIC_FAILURE, "the PKCS #12 file does not open with the password"); }
+    if e != x509::OK || p8.len == 0 { return fail(REASON_INVALID_FIELD, "not a PKCS #12 file of one key"); }
+    let k, kok = x509::parse_private_key(p8);
+    let alg, bits = private_alg(k);
+    if !kok || alg == 0 { return fail(REASON_INVALID_FIELD, "the PKCS #12 file's key is not RSA or EC"); }
+    // The certificates in chain order: the key's, then each one's issuer;
+    // the rest after.
+    var ders: asn1::Tlv[>..] = [];
+    var at = 0;
+    while at < certs.len {
+        let t, ok = asn1::read(certs, at, certs.len);
+        if !ok { return fail(REASON_INVALID_FIELD, "a certificate in the PKCS #12 file is not DER"); }
+        ders.push(t);
+        at = t.end;
+    }
+    var order: i64[>..] = [];
+    let spki = x509::marshal_public_key(k);
+    var cur: i64 = -1;
+    for j in ders.len {
+        let c, ce = x509::parse(certs[ders[j].start..ders[j].end]);
+        if ce == x509::OK && c.der[c.spki.start..c.spki.end] == spki[..] { cur = j; }
+    }
+    while cur >= 0 && order.len < ders.len {
+        order.push(cur);
+        let c, ce = x509::parse(certs[ders[cur].start..ders[cur].end]);
+        var up: i64 = -1;
+        for j in ders.len {
+            var seen = false;
+            for x in order { if x == j { seen = true; } }
+            if seen { continue; }
+            let d, de = x509::parse(certs[ders[j].start..ders[j].end]);
+            if de == x509::OK && d.der[d.subject.start..d.subject.end] == c.der[c.issuer.start..c.issuer.end] { up = j; }
+        }
+        cur = up;
+    }
+    for j in ders.len {
+        var seen = false;
+        for x in order { if x == j { seen = true; } }
+        if !seen { order.push(j); }
+    }
+    let key = private_key(alg, bits, FMT_PKCS_8, p8);
+    let none = attrs();
+    let r = add_object_with(s, owner, key, a, none, uid);
+    if r.reason != 0 { return r; }
+    let fname, fok = get_text(a, TAG_PKCS12_FRIENDLY_NAME);
+    var prev: u8[>..] = [];
+    prev.append(uid);
+    for j in order {
+        var sa = attrs();
+        if !cert_attrs(certs[ders[j].start..ders[j].end], v, sa) { return fail(REASON_INVALID_FIELD, "a certificate in the PKCS #12 file is not read"); }
+        var ca = attrs();
+        if fok { attr_text(ca, TAG_PKCS12_FRIENDLY_NAME, fname); }
+        let c = certificate(certs[ders[j].start..ders[j].end]);
+        var cu: u8[>..] = [];
+        let rc = add_object_with(s, owner, c, ca, sa, cu);
+        if rc.reason != 0 { return rc; }
+        link_both(s, prev, LINK_PKCS12_CERTIFICATE, cu, owner);
+        prev.clear();
+        prev.append(cu);
+    }
     return done();
 }

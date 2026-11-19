@@ -21,6 +21,7 @@ import gslib.kmip.split;
 import gslib.crypto.x509;
 import gslib.crypto.x509.keys;
 import gslib.crypto.x509.create;
+import gslib.crypto.x509.pkcs12;
 
 let EMPTY = kmip::attrs();
 
@@ -127,6 +128,20 @@ fn certificates(c: kmip::Local&, v: kmip::Version, ca: const u8[:], ca_key: cons
     if !kmip::version_lt(v, kmip::V1_2) {
         let sg, sgok = kmip::get_enum(ca1, kmip::TAG_DIGITAL_SIGNATURE_ALGORITHM);
         check(str(tag, "Digital Signature Algorithm"), sgok && sg == kmip::SIG_ECDSA_WITH_SHA256);
+    }
+    if !kmip::version_lt(v, kmip::V1_1) {
+        let kal, kalok = kmip::get_enum(ca1, kmip::TAG_CRYPTOGRAPHIC_ALGORITHM);
+        let kl, klok = kmip::get_int(ca1, kmip::TAG_CRYPTOGRAPHIC_LENGTH);
+        check(str(tag, "the key's algorithm and length"), kalok && kal == kmip::ALG_EC && klok && kl == 256);
+    }
+    if !kmip::version_lt(v, kmip::V1_4) {
+        let scn, scnok = kmip::get_text(ca1, kmip::TAG_CERTIFICATE_SUBJECT_CN);
+        let icn, icnok = kmip::get_text(ca1, kmip::TAG_CERTIFICATE_ISSUER_CN);
+        check(str(tag, "Certificate Subject CN and Issuer CN"), scnok && scn == "the certificate" && icnok && icn.len > 0);
+    }
+    if kmip::version_lt(v, kmip::V2_0) {
+        check(str(tag, "1.x's Certificate Identifier, Subject, Issuer"), kmip::has_attr(ca1, kmip::TAG_CERTIFICATE_IDENTIFIER) &&
+              kmip::has_attr(ca1, kmip::TAG_CERTIFICATE_SUBJECT) && kmip::has_attr(ca1, kmip::TAG_CERTIFICATE_ISSUER));
     }
     check(str(tag, "the certificate links to its key"), links(ca1, kmip::LINK_PUBLIC_KEY) == pu[..]);
     let pa = all_attrs(c, pu);
@@ -388,6 +403,56 @@ fn split_keys(c: kmip::Local&, v: kmip::Version) {
     check(str(tag, "TC-SJ-3's parts 2 and 4 joined"), e20 == kmip::OK && rjo.material[..] == unhex("0102030405060708090a0b0c0d0e0f10")[..]);
 }
 
+// PKCS #12 (1.4 on): a private key given as one, under the password its
+// PKCS_12 Password Link names, and got back as one with its certificate.
+fn pkcs12_files(c: kmip::Local&, v: kmip::Version, ca: const u8[:], ca_key: const u8[:]) {
+    let tag = str(vname(v), ": ");
+    ca_server(c, ca, ca_key);
+    let pw = kmip::secret_data(kmip::SECRET_PASSWORD, "p12 password");
+    let pwu, ep = kmip::register(c, pw, EMPTY);
+    let pv, pu = key_pair(c, str("p12 key ", vname(v)));
+    let cu, ec = kmip::certify(c, pu, "", EMPTY);
+    var la = kmip::attrs();
+    kmip::attr_link(la, kmip::LINK_PKCS12_PASSWORD, pwu);
+    var lc = kmip::attrs();
+    kmip::attr_link(lc, kmip::LINK_PKCS12_CERTIFICATE, cu);
+    let ea = kmip::add_attribute(c, pv, la) | kmip::add_attribute(c, pv, lc);
+    check(str(tag, "a key linked to its password and certificate"), ep == kmip::OK && ec == kmip::OK && ea == kmip::OK);
+    let early, ee = kmip::get(c, pv, kmip::FMT_PKCS_12);
+    check(str(tag, "not while the password is Pre-Active"), ee == kmip::ERR_FAILED &&
+          c.last_reason == kmip::reason_for(kmip::REASON_WRONG_KEY_LIFECYCLE_STATE, c.version));
+    check(str(tag, "activate the password"), kmip::activate(c, pwu) == kmip::OK);
+    let p12, eg = kmip::get(c, pv, kmip::FMT_PKCS_12);
+    let key, certs, ed = x509::pkcs12_decode(p12.material, "p12 password");
+    let p8, e8 = kmip::get(c, pv, kmip::FMT_PKCS_8);
+    let co, eco = kmip::get(c, cu, 0);
+    check(str(tag, "Get as PKCS #12: the key and its certificate"), eg == kmip::OK && p12.key_format == kmip::FMT_PKCS_12 &&
+          ed == x509::OK && e8 == kmip::OK && key == p8.material && eco == kmip::OK && certs == co.material);
+    // Registered from one: the key and the certificate, linked.
+    var ra = kmip::attrs();
+    kmip::attr_link(ra, kmip::LINK_PKCS12_PASSWORD, pwu);
+    kmip::attr_text(ra, kmip::TAG_PKCS12_FRIENDLY_NAME, "from a file");
+    let back = kmip::private_key(0, 0, kmip::FMT_PKCS_12, p12.material);
+    let ru, er = kmip::register(c, back, ra);
+    let rk, erk = kmip::get(c, ru, 0);
+    check(str(tag, "Register a PKCS #12 file: the key, as PKCS #8"), er == kmip::OK && erk == kmip::OK &&
+          rk.key_format == kmip::FMT_PKCS_8 && rk.material == p8.material && rk.alg == kmip::ALG_EC && rk.length == 256);
+    let rka = all_attrs(c, ru);
+    let rcu = links(rka, kmip::LINK_PKCS12_CERTIFICATE);
+    let rc, erc = kmip::get(c, rcu, 0);
+    let rca = all_attrs(c, rcu);
+    let fname, fok = kmip::get_text(rca, kmip::TAG_PKCS12_FRIENDLY_NAME);
+    check(str(tag, "and its certificate, linked, with the Friendly Name"), erc == kmip::OK && rc.material == co.material && fok && fname == "from a file");
+    var wrong = kmip::attrs();
+    let pw2 = kmip::secret_data(kmip::SECRET_PASSWORD, "not it");
+    let pw2u, ep2 = kmip::register(c, pw2, EMPTY);
+    let a2 = kmip::activate(c, pw2u);
+    kmip::attr_link(wrong, kmip::LINK_PKCS12_PASSWORD, pw2u);
+    let wu, ew = kmip::register(c, back, wrong);
+    check(str(tag, "not under another password"), ew == kmip::ERR_FAILED &&
+          c.last_reason == kmip::reason_for(kmip::REASON_CRYPTOGRAPHIC_FAILURE, c.version));
+}
+
 fn main() {
     let ca, ca_key = make_ca("CN=gslib test CA,O=gslib");
     let versions: kmip::Version[4] = [kmip::V1_0, kmip::V1_2, kmip::V1_4, kmip::V2_0];
@@ -396,6 +461,7 @@ fn main() {
         c.version = v;
         certificates(c, v, ca, ca_key);
         placeholder(c, v);
+        if !kmip::version_lt(v, kmip::V1_4) { pkcs12_files(c, v, ca, ca_key); }
         if kmip::version_lt(v, kmip::V1_2) {
             let p, e = kmip::create_split_key(c, "", 2, 2, kmip::SPLIT_XOR, "", EMPTY);
             check("1.0: no Create Split Key", e == kmip::ERR_FAILED && c.last_reason == kmip::reason_for(kmip::REASON_OPERATION_NOT_SUPPORTED, c.version));

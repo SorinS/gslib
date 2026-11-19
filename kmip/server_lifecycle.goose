@@ -329,7 +329,7 @@ fn op_derive_key(s: Server&, owner: const u8[:], v: Version, buf: const u8[:], d
         // At most 200000 rounds in all, over every block of output (a
         // second or two here): one request is not to hold the server.
         let blocks = (n + bignum::hash_len(h) - 1) / bignum::hash_len(h);
-        if iter as i64 * blocks > 200000 { return fail(REASON_INVALID_FIELD, "PBKDF2 of more than 200000 rounds in all"); }
+        if iter * blocks > 200000 { return fail(REASON_INVALID_FIELD, "PBKDF2 of more than 200000 rounds in all"); }
         key = bignum::pbkdf2(h, base.material, salt, iter, n);
     } else if method == DERIVE_HASH {
         let h = hash_id(cp.hash);

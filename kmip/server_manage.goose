@@ -208,9 +208,15 @@ fn op_register(s: Server&, owner: const u8[:], v: Version, buf: const u8[:], doc
     apply_defaults(s, t, a);
     let cr = check_constraints(s, t, a);
     if cr.reason != 0 { return cr; }
+    var uid: u8[>..] = [];
+    if o.obj_type == OBJ_PRIVATE_KEY && o.key_format == FMT_PKCS_12 && !o.wrapped {
+        let rp = register_pkcs12(s, owner, v, o, a, uid);
+        if rp.reason != 0 { return rp; }
+        put_text(out, TAG_UNIQUE_IDENTIFIER, uid);
+        return done();
+    }
     var sa = attrs();
     if o.obj_type == OBJ_CERTIFICATE && !cert_attrs(o.material, v, sa) { return fail(REASON_INVALID_FIELD, "the certificate is not read"); }
-    var uid: u8[>..] = [];
     let r = add_object_with(s, owner, o, a, sa, uid);
     if r.reason != 0 { return r; }
     put_text(out, TAG_UNIQUE_IDENTIFIER, uid);
@@ -316,7 +322,11 @@ fn op_get(s: const Server&, owner: const u8[:], v: Version, buf: const u8[:], do
         if r.reason != 0 { return r; }
         o = copy(plain);
     }
-    if fok && f != o.key_format {
+    if fok && f == FMT_PKCS_12 && o.obj_type == OBJ_PRIVATE_KEY && o.key_format != FMT_PKCS_12 {
+        let c, r = pkcs12_of(s, owner, o, a);
+        if r.reason != 0 { return r; }
+        o = copy(c);
+    } else if fok && f != o.key_format {
         let c, reason = convert_key(o, f);
         if reason != 0 { return fail(reason, "the key does not go into that format"); }
         o = copy(c);

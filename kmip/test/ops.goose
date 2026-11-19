@@ -309,6 +309,22 @@ fn export_import(c: kmip::Local&) {
     check("the imported key's material", material_of(c, "imported-1")[..] == o.material[..]);
 }
 
+// PGP keys (2.0): kept as they came, given back so, used for nothing.
+fn pgp_keys(c: kmip::Local&) {
+    let armored = "-----BEGIN PGP PUBLIC KEY BLOCK-----\n\nnot a real key\n-----END PGP PUBLIC KEY BLOCK-----\n";
+    let k = kmip::pgp_key(4, kmip::ALG_RSA, 2048, armored);
+    let a = key_attrs(kmip::ALG_RSA, 2048, kmip::USAGE_VERIFY);
+    let uid, e = kmip::register(c, k, a);
+    check("Register a PGP Key", e == kmip::OK);
+    let o, eg = kmip::get(c, uid, 0);
+    check("Get it back as it came", eg == kmip::OK && o.obj_type == kmip::OBJ_PGP_KEY && o.sub_type == 4 &&
+          o.key_format == kmip::FMT_RAW && o.alg == kmip::ALG_RSA && o.length == 2048 && o.material[..] == armored);
+    let p1, ep = kmip::get(c, uid, kmip::FMT_PKCS_1);
+    check("not in another format", ep == kmip::ERR_FAILED);
+    let sg, es = kmip::sign(c, uid, kmip::CryptoParams { .. }, "data");
+    check("no cryptography with it", es == kmip::ERR_FAILED);
+}
+
 fn rekeying(c: kmip::Local&) {
     var a = key_attrs(kmip::ALG_AES, 256, kmip::USAGE_ENCRYPT | kmip::USAGE_DECRYPT);
     kmip::attr_name(a, "rotated");
@@ -519,6 +535,26 @@ fn in_parts(c: kmip::Local&) {
     back.append(q1.data);
     back.append(q2.data);
     check("CBC decrypted in parts", f1 == kmip::OK && f2 == kmip::OK && back[..] == text);
+    // GCM encrypts each part as it comes, the tag at the Final part; it
+    // decrypts nothing before the tag is checked. CTR, both ways, as it comes.
+    let gcm = kmip::CryptoParams { mode: kmip::MODE_GCM, tag_length: 16 };
+    let nonce = unhex("cafebabefacedbaddecaf888");
+    let gw, egw = kmip::encrypt(c, k, gcm, text, nonce, none);
+    let g1, eg1 = kmip::part(c, kmip::OP_ENCRYPT, k, gcm, text[..7], nonce, none, false, none);
+    let g2, eg2 = kmip::part(c, kmip::OP_ENCRYPT, k, gcm, text[7..], none, g1.corr, true, none);
+    var gj: u8[>..] = [];
+    gj.append(g1.data);
+    gj.append(g2.data);
+    check("GCM in parts: each part's data as it comes", egw == kmip::OK && eg1 == kmip::OK && eg2 == kmip::OK && g1.data.len == 7 && g1.tag.len == 0);
+    check("GCM in parts: as in one, the tag at the end", gj[..] == gw.data[..] && g2.tag[..] == gw.tag[..]);
+    let d1, ed1 = kmip::part(c, kmip::OP_DECRYPT, k, gcm, gw.data[..20], nonce, none, false, gw.tag);
+    let d2, ed2 = kmip::part(c, kmip::OP_DECRYPT, k, gcm, gw.data[20..], none, d1.corr, true, none);
+    check("GCM decrypted in parts: nothing before the tag", ed1 == kmip::OK && ed2 == kmip::OK && d1.data.len == 0 && d2.data[..] == text);
+    let ctr = kmip::CryptoParams { mode: kmip::MODE_CTR };
+    let cw, ecw = kmip::encrypt(c, k, ctr, text, iv, none);
+    let c1, ec1 = kmip::part(c, kmip::OP_DECRYPT, k, ctr, cw.data[..5], iv, none, false, none);
+    let c2, ec2 = kmip::part(c, kmip::OP_DECRYPT, k, ctr, cw.data[5..], none, c1.corr, true, none);
+    check("CTR decrypted in parts as it comes", ecw == kmip::OK && ec1 == kmip::OK && ec2 == kmip::OK && c1.data[..] == text[..5] && c2.data[..] == text[5..]);
     let h1, g1 = kmip::part(c, kmip::OP_HASH, none, kmip::CryptoParams { hash: kmip::HASH_SHA_256 }, "a", none, none, false, none);
     let h2, g2 = kmip::part(c, kmip::OP_HASH, none, kmip::CryptoParams { hash: kmip::HASH_SHA_256 }, "bc", none, h1.corr, true, none);
     check("Hash in parts", g1 == kmip::OK && g2 == kmip::OK && h2.data[..] == unhex("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")[..]);
@@ -598,6 +634,7 @@ fn main() {
     formats(c);
     wrapping(c);
     export_import(c);
+    pgp_keys(c);
     rekeying(c);
     deriving(c);
     usage_and_lifecycle(c);

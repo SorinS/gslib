@@ -122,6 +122,12 @@ fn substitute(out: u8[>..]&, typ: const u8[:], v: const u8[:], b: const Binds&, 
     }
     let bv, ok = bound(b, v);
     if ok { out.append(bv); return; }
+    // Some files bind $NAME_0 and then send $NAME.
+    var first: u8[>..] = [];
+    first.append(v);
+    first.append("_0");
+    let fv, fok = bound(b, first);
+    if fok { out.append(fv); return; }
     // Not bound yet: a Text String keeps its name (an identifier no object
     // has); a Byte String gets a byte.
     if typ == "ByteString" { out.append("00"); } else { out.append(v); }

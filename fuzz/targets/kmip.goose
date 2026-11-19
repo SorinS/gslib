@@ -84,7 +84,9 @@ export fn fuzz_one(data: const u8[:]) -> i32 {
 
 fn main() {
     // The objects the requests can reach: 1 AES-128 and 2 HMAC-SHA256,
-    // active, encrypting and MACing; 3 and 4 an RSA-2048 pair.
+    // active, encrypting and MACing; 3 and 4 an RSA-2048 pair; 5 and 6 a
+    // P-256 pair; 7 Triple DES, 8 ChaCha20-Poly1305, 9 a KEK; 10 a
+    // password (5's for PKCS #12), 11 a PGP key.
     SRV.version = kmip::V2_1;      // which attributes add_object sets
     let aes: u8[16] = [1; 16];
     let hk: u8[32] = [2; 32];
@@ -116,6 +118,14 @@ fn main() {
     let kek: u8[32] = [5; 32];
     let o9 = kmip::symmetric_key(kmip::ALG_AES, kek);
     let r9 = kmip::add_object(SRV, "fuzz", o9, a, uid);
+    // 10 a password, 5's for PKCS #12 (in Object Group "group"); 11 a PGP key.
+    let pw = kmip::secret_data(kmip::SECRET_PASSWORD, "password");
+    var ga = kmip::attrs();
+    kmip::attr_text(ga, kmip::TAG_OBJECT_GROUP, "group");
+    let r10 = kmip::add_object(SRV, "fuzz", pw, ga, uid);
+    let pgp = kmip::pgp_key(4, kmip::ALG_RSA, 2048, "-----BEGIN PGP PUBLIC KEY BLOCK-----\n\nx\n-----END PGP PUBLIC KEY BLOCK-----\n");
+    let r11 = kmip::add_object(SRV, "fuzz", pgp, a, uid);
+    kmip::link_both(SRV, "5", kmip::LINK_PKCS12_PASSWORD, "10", "fuzz");
     for i in SRV.objects.len { let ok = kmip::set_state(SRV, SRV.objects[i], kmip::STATE_ACTIVE, kmip::TAG_ACTIVATION_DATE); }
     // What the input makes stays few: the store takes 64 objects at most.
     SRV.max_objects = 64;
