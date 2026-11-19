@@ -38,14 +38,15 @@ later.
 | `smb` | An SMB2 and SMB3 client, as Windows and Samba speak it: dialects 2.0.2 to 3.1.1, NEGOTIATE with 3.1.1's contexts and 3.0's validate-negotiate, SPNEGO logins with NTLMv2 or Kerberos, signing (HMAC-SHA256, AES-CMAC, AES-GMAC) and encryption (AES-128/256 CCM and GCM) required where the server or the client asks and checked on every response; shares, files and directories: read and write with multi-credit requests, list, stat, rename, delete, truncate, times, the share's space; goose-smbclient | [README](smb/README.md) |
 | `webauthn` | WebAuthn Level 3 and passkeys for a relying party: registration and authentication options as the L3 JSON has them; registrations checked whole (clientDataJSON, the attestation object, authenticator data and its flags, the algorithm) with every attestation format but SafetyNet: none, packed, fido-u2f, tpm, android-key, apple, chained to the RP's roots by x509; authentications against the stored credential record (signature, user handle, counter, backup flags); FIDO MDS3 BLOBs verified and searched; goose-webauthn (options, verify, MDS, a demo RP for a real browser) | [README](webauthn/README.md) |
 | `net/http` | HTTP/1.1 and HTTP/2, server and client: a client with Go's policy (redirects, cookies, credentials, proxies, gzip, TLS session resumption, streaming uploads, several responses at once), URLs, cookies, HPACK; goose-http and goose-httpd | [README](net/http/README.md) |
+| `websocket` | WebSocket, both sides, as Go's gorilla/websocket: RFC 6455 framing and handshake, RFC 7692 permessage-deflate with every parameter (windows of 8 to 15 bits), ws:// and wss://, an HTTP proxy, an Upgrader for a server that reads the request or an HTTP server that did; messages whole or a frame at a time, pings and closes answered, UTF-8 checked as it arrives; goose-wscat and goose-wsecho; Autobahn's testsuite both ways | [README](websocket/README.md) |
 | `net` | Sockets and IP addresses, as Go's net and net/netip: TCP connections and listeners with timeouts, UDP connected or answering many, Unix-domain sockets, waiting on several sockets, the system resolver; addresses parsed, printed (RFC 5952), classified and checked against prefixes; host:port; Punycode host names; what http, ldap, dns, krb5 and the tools' servers talk through (POSIX and Winsock) | [README](net/README.md) |
 | `service` | Programs as system services, as Go's kardianos/service: one API for Windows services (the service control manager: dispatcher, control handler, stop, shutdown, pause, parameter changes; installing with a description, delayed start and restart on failure; the Application event log), systemd units (a user's or the system's) and launchd agents and daemons; begin, wait for the system's requests, end; install, uninstall, start, stop, restart, status, and those as a program's verbs | [README](service/README.md) |
 | `sys` | The operating system's own calls, as Go's golang.org/x/sys, os/user and x/term with go-win64api's Windows management, on Windows, Linux and macOS: the host, processes (list, arguments, executable, kill), users and groups, files by path and by descriptor (stat, links, locks, pipes, memory maps), errors sorted portably; the Windows registry; local accounts and groups, sessions, services, shares and installed software; signals as values, limits, usage and sysctl; terminals and consoles; its FFI generated from one table, as mksyscall | [README](sys/README.md) |
 | `sspi` | Windows' SSPI, as Go's alexbrainman/sspi: security packages, credentials (the login's or a password's), contexts a token at a time, sign/verify/seal/unseal; a TLS client on Windows' own Schannel (the system's roots, policy and TLS 1.3, peer certificate for x509, manual validation for test servers); HTTP Negotiate (RFC 4559) from the Windows login, Kerberos in a domain and NTLM otherwise, or as a user by password | [README](sspi/README.md) |
 
-## entropy, net, dns, pkcs11, jwx, mail, openpgp, acme, oauth, tsp, xml, est, scep, saml, ntlm, tpm2, webauthn, radius, smb, service, sys and sspi
+## entropy, net, websocket, dns, pkcs11, jwx, mail, openpgp, acme, oauth, tsp, xml, est, scep, saml, ntlm, tpm2, webauthn, radius, smb, service, sys and sspi
 
-These twenty-two have the most to say beyond their table rows: what each
+These twenty-three have the most to say beyond their table rows: what each
 module does, how it was built and how it was tested. Each README has the
 full API.
 
@@ -100,6 +101,39 @@ too): parsing against Go's cases, printing round trips, every address
 class, prefixes and Go's Punycode vectors, and sockets on 127.0.0.1 and
 ::1 covering accept timeouts, both ends' addresses, poll, a socket filled
 by write_some, half-closing, UDP both ways and each error.
+
+### websocket: WebSocket
+
+`websocket` is RFC 6455 for both ends, after gorilla/websocket. A client
+dials a ws:// or wss:// URL, through an HTTP proxy's CONNECT if asked,
+and a server either accepts a connection and reads the upgrade request
+itself or upgrades one its HTTP server already read (net.http's conn1
+hands over the head and the bytes after it), with gorilla's Upgrader
+checks: the Origin against Host or a list, subprotocols by the server's
+preference, version 13 (426 otherwise). A Conn then reads messages
+whole or a frame at a time and writes them whole, fragmented, or as
+they are made, while it answers pings and echoes the peer's close; text
+is checked as UTF-8 byte by byte, so a bad message fails at the byte
+that shows it, and every protocol violation closes with the code the
+RFC names (1002, 1007, 1009). permessage-deflate (RFC 7692) is complete
+on both sides: no-context-takeover either way, and window sizes of 8 to
+15 bits honoured by the compressor, for which `compress.deflate` gained
+`deflate_set_window_bits`; a message that ends its DEFLATE stream with a
+final block is followed by a new stream that still reaches into the
+old one, for which `compress.flate` gained `inflate_continue`. A Conn
+without a socket takes bytes from `feed` and leaves its output for
+`take_output`, which is how the tests run both sides in one thread.
+goose-wsecho is an echo server, goose-wscat a client after npm's wscat.
+
+Tested against RFC 6455's and RFC 7692's frames byte for byte, every
+violation and its close code, permessage-deflate with every combination
+of parameters and windows in memory (4502 checks); live (`make
+interop-websocket`, Docker) against Autobahn|Testsuite, its
+fuzzingclient against goose-wsecho and its fuzzingserver against the
+client, every case, messages whole and a frame at a time (517 cases in
+each run, all OK but 3 that are only informational), and against
+Python's websockets both ways. A libFuzzer target covers the Conn on
+both sides, the handshake and the extension header.
 
 ### dns: the DNS
 
@@ -1123,6 +1157,7 @@ gslib.goose, gslib.build              the package's entry and its sidecar
 compress.goose, compress/             compress, laid out the same way at the top
 entropy.goose, entropy/src/           entropy and its C, the same
 net.goose, net/                       net's sockets (net/src), addresses (net/ip.goose) and IDNA; net/ is also http's and ldap's group
+websocket.goose, websocket/           websocket, the same
 mime.goose, mime/                     mime, the same
 mail.goose, mail/                     mail, the same
 acme.goose, acme/                     acme, the same
@@ -1216,7 +1251,7 @@ make build      # the programs into ../bin (BIN=dir for another): goose-http, go
                 # goose-ldapsearch, goose-ldapadd, goose-ldapmodify and the other ldap tools,
                 # goose-krb5, goose-gss, goose-dig, goose-dnsd, goose-mail, goose-pgp, goose-acme,
                 # goose-oauth, goose-ts, goose-est, goose-scep, goose-saml, goose-ntlm, goose-tpm,
-                # goose-webauthn
+                # goose-webauthn, goose-wscat, goose-wsecho
 make check      # type-check every tool and example
 ```
 
@@ -1231,7 +1266,8 @@ make test-native          # also built with the C compiler
 make interop              # live: OpenSSL, Go, OpenSSH, OpenLDAP, curl, nghttp2, h2spec, pkcs11-tool, dig, miekg/dns,
                           # mailpit, dovecot, dkimpy, gpg, Pebble, OpenBao, node-oidc-provider,
                           # digitorus/timestamp, signxml, xmlsec, GlobalSign's EST, micromdm's SCEP,
-                          # pyspnego, impacket, go-ntlmssp, swtpm, tpmemu, python-fido2, py_webauthn, go-webauthn
+                          # pyspnego, impacket, go-ntlmssp, swtpm, tpmemu, python-fido2, py_webauthn, go-webauthn,
+                          # Autobahn|Testsuite, Python's websockets
 make differential         # against Go (net/http, net/url, hpack, compress, mime, jwx, miekg/dns), zlib, openssl,
                           # libxml2 (lxml, xmlsec), go-tpm, cbor2
 make live-service         # installs, starts, kills, stops and uninstalls a real service (a user's

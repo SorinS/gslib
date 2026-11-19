@@ -36,6 +36,7 @@ exclude = [
     "encoding/xml/test", "encoding/xml/tools",
     "encoding/cbor/test", "encoding/cbor/tools",
     "net/http/test", "net/http/tools",
+    "websocket/test", "websocket/tools", "websocket/scripts",
     "compress/test", "compress/tools",
     "mime/test", "mime/tools",
     "krb5/test", "krb5/tools",

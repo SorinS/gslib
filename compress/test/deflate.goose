@@ -259,6 +259,50 @@ fn appended_limits() {
     }
 }
 
+// Windows smaller than 32 KiB (deflate_set_window_bits): a block of 300
+// random bytes repeated finds no match 300 bytes back in a 256-byte
+// window, and does in a 512-byte one; every size reads back.
+fn windows() {
+    var rnd: u8[>..] = [];
+    var x: u64 = 12345;
+    for i in 300 {
+        x = x * 6364136223846793005 + 1442695040888963407;
+        rnd.push((x >> 56) as! u8);
+    }
+    var data: u8[>..] = [];
+    for k in 4 { data.append(rnd); }
+    var sizes: i64[16] = [0; 16];
+    for bits in 8..16 {
+        var w = compress::deflate_writer(9);
+        compress::deflate_set_window_bits(w, bits);
+        var z: u8[>..] = [];
+        compress::deflate_write(w, data, z);
+        compress::deflate_close(w, z);
+        var back: u8[>..] = [];
+        if compress::inflate_decode(z, back) != 0 || back[..] != data[..] { fail("window round trip"); }
+        sizes[bits] = z.len;
+    }
+    if sizes[8] < 1150 || sizes[9] > 500 { print("FAIL window sizes ", sizes[8], " ", sizes[9]); failures++; }
+}
+
+// A stream that follows one that ended reaches back into it
+// (inflate_continue), as permessage-deflate has it after a final block.
+fn continued() {
+    var z: u8[>..] = [];
+    compress::deflate_encode("Hello, world", z, 6);
+    let first = z.len;
+    var w = compress::deflate_writer_dict(6, "Hello, world");
+    compress::deflate_write(w, "Hello, world, Hello", z);
+    compress::deflate_close(w, z);
+    var d = compress::inflate_reader();
+    var out: u8[64] = [0; 64];
+    let u1, m1, s1 = compress::inflate_read(d, z[..first], out);
+    if s1 != compress::STREAM_END || out[..m1] != "Hello, world" { fail("first stream"); }
+    compress::inflate_continue(d);
+    let u2, m2, s2 = compress::inflate_read(d, z[first..], out);
+    if s2 != compress::STREAM_END || out[..m2] != "Hello, world, Hello" { fail("continued stream"); }
+}
+
 fn main() {
     let xs = inputs();
     levels(xs);
@@ -267,6 +311,8 @@ fn main() {
     headers();
     errors();
     appended_limits();
+    windows();
+    continued();
     if failures > 0 { print(failures, " failures"); exit(1); }
     print("deflate: all passed");
 }
