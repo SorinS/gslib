@@ -64,6 +64,7 @@ fn num(s: const u8[:]) -> i64 {
 // A curve by its id: its size in bits, 2000 more for Brainpool's.
 fn curve(bits: i64) -> bignum::Curve {
     if bits == 2256 { return bignum::bp256(); }
+    if bits == 1256 { return bignum::secp256k1(); }
     if bits == 2384 { return bignum::bp384(); }
     if bits == 2512 { return bignum::bp512(); }
     if bits == 224 { return bignum::p224(); }
@@ -255,7 +256,8 @@ fn run(w: const u8[:][:]) -> bool {
     if k == "rsa_oaep" {
         let key, ok = bignum::rsa_key_from_bytes(unhex(w[4]), unhex(w[5]), unhex(w[6]), unhex(w[7]), unhex(w[8]));
         if !ok { return false; }
-        let pt, okd = bignum::rsa_decrypt_oaep(key, unhex(w[10]), unhex(w[11]), num(w[3]));
+        let mgf = if w.len > 12 { num(w[12]) } else { 0 };
+        let pt, okd = bignum::rsa_decrypt_oaep(key, unhex(w[10]), unhex(w[11]), num(w[3]), mgf);
         return okd && pt == unhex(w[9]);
     }
     if k == "rsa_pkcs1_dec" {

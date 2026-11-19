@@ -1,0 +1,22 @@
+{"tag":"RequestPayload", "value":[
+  {"tag":"UniqueIdentifier", "type":"TextString", "value":"b4faee10-aa2a-4446-8ad4-0881f3422959"},
+  {"tag":"CryptographicParameters", "value":[
+    {"tag":"BlockCipherMode", "type":"Enumeration", "value":"CBC"},
+    {"tag":"PaddingMethod", "type":"Enumeration", "value":"PKCS5"},
+    {"tag":"HashingAlgorithm", "type":"Enumeration", "value":"SHA_1"},
+    {"tag":"KeyRoleType", "type":"Enumeration", "value":"KEK"},
+    {"tag":"DigitalSignatureAlgorithm", "type":"Enumeration", "value":"SHA_256WithRSAEncryption"},
+    {"tag":"CryptographicAlgorithm", "type":"Enumeration", "value":"AES"},
+    {"tag":"RandomIV", "type":"Boolean", "value":true},
+    {"tag":"IVLength", "type":"Integer", "value":96},
+    {"tag":"TagLength", "type":"Integer", "value":128},
+    {"tag":"FixedFieldLength", "type":"Integer", "value":32},
+    {"tag":"InvocationFieldLength", "type":"Integer", "value":64},
+    {"tag":"CounterLength", "type":"Integer", "value":0},
+    {"tag":"InitialCounterValue", "type":"Integer", "value":1}
+  ]},
+  {"tag":"Data", "type":"ByteString", "value":"0123456789abcdef"},
+  {"tag":"IVCounterNonce", "type":"ByteString", "value":"01"},
+  {"tag":"AuthenticatedEncryptionAdditionalData", "type":"ByteString", "value":"011080ff"},
+  {"tag":"AuthenticatedEncryptionTag", "type":"ByteString", "value":"0190fe"}
+]}

@@ -1,0 +1,7 @@
+refused core/messages/payloads/test_create.py:1178: truncated
+refused core/messages/payloads/test_get.py:805: truncated
+refused core/messages/payloads/test_get_attribute_list.py:475: truncated
+refused core/messages/payloads/test_get_attributes.py:97: truncated
+refused core/misc/test_server_information.py:35: malformed
+refused core/primitives/test_big_integer.py:67: malformed
+245 encodings: 239 written again the same, 6 refused, 0 different

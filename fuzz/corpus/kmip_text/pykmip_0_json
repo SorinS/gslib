@@ -1,0 +1,38 @@
+{"tag":"RequestPayload", "value":[
+  {"tag":"CommonTemplateAttribute", "value":[
+    {"tag":"Attribute", "value":[
+      {"tag":"AttributeName", "type":"TextString", "value":"Cryptographic Algorithm"},
+      {"tag":"AttributeValue", "type":"Enumeration", "value":"RSA"}
+    ]},
+    {"tag":"Attribute", "value":[
+      {"tag":"AttributeName", "type":"TextString", "value":"Cryptographic Length"},
+      {"tag":"AttributeValue", "type":"Integer", "value":1024}
+    ]}
+  ]},
+  {"tag":"PrivateKeyTemplateAttribute", "value":[
+    {"tag":"Attribute", "value":[
+      {"tag":"AttributeName", "type":"TextString", "value":"Name"},
+      {"tag":"AttributeValue", "value":[
+        {"tag":"NameValue", "type":"TextString", "value":"PrivateKey1"},
+        {"tag":"NameType", "type":"Enumeration", "value":"UninterpretedTextString"}
+      ]}
+    ]},
+    {"tag":"Attribute", "value":[
+      {"tag":"AttributeName", "type":"TextString", "value":"Cryptographic Usage Mask"},
+      {"tag":"AttributeValue", "type":"Integer", "value":"Sign"}
+    ]}
+  ]},
+  {"tag":"PublicKeyTemplateAttribute", "value":[
+    {"tag":"Attribute", "value":[
+      {"tag":"AttributeName", "type":"TextString", "value":"Name"},
+      {"tag":"AttributeValue", "value":[
+        {"tag":"NameValue", "type":"TextString", "value":"PublicKey1"},
+        {"tag":"NameType", "type":"Enumeration", "value":"UninterpretedTextString"}
+      ]}
+    ]},
+    {"tag":"Attribute", "value":[
+      {"tag":"AttributeName", "type":"TextString", "value":"Cryptographic Usage Mask"},
+      {"tag":"AttributeValue", "type":"Integer", "value":"Verify"}
+    ]}
+  ]}
+]}

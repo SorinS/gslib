@@ -243,6 +243,18 @@ fn bp512() -> Curve {
         "7dde385d566332ecc0eabfa9cf7822fdf209f70024a57b1aa000c55b881f8111b2dcde494a5f485e5bca4bd88a2763aed1ca2b2fa8f0540678cd1e0f3ad80892")
 }
 
+// secp256k1 (SEC 2 §2.4.1), a = 0, signing with SHA-256: Bitcoin's
+// curve, which KMIP's Recommended Curve names.
+fn secp256k1() -> Curve {
+    ec_curve(8, 256, 256,
+        "fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f",
+        "00",
+        "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141",
+        "0000000000000000000000000000000000000000000000000000000000000007",
+        "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+        "483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8")
+}
+
 fn ec_infinity(c: const Curve&) -> EcPoint {
     var y = ec_zero(c);
     y[0] = 1;
@@ -564,13 +576,15 @@ fn ecdsa_sign(c: const Curve&, sk: const u8[:], msg: const u8[:]) -> u8[>..] {
 }
 
 // ECDSA over a digest made by the hash `hash_id` (a bignum.hmac id), which
-// RFC 6979's HMAC-DRBG then uses too.
+// RFC 6979's HMAC-DRBG then uses too. A digest of another length (a
+// caller's own, as PKCS #11's CKM_ECDSA takes) is taken as bits2int
+// takes any: its leftmost bits, as many as the order has.
 fn ecdsa_sign_digest(c: const Curve&, sk: const u8[:], h: const u8[:], hash_id: i64) -> u8[>..] {
     let d, okd = ec_scalar(c, sk);
     assert(okd);
-    assert(h.len == hash_len(hash_id));
+    assert(h.len > 0);
     let e = nreduce(c, ec_bits2int(c, h)[..]);
-    let hl = h.len;
+    let hl = hash_len(hash_id);
     var h1: u8[>..] = [];
     h1.resize(c.len, 0);
     be_from_limbs(h1, e[..]);

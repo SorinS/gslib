@@ -14,9 +14,9 @@ language, written in Goose: a foundation for cryptography.
   (multiply, exponentiate, reduce).
 - **`bignum.x25519`**: X25519 Diffie-Hellman (RFC 7748), constant time.
 - **`bignum.x448`**: X448 Diffie-Hellman (RFC 7748), constant time.
-- **`bignum.ec`**: P-224, P-256, P-384, P-521 and brainpoolP256r1, P384r1
-  and P512r1 (RFC 5639): ECDH and deterministic ECDSA (RFC 6979), constant
-  time.
+- **`bignum.ec`**: P-224, P-256, P-384, P-521, secp256k1 and
+  brainpoolP256r1, P384r1 and P512r1 (RFC 5639): ECDH and deterministic
+  ECDSA (RFC 6979), constant time.
 - **`bignum.ed25519`**: Ed25519 signatures (RFC 8032), with Ed25519ctx and
   Ed25519ph; constant-time signing.
 - **`bignum.ed448`**: Ed448 signatures (RFC 8032), with contexts and
@@ -54,6 +54,9 @@ language, written in Goose: a foundation for cryptography.
   constant time.
 - **`bignum.keywrap`**: AES Key Wrap (RFC 3394, SP 800-38F KW) and with
   padding (RFC 5649, KWP), constant time; JOSE's A*KW uses it.
+- **`bignum.shamir`**: secret sharing as KMIP's Split Keys do it: XOR, and
+  Shamir's polynomial sharing in GF(2^8), GF(2^16) and a prime field,
+  constant time in the secret and the parts.
 - **`bignum.modes`**: CBC, CFB, OFB and CTR over any of the block ciphers,
   XTS over 16-byte ones, and PKCS #7 padding.
 - **`bignum.des`**: DES and triple DES, for legacy data.
@@ -218,12 +221,12 @@ as Go's do.
 | Keys | `rsa_generate(bits, e = 65537)` (1024 to 8192, a multiple of 64; e odd, 3 to 2^31 − 1), `rsa_key_from(n, e, d, p, q) -> key, bool`, `rsa_key_from_bytes(n, e, d, p, q)` (big-endian, as PKCS #1 holds them), `rsa_public_from(n, e) -> pub, bool` (n 1024 to 8192 bits, Go's limit for TLS peers' keys; e odd, 3 to 2^31 − 1, as in Go), `rsa_public(key)`, `rsa_bits`, `rsa_size` |
 | PKCS #1 v1.5 | `rsa_sign_pkcs1(key, msg, hash = 256) -> sig, bool`, `rsa_verify_pkcs1(pub, msg, sig, hash = 256)`; over a digest, `rsa_sign_pkcs1_digest(key, digest, hash = 256)` and `rsa_verify_pkcs1_digest(pub, digest, sig, hash = 256)` |
 | PSS | `rsa_sign_pss(key, msg, salt_len = -1, hash = 256) -> sig, bool`, `rsa_sign_pss_with_salt(key, msg, salt, hash = 256) -> sig, bool`, `rsa_verify_pss(pub, msg, sig, salt_len = -1, hash = 256)`; a salt_len of -1 means the hash's length; over a digest, `rsa_sign_pss_digest(key, digest, salt_len = -1, hash = 256)`, `rsa_sign_pss_digest_with_salt` and `rsa_verify_pss_digest(pub, digest, sig, salt_len = -1, hash = 256)` |
-| OAEP | `rsa_encrypt_oaep(pub, msg, label = "", hash = 256)`, `rsa_encrypt_oaep_with_seed`, `rsa_decrypt_oaep(key, ct, label = "", hash = 256) -> msg, bool`, `rsa_oaep_max(key, hash = 256)` |
+| OAEP | `rsa_encrypt_oaep(pub, msg, label = "", hash = 256, mgf = 0)`, `rsa_encrypt_oaep_with_seed`, `rsa_decrypt_oaep(key, ct, label = "", hash = 256, mgf = 0) -> msg, bool`, `rsa_oaep_max(key, hash = 256)`; `mgf` names MGF1's hash when it is not the label's (Go's OAEPOptions.MGFHash) |
 | PKCS #1 v1.5 encryption | `rsa_encrypt_pkcs1(pub, msg)`, `rsa_decrypt_pkcs1(key, ct) -> msg, bool`, `rsa_decrypt_pkcs1_session_key(key, ct, key_out) -> bool` |
 | Raw | `rsa_public_op(pub, x)`, `rsa_private_op(key, x) -> bytes, bool` |
 
 `hash` is any of bignum.hmac's hash ids (SHA-256 by default), and PSS
-and OAEP run MGF1 on the same hash. A key is fixed-size limb
+runs MGF1 on the same hash; OAEP does too unless `mgf` names another. A key is fixed-size limb
 arrays (`u32[..256]`, so at most 8192 bits), and every function that only
 needs the public half accepts a private key as well. The private operation
 works by CRT. It blinds its input with r^e for a random r (r and 1/r drawn
@@ -341,6 +344,22 @@ byte. Unwrapping checks the integrity value (and KWP's length and zero
 padding) under masks, so a wrong KEK and a changed byte fail alike and in
 the same time. test/keywrap_vectors.goose holds RFC 3394 §4's and RFC
 5649 §6's vectors.
+
+### Secret sharing
+
+`split_xor(secret, n, out)`, `split_gf8(secret, n, t, out)`,
+`split_gf16(secret, n, t, out)` and `split_prime(secret, prime, n, t,
+out)` write n parts one after another (part x, from 1, at (x - 1) times
+a part's length); `join_xor(parts, len, out)`, `join_gf8(xs, parts, len,
+out)`, `join_gf16` and `join_prime(xs, parts, prime, len, out)` give the
+secret back from the parts numbered xs, at least t of them. The `_with`
+forms take the random coefficients, for tests. The fields are KMIP 2.1
+§13.1's: GF(2^8) modulo x^8 + x^4 + x^3 + x^2 + 1 (0x11D, not AES's
+0x11B), GF(2^16) as GF(2^8)[y] / (y^2 + y + 0x3A), and a prime (checked
+by `prime_field_ok`) above every secret of the length; a part in the
+prime field is an integer at the prime's width. Parts are 1 to 255 in
+GF(2^8), to 65535 in GF(2^16). test/shamir_vectors.goose joins the OASIS
+KMIP test cases' parts (TC-SJ-3, TC-SJ-4).
 ### ChaCha20-Poly1305
 
 `chacha20_poly1305_seal(key, nonce, aad, pt)` / `_open` and the in-place
@@ -362,10 +381,11 @@ says whether it would. Poly1305 uses five 26-bit limbs
 
 ### Elliptic curves
 
-`bignum.ec` handles P-224, P-256, P-384, P-521 and the Brainpool r1 curves
-brainpoolP256r1, P384r1 and P512r1 (RFC 5639, as RFC 7027 and RFC 8734
-use them in TLS) with one generic implementation. `p224()`, `p256()`,
-`p384()`, `p521()`, `bp256()`, `bp384()` and `bp512()` return a `Curve`
+`bignum.ec` handles P-224, P-256, P-384, P-521, secp256k1 (SEC 2, a = 0)
+and the Brainpool r1 curves brainpoolP256r1, P384r1 and P512r1 (RFC 5639,
+as RFC 7027 and RFC 8734 use them in TLS) with one generic
+implementation. `p224()`, `p256()`, `p384()`, `p521()`, `secp256k1()`,
+`bp256()`, `bp384()` and `bp512()` return a `Curve`
 holding the field prime, the group
 order, their Montgomery constants, the coefficients and the generator; build one and pass it
 to every call. Field elements are limbs of the curve's width in Montgomery
@@ -727,7 +747,7 @@ tools/govectors.sh > test/vectors/xcrypto.txt   # regenerate it
   Wycheproof's vectors, converted from its JSON, for every family this
   package has an API for: AES-GCM, ChaCha20- and XChaCha20-Poly1305,
   AES- and Camellia-CBC with PKCS #7, AES- and Camellia-CMAC, AES-XTS, HMAC, HKDF and PBKDF2 over SHA-1, SHA-2
-  and SHA-3, ECDH and ECDSA (DER and P1363) on P-224 to P-521 and
+  and SHA-3, ECDH and ECDSA (DER and P1363) on P-224 to P-521, secp256k1 and
   brainpoolP256r1, P384r1 and P512r1 (their ECDH public keys as
   SubjectPublicKeyInfo, parsed strictly by the script), Ed25519,
   X25519, Ed448, X448, RSA PKCS #1 v1.5 (signing, verifying, decryption), PSS and OAEP,

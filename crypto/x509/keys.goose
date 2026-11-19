@@ -64,6 +64,7 @@ fn curve_oid(kind: i64) -> const u8[:] {
     if kind == KEY_EC_P256 { "1.2.840.10045.3.1.7" } else if kind == KEY_EC_P384 { "1.3.132.0.34" }
     else if kind == KEY_EC_P224 { "1.3.132.0.33" } else if kind == KEY_EC_BP256 { "1.3.36.3.3.2.8.1.1.7" }
     else if kind == KEY_EC_BP384 { "1.3.36.3.3.2.8.1.1.11" } else if kind == KEY_EC_BP512 { "1.3.36.3.3.2.8.1.1.13" }
+    else if kind == KEY_EC_SECP256K1 { "1.3.132.0.10" }
     else { "1.3.132.0.35" }
 }
 

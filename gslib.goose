@@ -22,7 +22,9 @@
 // every attestation format and FIDO MDS3 (webauthn), RADIUS, RadSec
 // and EAP (PEAP, TTLS, EAP-TLS), client and server (radius), an SMB2
 // and SMB3 client: dialects 2.0.2 to 3.1.1, signing and encryption,
-// NTLMv2 and Kerberos (smb), programs as
+// NTLMv2 and Kerberos (smb), KMIP 1.0 to 2.1 in TTLV, XML and JSON over
+// TLS or HTTPS, a key manager's client and an in-memory server (kmip),
+// programs as
 // Windows services, systemd units and launchd jobs (service), and the
 // operating system's own calls: processes, users, files, the Windows
 // registry and management, signals, terminals (sys), and Windows' SSPI:
@@ -30,7 +32,7 @@
 // the OS's random bytes for keys under all of it (entropy). A program
 // declares the package once and imports the
 // modules it uses, grouped as Go groups them (compress, crypto/,
-// encoding/, mime, net/; krb5, jwx, pkcs11, dns, mail, acme, oauth, tsp, est, scep, saml, ntlm, tpm2, webauthn, radius, smb, service, sys, sspi, entropy and
+// encoding/, mime, net/; krb5, jwx, pkcs11, dns, mail, acme, oauth, tsp, est, scep, saml, ntlm, tpm2, webauthn, radius, smb, kmip, service, sys, sspi, entropy and
 // net's sockets at the top too);
 // each keeps its own namespace:
 //

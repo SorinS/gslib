@@ -1,0 +1,24 @@
+{"tag":"RequestPayload", "value":[
+  {"tag":"ObjectType", "type":"Enumeration", "value":"SymmetricKey"},
+  {"tag":"UniqueIdentifier", "type":"TextString", "value":"fb4b5b9c-6188-4c63-8142-fe9c328129fc"},
+  {"tag":"UniqueIdentifier", "type":"TextString", "value":"5c9b81ef-4ee5-42cd-ba2d-c002fdd0c7b3"},
+  {"tag":"UniqueIdentifier", "type":"TextString", "value":"1703250b-4d40-4de2-93a0-c494a1d4ae40"},
+  {"tag":"DerivationMethod", "type":"Enumeration", "value":"HASH"},
+  {"tag":"DerivationParameters", "value":[
+    {"tag":"CryptographicParameters", "value":[
+      {"tag":"HashingAlgorithm", "type":"Enumeration", "value":"SHA_256"}
+    ]},
+    {"tag":"InitializationVector", "type":"ByteString", "value":"39487432492834a3"},
+    {"tag":"DerivationData", "type":"ByteString", "value":"fad98b6aca6d87dd"}
+  ]},
+  {"tag":"TemplateAttribute", "value":[
+    {"tag":"Attribute", "value":[
+      {"tag":"AttributeName", "type":"TextString", "value":"Cryptographic Algorithm"},
+      {"tag":"AttributeValue", "type":"Enumeration", "value":"AES"}
+    ]},
+    {"tag":"Attribute", "value":[
+      {"tag":"AttributeName", "type":"TextString", "value":"Cryptographic Length"},
+      {"tag":"AttributeValue", "type":"Integer", "value":128}
+    ]}
+  ]}
+]}

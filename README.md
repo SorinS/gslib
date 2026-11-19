@@ -36,6 +36,7 @@ later.
 | `tpm2` | TPM 2.0, as go-tpm with go-tpm-tools' checks: raw TCP (swtpm), the Microsoft simulator's protocol and Linux's /dev/tpmrm0; password, HMAC (bound, salted by RSA-OAEP or ECDH) and policy sessions with AES-CFB parameter encryption; the TCG EK and SRK templates, keys, signing, RSA-OAEP, ECDH, NV and EK certificates, PCRs, sealing to PCR policies; a policy calculator; Quote, Certify, CertifyCreation and ActivateCredential, with their verification, MakeCredential and TCG event log replay in software; goose-tpm | [README](tpm2/README.md) |
 | `radius` | RADIUS, both sides, as FreeRADIUS speaks it: packets and their authenticators with the Message-Authenticator always first (BlastRADIUS), hidden attributes (User-Password, CHAP, Tunnel-Password, MS-MPPE keys), a client over UDP and RadSec (RADIUS over TLS) with PAP, CHAP, MS-CHAPv2, EAP, accounting, Status-Server, CoA and Disconnect, a server's handling of each request; EAP peer and server for MD5, MS-CHAPv2, EAP-TLS, PEAP and TTLS over TLS 1.2 and 1.3 with their keys; goose-radtest and goose-radiusd | [README](radius/README.md) |
 | `smb` | An SMB2 and SMB3 client, as Windows and Samba speak it: dialects 2.0.2 to 3.1.1, NEGOTIATE with 3.1.1's contexts and 3.0's validate-negotiate, SPNEGO logins with NTLMv2 or Kerberos, signing (HMAC-SHA256, AES-CMAC, AES-GMAC) and encryption (AES-128/256 CCM and GCM) required where the server or the client asks and checked on every response; shares, files and directories: read and write with multi-credit requests, list, stat, rename, delete, truncate, times, the share's space; goose-smbclient | [README](smb/README.md) |
+| `kmip` | KMIP 1.0 to 2.1, both sides, in TTLV, XML and JSON, over TLS or HTTPS: one list of attributes sent in 1.x's or 2.x's form; keys in every format, wrapped keys, certificates, split keys, secrets; a client for every operation (the life cycle, Get and Export wrapped, Import, Re-key, Derive Key, Certify, cryptography in parts, asynchronous items, tickets); an in-memory server answering them, checked against OASIS's test cases; goose-kmip and goose-kmipd | [README](kmip/README.md) |
 | `webauthn` | WebAuthn Level 3 and passkeys for a relying party: registration and authentication options as the L3 JSON has them; registrations checked whole (clientDataJSON, the attestation object, authenticator data and its flags, the algorithm) with every attestation format but SafetyNet: none, packed, fido-u2f, tpm, android-key, apple, chained to the RP's roots by x509; authentications against the stored credential record (signature, user handle, counter, backup flags); FIDO MDS3 BLOBs verified and searched; goose-webauthn (options, verify, MDS, a demo RP for a real browser) | [README](webauthn/README.md) |
 | `net/http` | HTTP/1.1 and HTTP/2, server and client: a client with Go's policy (redirects, cookies, credentials, proxies, gzip, TLS session resumption, streaming uploads, several responses at once), URLs, cookies, HPACK; goose-http and goose-httpd | [README](net/http/README.md) |
 | `net` | Sockets and IP addresses, as Go's net and net/netip: TCP connections and listeners with timeouts, UDP connected or answering many, Unix-domain sockets, waiting on several sockets, the system resolver; addresses parsed, printed (RFC 5952), classified and checked against prefixes; host:port; Punycode host names; what http, ldap, dns, krb5 and the tools' servers talk through (POSIX and Winsock) | [README](net/README.md) |
@@ -43,9 +44,9 @@ later.
 | `sys` | The operating system's own calls, as Go's golang.org/x/sys, os/user and x/term with go-win64api's Windows management, on Windows, Linux and macOS: the host, processes (list, arguments, executable, kill), users and groups, files by path and by descriptor (stat, links, locks, pipes, memory maps), errors sorted portably; the Windows registry; local accounts and groups, sessions, services, shares and installed software; signals as values, limits, usage and sysctl; terminals and consoles; its FFI generated from one table, as mksyscall | [README](sys/README.md) |
 | `sspi` | Windows' SSPI, as Go's alexbrainman/sspi: security packages, credentials (the login's or a password's), contexts a token at a time, sign/verify/seal/unseal; a TLS client on Windows' own Schannel (the system's roots, policy and TLS 1.3, peer certificate for x509, manual validation for test servers); HTTP Negotiate (RFC 4559) from the Windows login, Kerberos in a domain and NTLM otherwise, or as a user by password | [README](sspi/README.md) |
 
-## entropy, net, dns, pkcs11, jwx, mail, openpgp, acme, oauth, tsp, xml, est, scep, saml, ntlm, tpm2, webauthn, radius, smb, service, sys and sspi
+## entropy, net, dns, pkcs11, jwx, mail, openpgp, acme, oauth, tsp, xml, est, scep, saml, ntlm, tpm2, webauthn, radius, smb, kmip, service, sys and sspi
 
-These twenty-two have the most to say beyond their table rows: what each
+These twenty-three have the most to say beyond their table rows: what each
 module does, how it was built and how it was tested. Each README has the
 full API.
 
@@ -793,6 +794,58 @@ and under 3.0), which every time fails the client: 57 checks. A
 libFuzzer target covers the response parsers, decryption and signature
 checks.
 
+### kmip: KMIP, a key manager's protocol
+
+`kmip` speaks KMIP, the OASIS protocol between programs and key
+managers (HSMs, CipherTrust, Fortanix, Vault's KMIP engine, the storage
+arrays and databases that encrypt with keys kept elsewhere), versions
+1.0 to 1.4, 2.0 and 2.1, in its three encodings: TTLV, decoded into
+nodes that point into the buffer and refused at the first thing that is
+not exactly right, and the XML and JSON of KMIP's Profiles, as strict;
+over TLS, or over HTTPS in any of the three. The tags and enumerations
+are generated from KMIP 2.1's specification. The one real difference
+between 1.x and 2.x for a client is attributes: 1.x names them by text
+inside Template-Attributes, 2.x writes each under its own tag; `Attrs`
+holds 2.x's items, vendors' attributes included, and each operation
+writes the form of the version negotiated.
+
+Both sides cover KMIP 2.1 nearly whole. The client has every operation:
+the key life cycle, Locate and the attribute operations; Get and Export
+in any key format (PKCS #1, PKCS #8, SEC 1, X.509 and the transparent
+structures, converted both ways) and wrapped as a Key Wrapping
+Specification asks (NIST Key Wrap, AES Key Wrap with Padding, GCM,
+RSA-OAEP, HMAC or signatures, either encoding), which a client can
+unwrap with its own copy of the key; Import; Re-key and Re-key Key
+Pair; Derive Key (PBKDF2, HKDF, SP 800-108's three modes, HMAC, HASH,
+ENCRYPT, ECDH); Certify, Re-certify and Validate; split keys; Encrypt,
+Decrypt, Sign, Signature Verify, MAC, MAC Verify and Hash, each also in
+parts; asynchronous items, tickets (Login, Delegated Login), and 2.1's
+defaults, constraints and Rotate attributes. The same operations run
+against a server in the same program (`kmip.local`), and `handle` is
+that server: an in-memory store whose objects belong to the client that
+made them, KMIP's life cycle and its dates enforced (Protect Stop and
+Process Start Dates, Usage Limits, Sensitive and Extractable, archived
+and destroyed objects), batches stopped, continued or undone, the
+attributes a server keeps (Digest, Short Unique Identifier, Fresh,
+Lease Time...) kept; its cryptography gslib's own (AES, Triple DES,
+ChaCha20-Poly1305, HMAC, CMAC, RSA, ECDSA and ECDH on the NIST curves,
+secp256k1 and brainpool). goose-kmip is a command-line client and
+goose-kmipd serves the in-memory store over TLS with client certificates,
+and over HTTPS.
+
+Tested against KMIP 1.2's encoding examples byte for byte, the 245 TTLV
+encodings in PyKMIP's unit tests decoded and written again unchanged
+and through XML and JSON; against published answers for what the server
+computes (RFC 3394, 5869, 6070 and 8439, SP 800-38B and 800-108); against
+OASIS's own test cases for KMIP 1.4, 2.0 and 2.1 (fetched, not kept
+here), 541 recorded conversations replayed against the in-memory server,
+of which 438 pass and the rest are listed in kmip's README by what they
+need; and live (`make interop-kmip`, Docker) against PyKMIP's server in
+KMIP 1.0 to 2.0, goose-kmipd against gslib's client and PyKMIP's, and
+the HTTPS binding against curl. Two libFuzzer targets cover the TTLV
+decoder, the XML and JSON readers, the readers of messages and the
+server's `handle`.
+
 ### service: system services
 
 `service` makes a Goose program a system service on the three platforms
@@ -1135,6 +1188,7 @@ ntlm.goose, ntlm/                     ntlm, the same
 tpm2.goose, tpm2/                     tpm2, the same
 radius.goose, radius/                 radius, the same
 smb.goose, smb/                       smb, the same
+kmip.goose, kmip/                     kmip, the same
 webauthn.goose, webauthn/             webauthn, the same
 service.goose, service/, service/src/ service, the same, and its C
 sys.goose, sys/, sys/src/             sys and its modules (registry, windows, unix, term, process), the same, and its C

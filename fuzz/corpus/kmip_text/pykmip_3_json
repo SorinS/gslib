@@ -1,0 +1,15 @@
+{"tag":"ResponsePayload", "value":[
+  {"tag":"UniqueIdentifier", "type":"TextString", "value":"b4faee10-aa2a-4446-8ad4-0881f3422959"},
+  {"tag":"AttributeName", "type":"TextString", "value":"Cryptographic Length"},
+  {"tag":"AttributeName", "type":"TextString", "value":"Cryptographic Algorithm"},
+  {"tag":"AttributeName", "type":"TextString", "value":"State"},
+  {"tag":"AttributeName", "type":"TextString", "value":"Digest"},
+  {"tag":"AttributeName", "type":"TextString", "value":"Lease Time"},
+  {"tag":"AttributeName", "type":"TextString", "value":"Initial Date"},
+  {"tag":"AttributeName", "type":"TextString", "value":"Unique Identifier"},
+  {"tag":"AttributeName", "type":"TextString", "value":"Name"},
+  {"tag":"AttributeName", "type":"TextString", "value":"Cryptographic Usage Mask"},
+  {"tag":"AttributeName", "type":"TextString", "value":"Object Type"},
+  {"tag":"AttributeName", "type":"TextString", "value":"Contact Information"},
+  {"tag":"AttributeName", "type":"TextString", "value":"Last Change Date"}
+]}

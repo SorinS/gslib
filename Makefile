@@ -14,15 +14,15 @@ PYTHON  ?= python3
 GOOSE   ?= $(or $(shell command -v goose 2>/dev/null),$(abspath $(ROOT)/../goose.git/build/goose))
 export GOOSE
 
-LIBS    := asn1 bignum x509 tls ssh ldap yaml http compress mime krb5 jwx pkcs11 dns mail openpgp acme oauth tsp xml est scep saml cbor webauthn ntlm tpm2 radius smb
+LIBS    := asn1 bignum x509 tls ssh ldap yaml http compress mime krb5 jwx pkcs11 dns mail openpgp acme oauth tsp xml est scep saml cbor webauthn ntlm tpm2 radius smb kmip
 
 # ------------------------------------------------------------------------------
 # Derived values
 # ------------------------------------------------------------------------------
 
 # A program is rebuilt when any of the package's sources changes.
-SOURCES := $(ROOT)/gslib.goose $(ROOT)/gslib.build $(ROOT)/net.goose $(ROOT)/compress.goose $(ROOT)/mime.goose $(ROOT)/krb5.goose $(ROOT)/jwx.goose $(ROOT)/pkcs11.goose $(ROOT)/dns.goose $(ROOT)/mail.goose $(ROOT)/acme.goose $(ROOT)/oauth.goose $(ROOT)/tsp.goose $(ROOT)/est.goose $(ROOT)/scep.goose $(ROOT)/saml.goose $(ROOT)/webauthn.goose $(ROOT)/ntlm.goose $(ROOT)/tpm2.goose $(ROOT)/radius.goose $(ROOT)/smb.goose \
-	$(shell find $(ROOT)/crypto $(ROOT)/encoding $(ROOT)/net $(ROOT)/compress $(ROOT)/mime $(ROOT)/krb5 $(ROOT)/jwx $(ROOT)/pkcs11 $(ROOT)/dns $(ROOT)/mail $(ROOT)/acme $(ROOT)/oauth $(ROOT)/tsp $(ROOT)/est $(ROOT)/scep $(ROOT)/saml $(ROOT)/webauthn $(ROOT)/ntlm $(ROOT)/tpm2 $(ROOT)/radius $(ROOT)/smb \
+SOURCES := $(ROOT)/gslib.goose $(ROOT)/gslib.build $(ROOT)/net.goose $(ROOT)/compress.goose $(ROOT)/mime.goose $(ROOT)/krb5.goose $(ROOT)/jwx.goose $(ROOT)/pkcs11.goose $(ROOT)/dns.goose $(ROOT)/mail.goose $(ROOT)/acme.goose $(ROOT)/oauth.goose $(ROOT)/tsp.goose $(ROOT)/est.goose $(ROOT)/scep.goose $(ROOT)/saml.goose $(ROOT)/webauthn.goose $(ROOT)/ntlm.goose $(ROOT)/tpm2.goose $(ROOT)/radius.goose $(ROOT)/smb.goose $(ROOT)/kmip.goose \
+	$(shell find $(ROOT)/crypto $(ROOT)/encoding $(ROOT)/net $(ROOT)/compress $(ROOT)/mime $(ROOT)/krb5 $(ROOT)/jwx $(ROOT)/pkcs11 $(ROOT)/dns $(ROOT)/mail $(ROOT)/acme $(ROOT)/oauth $(ROOT)/tsp $(ROOT)/est $(ROOT)/scep $(ROOT)/saml $(ROOT)/webauthn $(ROOT)/ntlm $(ROOT)/tpm2 $(ROOT)/radius $(ROOT)/smb $(ROOT)/kmip \
 		\( -name '*.goose' -o -name '*.c' -o -name '*.build' \) \
 		-not -path '*/test/*' -not -path '*/examples/*')
 
@@ -59,7 +59,9 @@ PROGRAMS := \
 	goose-tpm:tpm2/tools/tpm.goose \
 	goose-radtest:radius/tools/radtest.goose \
 	goose-radiusd:radius/tools/radiusd.goose \
-	goose-smbclient:smb/tools/smbclient.goose
+	goose-smbclient:smb/tools/smbclient.goose \
+	goose-kmip:kmip/tools/kmip.goose \
+	goose-kmipd:kmip/tools/kmipd.goose
 
 prog_name   = $(word 1,$(subst :, ,$(1)))
 prog_source = $(word 2,$(subst :, ,$(1)))
@@ -67,7 +69,7 @@ BINARIES    := $(foreach p,$(PROGRAMS),$(BIN)/$(call prog_name,$(p))) $(BIN)/goo
 
 # Every tool and example with a main, for check.
 CHECKED := $(shell cd $(ROOT) && grep -l '^fn main' */*/tools/*.goose examples/*/*.goose \
-	compress/tools/*.goose mime/tools/*.goose krb5/tools/*.goose jwx/tools/*.goose pkcs11/tools/*.goose dns/tools/*.goose mail/tools/*.goose acme/tools/*.goose oauth/tools/*.goose tsp/tools/*.goose est/tools/*.goose scep/tools/*.goose saml/tools/*.goose webauthn/tools/*.goose ntlm/tools/*.goose tpm2/tools/*.goose radius/tools/*.goose smb/tools/*.goose)
+	compress/tools/*.goose mime/tools/*.goose krb5/tools/*.goose jwx/tools/*.goose pkcs11/tools/*.goose dns/tools/*.goose mail/tools/*.goose acme/tools/*.goose oauth/tools/*.goose tsp/tools/*.goose est/tools/*.goose scep/tools/*.goose saml/tools/*.goose webauthn/tools/*.goose ntlm/tools/*.goose tpm2/tools/*.goose radius/tools/*.goose smb/tools/*.goose kmip/tools/*.goose)
 
 # ------------------------------------------------------------------------------
 # Helpers
@@ -156,7 +158,7 @@ test-native: ## Run the unit tests, also built with the C compiler
 
 # test-asn1, test-bignum, ... (scripts/run_all.py refuses a name not in
 # LIBS). Not .PHONY: make looks for no pattern rule for a phony target.
-test-%: ## Run one library's unit tests: test-entropy test-asn1 test-bignum test-x509 test-tls test-ssh test-net test-ldap test-yaml test-http test-compress test-mime test-krb5 test-jwx test-pkcs11 test-dns test-mail test-openpgp test-acme test-oauth test-tsp test-xml test-est test-scep test-saml test-cbor test-webauthn test-ntlm test-tpm2 test-radius test-smb test-service test-sys test-sspi
+test-%: ## Run one library's unit tests: test-entropy test-asn1 test-bignum test-x509 test-tls test-ssh test-net test-ldap test-yaml test-http test-compress test-mime test-krb5 test-jwx test-pkcs11 test-dns test-mail test-openpgp test-acme test-oauth test-tsp test-xml test-est test-scep test-saml test-cbor test-webauthn test-ntlm test-tpm2 test-radius test-smb test-kmip test-service test-sys test-sspi
 	$(call echo,"Running $* unit tests")
 	cd $(ROOT) && $(PYTHON) scripts/run_all.py --only $*
 
@@ -164,7 +166,7 @@ test-%: ## Run one library's unit tests: test-entropy test-asn1 test-bignum test
 # needs installed is in its library's README; a missing tool is skipped.
 
 .PHONY: interop
-interop: interop-http interop-h2spec interop-tls interop-ssh interop-ldap interop-krb5 interop-pkcs11 interop-dns interop-mail interop-openpgp interop-acme interop-oauth interop-tsp interop-xml interop-est interop-scep interop-saml interop-webauthn interop-ntlm interop-tpm2 interop-radius interop-smb ## Run every live interop test
+interop: interop-http interop-h2spec interop-tls interop-ssh interop-ldap interop-krb5 interop-pkcs11 interop-dns interop-mail interop-openpgp interop-acme interop-oauth interop-tsp interop-xml interop-est interop-scep interop-saml interop-webauthn interop-ntlm interop-tpm2 interop-radius interop-smb interop-kmip ## Run every live interop test
 
 .PHONY: interop-http
 interop-http: ## HTTP against curl, Go's net/http, Python, nghttp2
@@ -354,8 +356,19 @@ interop-smb: ## goose-smbclient against Samba: every dialect 2.0.2-3.1.1, signin
 	$(call echo,"SMB against Samba")
 	cd $(ROOT)/smb && $(PYTHON) scripts/interop.py
 
+.PHONY: interop-kmip
+interop-kmip: ## gslib's KMIP client against PyKMIP (1.0 to 2.0), goose-kmipd against gslib's client and PyKMIP's, and over HTTPS (Docker)
+	$(call echo,"KMIP against PyKMIP")
+	cd $(ROOT)/kmip && $(PYTHON) scripts/interop.py
+
 # Not part of interop: it installs a real service (a user's systemd unit or
 # launchd agent; on Windows, as an administrator, the system's).
+
+.PHONY: oasis-kmip
+oasis-kmip: ## OASIS's KMIP 1.4 to 2.1 test cases (fetched): XML and JSON round trips, and replayed against the in-memory server
+	$(call echo,"KMIP against OASIS's test cases")
+	cd $(ROOT)/kmip && $(PYTHON) scripts/oasis.py
+
 .PHONY: live-service
 live-service: ## service live: examples/service/heartbeat installed, started, killed and restarted by the service manager, stopped, uninstalled
 	$(call echo,"service against the platform's service manager")

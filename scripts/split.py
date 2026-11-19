@@ -86,6 +86,7 @@ LIBRARIES = {
     "saml": "saml", "webauthn": "webauthn", "ntlm": "ntlm", "tpm2": "tpm2",
     "radius": "radius",
     "smb": "smb",
+    "kmip": "kmip",
     "service": "service", "sys": "sys", "sspi": "sspi",
 }
 
@@ -234,6 +235,16 @@ SPLITS = {
             ("README.md", "make interop-smb                                  # Linux with Docker",
              "python3 scripts/interop.py                        # Linux with Docker"),
             ("README.md", "`scripts/interop.py` (`make interop-smb`)", "`scripts/interop.py`"),
+        ],
+    ),
+    "kmip": dict(
+        repo="kmipgoose", new=True,
+        gitignore=["__pycache__/", "test/oasis-cache/"],
+        fixups=[
+            ("README.md", "make test-kmip                                    # or: cd kmip && python3 scripts/run_tests.py",
+             "python3 scripts/run_tests.py"),
+            ("README.md", "make interop-kmip                                 # Linux with Docker",
+             "python3 scripts/interop.py                        # Linux with Docker"),
         ],
     ),
     "service": dict(

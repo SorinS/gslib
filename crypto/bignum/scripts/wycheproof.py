@@ -30,10 +30,11 @@ HASHES = {"SHA-1": 160, "SHA-224": 224, "SHA-256": 256, "SHA-384": 384, "SHA-512
           "SHA3-384": 3384, "SHA3-512": 3512}
 # Curve ids for the goose side; the Brainpool curves' are 2000 + bits.
 CURVES = {"secp224r1": 224, "secp256r1": 256, "secp384r1": 384, "secp521r1": 521,
-          "brainpoolP256r1": 2256, "brainpoolP384r1": 2384, "brainpoolP512r1": 2512}
+          "brainpoolP256r1": 2256, "brainpoolP384r1": 2384, "brainpoolP512r1": 2512, "secp256k1": 1256}
 CURVE_OIDS = {"secp224r1": "2b81040021", "secp256r1": "2a8648ce3d030107", "secp384r1": "2b81040022",
               "secp521r1": "2b81040023", "brainpoolP256r1": "2b2403030208010107",
-              "brainpoolP384r1": "2b240303020801010b", "brainpoolP512r1": "2b240303020801010d"}
+              "brainpoolP384r1": "2b240303020801010b", "brainpoolP512r1": "2b240303020801010d",
+              "secp256k1": "2b8104000a"}
 MLKEM = {"ML-KEM-512": 2, "ML-KEM-768": 3, "ML-KEM-1024": 4}
 
 
@@ -258,13 +259,14 @@ def group_rows(name, d, g):
         key = rsa_private(g["privateKey"])
         return lambda t: ["rsa_pkcs1_sign", hid] + key + [t["msg"], t["sig"]]
     if typ == "RsaesOaepDecrypt":
-        if g["mgf"] != "MGF1" or g["mgfSha"] != g["sha"]:
-            raise Unsupported(f"OAEP with {g['mgf']} {g.get('mgfSha')} under {g['sha']}")
+        if g["mgf"] != "MGF1":
+            raise Unsupported(f"OAEP with {g['mgf']} under {g['sha']}")
         hid = str(hash_id(g["sha"]))
+        mid = str(hash_id(g["mgfSha"]))
         if "prime1" not in g["privateKey"]:
             raise Unsupported("OAEP key without primes")
         key = rsa_private(g["privateKey"])
-        return lambda t: ["rsa_oaep", hid] + key + [t["msg"], t["ct"], t["label"]]
+        return lambda t: ["rsa_oaep", hid] + key + [t["msg"], t["ct"], t["label"], mid]
     if typ == "RsaesPkcs1Decrypt":
         key = rsa_private(g["privateKey"])
         return lambda t: ["rsa_pkcs1_dec"] + key + [t["msg"], t["ct"]]
@@ -306,7 +308,7 @@ WANTED = ("aes_gcm_test", "chacha20_poly1305_test", "xchacha20_poly1305_test", "
           "aes_xts_test", "hmac_", "hkdf_", "pbkdf2_", "ecdh_secp224r1_ecpoint", "ecdh_secp256r1_ecpoint",
           "ecdh_secp384r1_ecpoint", "ecdh_secp521r1_ecpoint", "ecdsa_secp224r1_", "ecdsa_secp256r1_",
           "ecdsa_secp384r1_", "ecdsa_secp521r1_", "ecdh_brainpoolP256r1_test", "ecdh_brainpoolP384r1_test",
-          "ecdh_brainpoolP512r1_test", "ecdsa_brainpoolP256r1_", "ecdsa_brainpoolP384r1_", "ecdsa_brainpoolP512r1_", "ed25519_test", "x25519_test", "ed448_test", "x448_test", "rsa_signature_", "rsa_pss_",
+          "ecdh_brainpoolP512r1_test", "ecdsa_brainpoolP256r1_", "ecdsa_brainpoolP384r1_", "ecdsa_brainpoolP512r1_", "ecdh_secp256k1_ecpoint", "ecdsa_secp256k1_", "ed25519_test", "x25519_test", "ed448_test", "x448_test", "rsa_signature_", "rsa_pss_",
           "rsa_pkcs1_", "rsa_oaep_", "dsa_", "mlkem_", "mldsa_", "primality_test")
 
 

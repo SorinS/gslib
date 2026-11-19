@@ -820,12 +820,15 @@ fn rsa_verify_pss_digest(key, digest: const u8[:], sig: const u8[:], salt_len: i
 
 // OAEP (RSAES-OAEP) with a hash and MGF1 over the same hash: SHA-256
 // unless `hash` names another bignum.hmac id, as Go's EncryptOAEP takes
-// one. A message takes at most rsa_oaep_max(key, hash) bytes, 2 hash
-// lengths and 2 less than the modulus.
+// one; `mgf`, when not 0, is MGF1's hash instead (Go's OAEPOptions.MGFHash,
+// which KMIP's Mask Generator Hashing Algorithm sets). A message takes at
+// most rsa_oaep_max(key, hash) bytes, 2 hash lengths and 2 less than the
+// modulus.
 fn rsa_oaep_max(key, hash: i64 = 256) -> i64 { rsa_size(key) - 2 * hash_len(hash) - 2 }
 
 fn rsa_encrypt_oaep_with_seed(key, msg: const u8[:], label: const u8[:], seed: const u8[:],
-                              hash: i64 = 256) -> u8[>..] {
+                              hash: i64 = 256, mgf: i64 = 0) -> u8[>..] {
+    let mh = if mgf != 0 { mgf } else { hash };
     let k = rsa_size(key);
     let hl = hash_len(hash);
     assert(msg.len <= k - 2 * hl - 2 && seed.len == hl);
@@ -839,25 +842,26 @@ fn rsa_encrypt_oaep_with_seed(key, msg: const u8[:], label: const u8[:], seed: c
     for i in msg.len { db[dblen - msg.len + i] = msg[i]; }
     let sd = em[1..hl + 1];
     for i in hl { sd[i] = seed[i]; }
-    mgf1(hash, db, sd);
-    mgf1(hash, sd, db);
+    mgf1(mh, db, sd);
+    mgf1(mh, sd, db);
     let c, ok = rsa_public_op_ct(key, em);
     assert(ok);
     return c;
 }
 
-fn rsa_encrypt_oaep(key, msg: const u8[:], label: const u8[:] = "", hash: i64 = 256) -> u8[>..] {
+fn rsa_encrypt_oaep(key, msg: const u8[:], label: const u8[:] = "", hash: i64 = 256, mgf: i64 = 0) -> u8[>..] {
     var seed: u8[>..] = [];
     seed.resize(hash_len(hash), 0);
     entropy::random_bytes(seed);
-    return rsa_encrypt_oaep_with_seed(key, msg, label, seed, hash);
+    return rsa_encrypt_oaep_with_seed(key, msg, label, seed, hash, mgf);
 }
 
 // The message and true, or empty and false. Every check on the decoded
 // block is made in constant time and folded into one flag, so a failure
 // does not say which part was wrong (Manger's attack).
 fn rsa_decrypt_oaep(key: const RsaPrivateKey&, ct: const u8[:], label: const u8[:] = "",
-                    hash: i64 = 256) -> u8[>..], bool {
+                    hash: i64 = 256, mgf: i64 = 0) -> u8[>..], bool {
+    let mh = if mgf != 0 { mgf } else { hash };
     var out: u8[>..] = [];
     let k = rsa_size(key);
     let hl = hash_len(hash);
@@ -867,8 +871,8 @@ fn rsa_decrypt_oaep(key: const RsaPrivateKey&, ct: const u8[:], label: const u8[
     let dblen = k - hl - 1;
     let sd = em[1..hl + 1];
     let db = em[hl + 1..];
-    mgf1(hash, sd, db);
-    mgf1(hash, db, sd);
+    mgf1(mh, sd, db);
+    mgf1(mh, db, sd);
     let lhash = hash_bits(hash, label);
     var good = checked & ct_is_zero_u32(em[0]) & ct_eq_bytes(db[..hl], lhash);
     // Find the 0x01 after the zero padding, without branching on bytes.

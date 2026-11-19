@@ -86,7 +86,9 @@ checks no DSA signatures; here they are checked, as openssl does.
 The brainpool curves are named curves under id-ecPublicKey
 (1.3.36.3.3.2.8.1.1.7, .11 and .13: `KEY_EC_BP256`, `KEY_EC_BP384`,
 `KEY_EC_BP512`; `is_brainpool`, and `is_ec` takes them with the NIST
-ones), signing ECDSA with any of SHA-256, -384 and -512. Ed448
+ones), signing ECDSA with any of SHA-256, -384 and -512; secp256k1
+(1.3.132.0.10, `KEY_EC_SECP256K1`) is one too, for KMIP and the like
+(Go's crypto/x509 does not take it). Ed448
 (`KEY_ED448`, `SIG_ED448`, id-Ed448 1.3.101.113) and X448 (`KEY_X448`,
 id-X448 1.3.101.111) are RFC 8410's: parameters absent. The TLS 1.3
 ECDSA schemes name a NIST curve, so `verify_scheme` refuses brainpool

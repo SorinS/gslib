@@ -36,6 +36,9 @@ PUBLIC = {
     ("dsa", "dsa_verify"): "verification sees public values only",
     ("ec", "ec_hex"): "curve constants",
     ("ffdh", "ffdh_value_ok"): "the peer's public value and p",
+    ("shamir", "prime_field_ok"): "the prime field's size is public (KMIP's Prime Field Size)",
+    ("shamir", "split_prime_with"): "the prime and the number of parts",
+    ("shamir", "join_prime"): "the prime and the parts' numbers",
 }
 
 FN = re.compile(r"^\s*(?:(?:recursive|inline|simd|checkfree|export)\s+)*fn\s+(\w+)")
