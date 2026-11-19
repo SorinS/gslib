@@ -124,6 +124,7 @@ fn df_dist_code(dist: i64) -> i64 {
 struct Deflate {
     level: i64,
     good: i64, lazy: i64, nice: i64, chain: i64,
+    max_dist: i64,               // the farthest a match reaches back (deflate_set_window_bits)
     state: u8,
     err: i64,
     bw: BitWriter,
@@ -148,7 +149,7 @@ struct Deflate {
 // ERR_ARGUMENT (Go's NewWriter returns an error).
 fn deflate_writer(level: i64) -> Deflate {
     var w = Deflate {
-        level: level, good: 0, lazy: 0, nice: 0, chain: 0, state: DW_OPEN, err: 0, bw: bit_writer(),
+        level: level, good: 0, lazy: 0, nice: 0, chain: 0, max_dist: DF_MAX_DIST, state: DW_OPEN, err: 0, bw: bit_writer(),
         strstart: 0, lookahead: 0, block_start: 0, block_bytes: 0,
         match_length: 2, match_start: 0, prev_length: 2, prev_match: 0, match_available: false,
         total_in: 0, ntok: 0, lit_freq: [0; 286], dist_freq: [0; 30], tokens: [0; 16384],
@@ -173,6 +174,14 @@ fn deflate_set_level(w: Deflate&, level: i64) {
         w.nice = DF_NICE[l];
         w.chain = DF_CHAIN[l];
     }
+}
+
+// Keeps matches within 2^bits bytes (8 to 15), for a reader whose window
+// is that small: zlib's windowBits, which permessage-deflate's
+// max_window_bits ask for (RFC 7692 §7.1.2). Before the first write.
+fn deflate_set_window_bits(w: Deflate&, bits: i64) {
+    if bits < 8 || bits > 15 { return; }
+    w.max_dist = min(DF_MAX_DIST, 1 << bits);
 }
 
 // A writer whose stream starts with a preset dictionary: matches may
@@ -248,7 +257,7 @@ fn df_longest_match(w: Deflate&, cur_match: i64) -> i64 {
     let scan = w.strstart;
     var best_len = w.prev_length;
     var nice = w.nice;
-    let limit = if w.strstart > DF_MAX_DIST { w.strstart - DF_MAX_DIST } else { 0 };
+    let limit = if w.strstart > w.max_dist { w.strstart - w.max_dist } else { 0 };
     let maxlen = min(DF_MAX_MATCH, w.lookahead);
     if w.prev_length >= w.good { chain >>= 2; }
     if nice > w.lookahead { nice = w.lookahead; }
@@ -338,7 +347,7 @@ fn df_compress(w: Deflate&, out: u8[>..]&, flush: bool) {
         if w.lookahead >= DF_MIN_MATCH { hash_head = df_insert(w, w.strstart); }
         if !lazy_mode {
             w.match_length = 2;
-            if hash_head >= 0 && w.strstart - hash_head <= DF_MAX_DIST {
+            if hash_head >= 0 && w.strstart - hash_head <= w.max_dist {
                 w.prev_length = 2;
                 w.match_length = df_longest_match(w, hash_head);
             }
@@ -368,7 +377,7 @@ fn df_compress(w: Deflate&, out: u8[>..]&, flush: bool) {
         w.prev_length = w.match_length;
         w.prev_match = w.match_start;
         w.match_length = 2;
-        if hash_head >= 0 && w.prev_length < w.lazy && w.strstart - hash_head <= DF_MAX_DIST {
+        if hash_head >= 0 && w.prev_length < w.lazy && w.strstart - hash_head <= w.max_dist {
             w.match_length = df_longest_match(w, hash_head);
             if w.match_length <= 5 && w.match_length == DF_MIN_MATCH && w.strstart - w.match_start > DF_TOO_FAR {
                 w.match_length = 2;

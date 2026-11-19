@@ -117,6 +117,20 @@ fn inflate_reset(d: Inflate&) {
     d.total_out = 0;
 }
 
+// After STREAM_END, starts reading the next stream with the one before as
+// its history (its distances may reach into it), as permessage-deflate
+// has a message that ended its DEFLATE stream with a final block followed
+// by a new stream (RFC 7692 §7.2.3.4). Everything ended has been handed
+// out first.
+fn inflate_continue(d: Inflate&) {
+    d.state = IS_BLOCK;
+    d.last = false;
+    d.bitbuf = 0;
+    d.bitcnt = 0;
+    d.stored_left = 0;
+    d.err = 0;
+}
+
 // A preset dictionary: the history the stream's first distances may reach
 // into (its last 32 KiB). Before the first inflate_read only.
 fn inflate_set_dictionary(d: Inflate&, dict: const u8[:]) {
