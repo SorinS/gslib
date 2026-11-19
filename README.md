@@ -8,7 +8,7 @@ later.
 
 | Library | What | |
 |---|---|---|
-| `entropy` | Random bytes for keys from the operating system, as Go's crypto/rand: getentropy, or BCryptGenRandom on Windows; what every library that makes keys, nonces or salts uses, and a program can swap for its own (a fixed generator for tests, a TPM, an HSM) | [README](entropy/README.md) |
+| `entropy` | Random bytes for keys from the operating system, as Go's crypto/rand: getentropy, or ProcessPrng on Windows, through goose's os::random_bytes; what every library that makes keys, nonces or salts uses, and a program can swap for its own (a fixed generator for tests, a TPM, an HSM) | [README](entropy/README.md) |
 | `crypto/bignum` | Integers of any size, constant-time arithmetic, and cryptography: AES, Camellia, ChaCha20, the SHA-1/2/3 and BLAKE2 hashes, HMAC, CMAC, AES Key Wrap (RFC 3394 and 5649, used by jwx), HKDF, PBKDF2, scrypt, Argon2, bcrypt, RSA, DSA, ECDH and ECDSA (P-224 to P-521, brainpoolP256r1/384r1/512r1), X25519, Ed25519, X448, Ed448, ML-KEM, ML-DSA, SLH-DSA, HPKE, NaCl, the legacy ciphers | [README](crypto/bignum/README.md) |
 | `encoding/asn1` | DER and BER reading and writing, PEM | [README](encoding/asn1/README.md) |
 | `crypto/x509` | Certificates: parsing, path building and verification, name constraints, policies, system roots, creating certificates, CSRs and CRLs, OCSP, PKCS #12; brainpool, Ed448 and X448 keys and signatures; post-quantum ML-DSA and SLH-DSA keys and signatures, ML-KEM keys, CMS with ML-DSA, Ed448 and brainpool signers and ML-KEM, X448 and brainpool recipients | [README](crypto/x509/README.md) |
@@ -56,8 +56,9 @@ full API.
 Every key, nonce, salt and token gslib makes comes from
 `entropy::random_bytes`, which reads the operating system's
 cryptographically secure generator: getentropy on macOS, Linux and the
-BSDs (with /dev/urandom for kernels that lack it) and BCryptGenRandom on
-Windows, linked the ordinary way so nothing is looked up at run time. It
+BSDs (with /dev/urandom for kernels that lack it) and ProcessPrng on
+Windows. It is a thin layer over goose's own `os::random_bytes`, with no
+C of its own. It
 stops the program if the OS gives nothing, since carrying on with a key
 that is not random is worse; `try_random_bytes` reports instead. It used
 to be bignum's, which reached getentropy through the C library and so had
@@ -1189,7 +1190,7 @@ modules a program imports are compiled. The libraries need one another (http nee
 tls, x509, asn1 and bignum), and since they are one package, a program
 declares only gslib.
 
-The C is the OS's random bytes (`entropy/src/entropy.c`), net's sockets
+The C is net's sockets
 (`net/src/net.c`, behind `net.goose`: `import gslib.net;`, then
 `net::dial`), sys's system calls (`sys/src`, which mime and tpm2 use
 too), pkcs11's module loading (`pkcs11/src/p11.c`), service's service
@@ -1285,8 +1286,9 @@ its examples.
 
 ## Requirements
 
-goose.git's master from 683ebc94 (v2026.3-154) on: http's client keeps
-its state in a `root struct`. The tests ran with master as it is,
+goose.git's master from ee261a4c (#346) on: entropy takes its bytes from
+`os::random_bytes`, which has ProcessPrng on Windows since then; http's
+client keeps its state in a `root struct` (683ebc94 on). The tests ran with master as it is,
 v2026.3-252-g2ed1a63d, on Linux, and on macOS with v2026.3-254-gd402d2c7,
 master and one fix of TinyCC's arm64 code (dfe35659, for `goose run`).
 

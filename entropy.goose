@@ -1,10 +1,10 @@
 // entropy: cryptographically secure random bytes from the operating
 // system, for keys, nonces, salts and tokens, after Go's crypto/rand.
-// getentropy(3) on macOS, Linux and the BSDs (/dev/urandom where the
-// kernel lacks it), BCryptGenRandom on Windows. The C is
-// entropy/src/entropy.c, compiled only into programs that call it.
-// std's rng is a fast generator for simulations and tests, and os's
-// random_seed falls back to the clocks: neither is for secrets.
+// A thin layer over goose's os::random_bytes: getentropy(3) on macOS,
+// Linux and the BSDs (/dev/urandom where the kernel lacks it), ProcessPrng
+// on Windows 10 and later (RtlGenRandom before). std's rng is a fast
+// generator for simulations and tests, and os's random_seed falls back to
+// the clocks: neither is for secrets.
 //
 //   import gslib.entropy;        // from a program; `import entropy;` inside gslib
 //
@@ -22,17 +22,17 @@
 
 namespace entropy;
 
-extern fn gsent_fill(out: u8[:]) -> i64;
+import os;
 
 // Fills out with random bytes from the OS. If the OS cannot give them,
 // which does not happen on a working system, the program stops: going on
 // with a key that is not random is worse.
 fn random_bytes(out: u8[:]) {
-    assert(gsent_fill(out) == 0);
+    assert(::random_bytes(out));
 }
 
 // Fills out with random bytes from the OS: true, or false if the OS gave
 // none, and then out is not to be used.
 fn try_random_bytes(out: u8[:]) -> bool {
-    return gsent_fill(out) == 0;
+    return ::random_bytes(out);
 }

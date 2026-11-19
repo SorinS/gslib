@@ -2,12 +2,14 @@
 
 Cryptographically secure random bytes from the operating system for
 Goose, as Go's crypto/rand: for keys, nonces, salts, tokens and anything
-else an attacker must not guess.
+else an attacker must not guess. It is a thin layer over goose's
+`os::random_bytes` (goose.git from ee261a4c on), kept as a package so a
+program can put another in its place.
 
 | Platform | Source |
 |---|---|
 | macOS, Linux, the BSDs | `getentropy(3)`, 256 bytes per call; `/dev/urandom` if the kernel has no getentropy (Linux before 3.17) |
-| Windows | `BCryptGenRandom` with the system's preferred generator, linked from `bcrypt.lib` |
+| Windows | `ProcessPrng` on Windows 10 and later, `RtlGenRandom` before, looked up at run time so no library is linked |
 
 ```goose
 import gslib from "SorinS/gslib@v0.7.0";
@@ -32,8 +34,7 @@ fn main() {
 std's `rng` is a fast generator for simulations and tests, and os's
 `random_seed` falls back to the clocks when it has to: neither is for
 secrets. Nothing is buffered, so a forked process never repeats its
-parent's bytes. The C is `entropy/src/entropy.c`, compiled only into
-programs that call it.
+parent's bytes. There is no C: goose's runtime has it.
 
 ## Replacing it
 

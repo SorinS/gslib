@@ -110,18 +110,9 @@ SWAPPABLE = {"entropy"}
 #   note      a paragraph added to the README's end
 SPLITS = {
     "entropy": dict(
-        repo="entropygoose", new=True, subdirs=["src", "scripts", "test", "README.md"],
-        sidecar=(
-            "// entropy's sidecar: the OS's random bytes (src/entropy.c), compiled\n"
-            "// only into programs that call them. Windows: BCryptGenRandom.\n"
-            "c_sources = [\"src/entropy.c\"];\n"
-            "c_libs_windows = [\"bcrypt\"];\n"
-            "\n"
-            "// Programs, not the package's modules.\n"
-            "exclude = [\"examples\", \"test\", \"scripts\"];\n"),
+        repo="entropygoose", new=True, subdirs=["scripts", "test", "README.md"],
         gitignore=["__pycache__/"],
         fixups=[
-            ("entropy.goose", "The C is\n// entropy/src/entropy.c,", "The C is\n// src/entropy.c,"),
             ("entropy.goose", "//   import entropy;        // from a program; `import entropy;` inside gslib",
              "//   import entropy;        // in a program whose root declares entropy"),
         ],
@@ -176,6 +167,20 @@ SPLITS = {
         ],
     ),
     "yaml": dict(repo="yamlgoose"),
+    "xml": dict(
+        repo="xmlgoose", new=True,
+        gitignore=["__pycache__/"],
+        fixups=[
+            ("README.md", "`make test-xml` (`python3 encoding/xml/scripts/run_tests.py`) runs each\n`encoding/xml/test/*.goose`",
+             "`python3 scripts/run_tests.py` runs each\n`test/*.goose`"),
+            ("README.md", "`make test-xml` passes", "`scripts/run_tests.py` passes"),
+            ("README.md", "XML_PYTHON=/tmp/xmlvenv/bin/python make interop-xml differential-xml",
+             "XML_PYTHON=/tmp/xmlvenv/bin/python python3 scripts/interop.py\n"
+             "XML_PYTHON=/tmp/xmlvenv/bin/python python3 scripts/differential.py"),
+            ("README.md", "`scripts/interop.py` (`make interop-xml`, ", "`scripts/interop.py` ("),
+            ("README.md", "`scripts/differential.py` (`make differential-xml`; ", "`scripts/differential.py` ("),
+        ],
+    ),
     "mime": dict(repo="mimegoose"),
     "x509": dict(
         repo="x509goose",
