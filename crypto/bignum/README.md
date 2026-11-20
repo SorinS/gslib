@@ -761,7 +761,9 @@ tools/govectors.sh > test/vectors/xcrypto.txt   # regenerate it
   constant-time code exported to C, in its own harness
   (`tools/dudect/harness.c`): mont_modexp, ct_mod_inv, ct_mod_small, the
   RSA private and constant-time public operations, X25519, ECDSA P-256 and
-  Ed25519 signing, Camellia (a block, a key schedule) and Camellia-CMAC. Two controls must leak (an early-exit comparison, BigInt's
+  secp256k1 and Ed25519 signing, Shamir's sharing (a split and a join in
+  GF(2^8), a split in a prime field), Camellia (a block, a key schedule)
+  and Camellia-CMAC. Two controls must leak (an early-exit comparison, BigInt's
   modpow) and a third, constant time by construction, sets the machine's
   floor: a leak is t above 500, or above 10 with ten times that floor's
   effect size.

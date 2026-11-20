@@ -17,6 +17,7 @@ import gslib.crypto.bignum.ec;
 import gslib.crypto.bignum.ed25519;
 import gslib.crypto.bignum.camellia;
 import gslib.crypto.bignum.cmac;
+import gslib.crypto.bignum.shamir;
 
 var rsa_key = bignum::RsaPrivateKey { n: [], e: [], d: [], p: [], q: [], dp: [], dq: [], qinv: [] };
 var m512: u32[..16] = [];           // an odd 512-bit modulus, with its R^2 and -1/m
@@ -144,6 +145,50 @@ export fn dut_ecdsa_p256_sign(data: const u8[:]) -> u8 {
     let curve = bignum::p256();
     let sig = bignum::ecdsa_sign(curve, sk, "a message");
     return sig[0];
+}
+
+// ECDSA secp256k1 signing of one message, the input the private key (32
+// bytes, top bit cleared so that it is below n).
+export fn dut_ecdsa_secp256k1_sign(data: const u8[:]) -> u8 {
+    var sk: u8[32] = [0; 32];
+    for i in 32 { sk[i] = data[i]; }
+    sk[0] = sk[0] & 0x7f;
+    let curve = bignum::secp256k1();
+    let sig = bignum::ecdsa_sign(curve, sk, "a message");
+    return sig[0];
+}
+
+// Shamir in GF(2^8): 5 parts, any 3, of a 32-byte secret (the input),
+// under fixed coefficients; and the secret back from three parts (the
+// input, 3 x 32 bytes, parts 1, 3 and 5).
+let SHAMIR_RAND: u8[64] = [0x5a; 64];
+
+export fn dut_shamir_gf8_split(data: const u8[:]) -> u8 {
+    var out: u8[>..] = [];
+    let ok = bignum::split_gf8_with(data[..32], 5, 3, SHAMIR_RAND, out);
+    return out[0];
+}
+
+export fn dut_shamir_gf8_join(data: const u8[:]) -> u8 {
+    let xs: i64[3] = [1, 3, 5];
+    var out: u8[>..] = [];
+    let ok = bignum::join_gf8(xs, data[..96], 32, out);
+    return out[0];
+}
+
+// Shamir in the prime field of 2^255 - 19: 5 parts, any 3, of a 32-byte
+// secret (the input, top bits cleared so that it is below the prime).
+let P25519: u8[32] = [0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+                      0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xed];
+let SHAMIR_RAND_P: u8[80] = [0x3c; 80];
+
+export fn dut_shamir_prime_split(data: const u8[:]) -> u8 {
+    var s: u8[32] = [0; 32];
+    for i in 32 { s[i] = data[i]; }
+    s[0] = s[0] & 0x3f;
+    var out: u8[>..] = [];
+    let ok = bignum::split_prime_with(s, P25519, 5, 3, SHAMIR_RAND_P, out);
+    return out[0];
 }
 
 // Ed25519 signing of one message, the input the seed (32 bytes).
