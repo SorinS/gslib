@@ -140,8 +140,6 @@ SPLITS = {
              "//   import net.ip;"),
             ("idna.goose", "//   import net.idna;    // `import net.idna;` inside gslib",
              "//   import net.idna;"),
-            ("README.md", 'import gslib from "SorinS/gslib@v0.7.0";\nimport gslib.net;\nimport gslib.net.ip;',
-             'import net from "SorinS/netgoose@v0.7.0";\nimport net.ip;'),
             ("README.md", "| `gslib.net` |", "| `net` |"),
             ("README.md", "| `gslib.net.ip` |", "| `net.ip` |"),
             ("README.md", "| `gslib.net.idna` |", "| `net.idna` |"),

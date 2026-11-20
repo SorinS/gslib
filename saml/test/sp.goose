@@ -21,6 +21,9 @@ import gslib.encoding.xml.dsig;
 import gslib.encoding.xml.enc;
 import gslib.crypto.x509;
 import gslib.crypto.x509.keys;
+import gslib.crypto.bignum;
+import gslib.crypto.bignum.aes;
+import gslib.crypto.bignum.modes;
 import tv;
 
 let SAMLNS = "urn:oasis:names:tc:SAML:2.0:assertion";
@@ -676,6 +679,54 @@ fn hostile_input(sp: saml::Sp&, idp: saml::Idp&, spe: saml::Entity&, idpe: saml:
     tv::check_code("a SAMLRequest", saml::process_response(sp, idpe, mq, "_req1", a), saml::ERR_BINDING, a.message);
 }
 
+// An unsigned Response whose assertion (unsigned) is AES-128-CBC encrypted to the SP;
+// `tweak` is XORed into the last byte of the next-to-last ciphertext block.
+fn cbc_response(idp: saml::Idp&, spe: const saml::Entity&, spcert: const x509::Cert&, tweak: u8) -> u8[>..] {
+    var out: u8[>..] = [];
+    let x = tv::response(idp, spe, false, false) { d, resp, asrt =>
+        var pt: u8[>..] = [];
+        xml::write(d, asrt, pt);
+        let padn = 16 - pt.len % 16;
+        for i in padn { pt.push(padn as! u8); }
+        var cek: u8[16] = [7; 16];
+        var iv: u8[16] = [9; 16];
+        let k = bignum::aes_init(cek[..]);
+        bignum::cbc_encrypt(k, iv[..], pt[..]);
+        pt[pt.len - 17] = pt[pt.len - 17] ^ tweak;
+        var ct: u8[>..] = [];
+        ct.append(iv[..]);
+        ct.append(pt);
+        let o = xml::encrypt_options();
+        let ea = xml::insert_element(d, resp, asrt, "saml", "EncryptedAssertion", "urn:oasis:names:tc:SAML:2.0:assertion");
+        let ed = xml::insert_element(d, ea, -1, "xenc", "EncryptedData", "http://www.w3.org/2001/04/xmlenc#");
+        xml::set_attr(d, ed, "Type", "http://www.w3.org/2001/04/xmlenc#Element");
+        let m = xml::insert_element(d, ed, -1, "xenc", "EncryptionMethod", "http://www.w3.org/2001/04/xmlenc#");
+        xml::set_attr(d, m, "Algorithm", "http://www.w3.org/2001/04/xmlenc#aes128-cbc");
+        let ki = xml::insert_element(d, ed, -1, "ds", "KeyInfo", "http://www.w3.org/2000/09/xmldsig#");
+        assert(xml::encrypted_key(d, ki, cek[..], spcert, o) == xml::OK);
+        xml::cipher_data(d, ed, ct, o);
+        xml::detach(d, asrt);
+    };
+    out.append(x);
+    return out;
+}
+
+// With allow_cbc, an EncryptedAssertion in a Response that is not signed
+// is refused CBC before it is decrypted, the same for every ciphertext:
+// decrypting it first made a padding oracle (Jager and Somorovsky), its
+// errors telling bad padding from bad XML.
+fn cbc_unsigned(sp: saml::Sp&, idp: saml::Idp&, spe: const saml::Entity&, idpe: const saml::Entity&) {
+    sp.allow_cbc = true;
+    let spcert = tv::cert("sp");
+    var a = saml::Assertion { .. };
+    for tw in [0 as u8, 0x10, 0x20, 0x01] {
+        let x = cbc_response(idp, spe, spcert, tw);
+        let e = tv::run(sp, idpe, x, "_req1", a);
+        tv::check(str("CBC in an unsigned Response, tweak ", tw), e == saml::ERR_ALGORITHM);
+    }
+    sp.allow_cbc = false;
+}
+
 fn main() {
     var sp = saml::Sp { .. };
     var idp = saml::Idp { .. };
@@ -691,5 +742,6 @@ fn main() {
     requests(sp, idp, spe, idpe);
     keys_and_algorithms(sp, idp, spe, idpe);
     hostile_input(sp, idp, spe, idpe);
+    cbc_unsigned(sp, idp, spe, idpe);
     tv::done("sp");
 }

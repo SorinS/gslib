@@ -89,6 +89,10 @@ fn hang_up(fd: i64, c: Conn&, code: u64, reason: const u8[:]) {
 // --- Server ---------------------------------------------------------------------
 
 let MAX_PEERS: i64 = 16;
+// Handshakes not yet done from one address: more are refused, so that one
+// sender cannot take every slot (Initial keys are public, and nothing
+// here validates an address before keeping state).
+let MAX_HANDSHAKES_PER_ADDR: i64 = 4;
 
 struct Server {
     fd: i64,
@@ -162,8 +166,12 @@ fn serve_step(s: Server&, cfg: const tls::ServerConfig&, max_ms: i64) {
             }
             if k < 0 { continue; }
         }
-        s.addrs[k] = from;                 // the peer's address as it is now
         recv(s.conns[k], cfg, d, now_us());
+        // The peer's address as it is now (a NAT may rebind it), followed
+        // only for a packet that opened and is the newest: a datagram that
+        // merely names the connection, or an old one replayed, does not
+        // redirect it.
+        if s.conns[k].newest { s.addrs[k] = from; }
     }
     let now = now_us();
     for k in s.conns.len {
@@ -177,7 +185,26 @@ fn serve_step(s: Server&, cfg: const tls::ServerConfig&, max_ms: i64) {
 
 fn add_peer(s: Server&, cfg: const tls::ServerConfig&, d: const u8[:], from: const net::AddrPort&) -> i64 {
     var k: i64 = -1;
-    for j in s.conns.len { if k < 0 && !s.live[j] { k = j; } }
+    var pending = 0;
+    var oldest: i64 = -1;
+    for j in s.conns.len {
+        if k < 0 && !s.live[j] { k = j; }
+        if s.live[j] && s.conns[j].state == STATE_HANDSHAKE {
+            if net::addr_equal(s.addrs[j].addr, from.addr) { pending++; }
+            if oldest < 0 || s.conns[j].started < s.conns[oldest].started { oldest = j; }
+        }
+    }
+    if pending >= MAX_HANDSHAKES_PER_ADDR { return -1; }
+    // Full: the oldest handshake still going is closed, to make room. Its
+    // slot is freed at the end of this step, like any closed one, so that
+    // an application holding its number sees it closed first; this
+    // client's Initial is dropped, and comes again.
+    if k < 0 && s.conns.len >= MAX_PEERS && oldest >= 0 {
+        s.conns[oldest].reason.clear();
+        s.conns[oldest].reason.append("evicted while handshaking");
+        s.conns[oldest].state = STATE_CLOSED;
+        return -1;
+    }
     if k < 0 {
         if s.conns.len >= MAX_PEERS { return -1; }
         let c = server(cfg, d, now_us());

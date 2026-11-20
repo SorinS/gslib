@@ -111,6 +111,19 @@ the client chose), making a connection for a new client's Initial and
 answering other versions with Version Negotiation; `accept` gives a new
 connection's index in `srv.conns`.
 
+A server holds 16 connections. Since it does not send Retry, it keeps
+state for a client whose address it has not validated, and Initial keys
+are public, so it limits what one sender can hold:
+- a handshake not done in 10 s is dropped;
+- one address has at most 4 handshakes going;
+- when every slot is taken, the oldest handshake still going is closed
+  to make room.
+
+A connection follows its peer to a new address (a NAT rebinding) only
+for a packet that decrypted and is numbered above every one before it,
+so a datagram that merely names a connection, or an old one replayed
+from elsewhere, does not redirect it.
+
 ## HTTP/3
 
 `h3(is_server)` is one side's HTTP/3 state on a connection; `h3_poll(c,
@@ -183,11 +196,16 @@ Every test runs at -O0, -O2 and with `--debug`:
   POST, SETTINGS both ways; with 15% of datagrams lost and some
   reordered, the handshake and 300 KB; the idle timeout; a Retry (a bad
   tag and the client's own ID ignored, the Initial sent again to the
-  new ID with the token); Version Negotiation both ways: 34 checks.
+  new ID with the token); a NEW_CONNECTION_ID retiring two IDs, and one
+  retiring 2^40 (CONNECTION_ID_LIMIT_ERROR, not that many frames); a
+  full received-packet history taking an older packet; a Retry with a
+  1000-byte token; twenty malformed HTTP/3 requests on one connection,
+  then one answered; Version Negotiation both ways: 41 checks.
 - `test/udp.goose`: the same over UDP on 127.0.0.1 through
   `quic.transport`: 6 checks.
 - `test/qpack.goose`: RFC 9204 B.1, every static entry, Huffman, the
-  limits and refusals, field validation: 64 checks.
+  limits and refusals, field validation (:authority and Host
+  disagreeing, a :path not starting with "/"): 66 checks.
 - `test/h3.goose`: frames, settings, the control stream a byte at a
   time, requests and responses in pieces with trailers and interim
   responses, and each error: 61 checks.
@@ -209,7 +227,8 @@ handshake, datagrams to both, transport parameters, QPACK and HTTP/3.
 ## Not done
 
 - 0-RTT, connection migration (disable_active_migration is sent; the
-  peer's new connection IDs are taken only to follow a retirement), path
+  peer's new connection IDs are taken only to follow a retirement, at
+  most 16 retired at once), path
   MTU discovery (datagrams stay at 1200 bytes), ECN, a server's Retry,
   NEW_TOKEN's tokens (a client ignores them).
 - QPACK's dynamic table (this side never uses one, and asks the peer

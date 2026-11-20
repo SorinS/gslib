@@ -115,7 +115,11 @@ takes:
   Rotate attributes counted on.
 - **Certificates and split keys.** Certify and Re-certify from a
   PKCS #10 request or a public key, with the server's CA; Validate;
-  Create and Join Split Key.
+  Create and Join Split Key (a key that is not Extractable is not split,
+  and a Sensitive key's parts are Sensitive). A wrapping key that no
+  longer protects (Deactivated, Compromised, past its Protect Stop Date)
+  wraps nothing, and a destroyed one unwraps nothing; Pre-Active keys
+  are taken.
 - **The life cycle.** Pre-Active, Active once activated or once its
   Activation Date has come, Deactivated when revoked or at its
   Deactivation Date, Compromised, Destroyed: Destroy drops the key
@@ -145,7 +149,11 @@ takes:
   Data naming an operation or a place: a Decrypt's output encrypted
   again under another key without leaving the server, its item
   Ephemeral). A delegated ticket does what its Rights allow, on the
-  objects or Object Groups they name, and delegates no more than them.
+  objects or Object Groups they name, and delegates no more than them:
+  every object an item names counts (a Private Key Unique Identifier, a
+  wrapping key, Derive and Join Split Key's several, the ID Placeholder
+  when none), and an operation on no object, such as Locate, is allowed
+  only by Rights that name no objects.
   An item asked for
   asynchronously is kept for Process and Poll. Before 2.0 the Result
   Reasons 1.x does not have are given as the 1.x one nearest them.
@@ -254,10 +262,11 @@ Every test runs at -O0, -O2 and with `--debug`:
   155 checks.
 - `test/pki.goose`: Certify, Re-certify, Validate, a certificate's
   attributes, PKCS #12 both ways, Create and Join Split Key in 1.0 to
-  2.0: 223 checks.
+  2.0, a Sensitive key's parts and a key not Extractable: 229 checks.
 - `test/session.goose`: asynchronous items, tickets, users, the 2.x
   operations, the Query functions, Rotate, Notify and Put, Rights on
-  Object Groups and delegated again: 79 checks.
+  Object Groups and delegated again, Rights checked against every object
+  an item names: 82 checks.
 
 **OASIS's test cases.** OASIS publishes test cases for KMIP 1.4, 2.0
 and 2.1: the Profiles' mandatory and optional ones and the Test Cases

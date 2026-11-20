@@ -124,6 +124,13 @@ or the credits allow is cut into several. Interim responses
 no breaks come. Encryption nonces are a counter and a random salt, never
 repeated under one key.
 
+A login with a password or a Kerberos ticket that the server's last
+SESSION_SETUP answer calls a guest or null session is refused (`ERR_AUTH`)
+rather than carried on without keys: those flags come before the session
+has keys to check a signature with, so a man in the middle could set them
+to take signing and encryption off a real login. Windows refuses such a
+guest fallback too. `login_anonymous` is the way to an anonymous session.
+
 ## goose-smbclient
 
 ```

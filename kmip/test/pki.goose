@@ -335,6 +335,25 @@ fn split_keys(c: kmip::Local&, v: kmip::Version) {
     check(str(tag, "XOR, 4 of 4"), e7 == kmip::OK && e8 == kmip::OK && xo.material[..] == ko.material[..]);
     let xbad, e9 = kmip::create_split_key(c, ku, 4, 2, kmip::SPLIT_XOR, "", EMPTY);
     check(str(tag, "XOR with a threshold below the parts refused"), e9 == kmip::ERR_FAILED && c.last_reason == kmip::reason_for(kmip::REASON_INVALID_FIELD, c.version));
+    // The parts are the key: a sensitive key's parts are sensitive (Get
+    // refuses them in clear, as it refuses the key), and a key that is
+    // not extractable is not split.
+    var sens = kmip::attrs();
+    kmip::attr_usage(sens, kmip::USAGE_ENCRYPT | kmip::USAGE_DECRYPT);
+    kmip::attr_bool(sens, kmip::TAG_SENSITIVE, true);
+    let so = kmip::symmetric_key(kmip::ALG_AES, ko.material);
+    let su, esu = kmip::register(c, so, sens);
+    let sp, esp = kmip::create_split_key(c, su, 2, 2, kmip::SPLIT_XOR, "", EMPTY);
+    let sp0, esp0 = kmip::get(c, if sp.len > 0 { sp[0] } else { "" }, 0);
+    check(str(tag, "a sensitive key's parts: sensitive"), esu == kmip::OK && esp == kmip::OK && esp0 == kmip::ERR_FAILED &&
+          c.last_reason == kmip::reason_for(kmip::REASON_SENSITIVE, c.version));
+    var noext = kmip::attrs();
+    kmip::attr_usage(noext, kmip::USAGE_ENCRYPT | kmip::USAGE_DECRYPT);
+    kmip::attr_bool(noext, kmip::TAG_EXTRACTABLE, false);
+    let nu, enu = kmip::register(c, so, noext);
+    let np, enp = kmip::create_split_key(c, nu, 2, 2, kmip::SPLIT_XOR, "", EMPTY);
+    check(str(tag, "a key not extractable is not split"), enu == kmip::OK && enp == kmip::ERR_FAILED &&
+          c.last_reason == kmip::reason_for(kmip::REASON_NOT_EXTRACTABLE, c.version));
     let mixed = pick(parts, [0, 2]);
     var mix: u8[..256][>..] = [];
     for u in mixed { mix.push(u); }

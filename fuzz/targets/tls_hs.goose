@@ -185,10 +185,10 @@ fn client_messages(input: const u8[:], variant: u8) {
     var out: u8[>..] = [];
     c.version = tls::VERSION_TLS13;
     c.state = states[(variant % 6) as i64];
-    if cert && alpn { each_message(input) { m => tls::client_message(c, CCC4, m, out) }; }
-    else if cert { each_message(input) { m => tls::client_message(c, CCC0, m, out) }; }
-    else if alpn { each_message(input) { m => tls::client_message(c, CC4, m, out) }; }
-    else { each_message(input) { m => tls::client_message(c, CC0, m, out) }; }
+    if cert && alpn { each_message(input) { m => tls::client_message(c, CCC4, m, out, x509::sign_data) }; }
+    else if cert { each_message(input) { m => tls::client_message(c, CCC0, m, out, x509::sign_data) }; }
+    else if alpn { each_message(input) { m => tls::client_message(c, CC4, m, out, x509::sign_data) }; }
+    else { each_message(input) { m => tls::client_message(c, CC0, m, out, x509::sign_data) }; }
 }
 
 fn server_messages(input: const u8[:], variant: u8) {
@@ -198,7 +198,7 @@ fn server_messages(input: const u8[:], variant: u8) {
     s.version = tls::VERSION_TLS13;
     s.state = states[(variant % 4) as i64];
     var out: u8[>..] = [];
-    each_message(input) { m => tls::server_message(s, sc, m, out) };
+    each_message(input) { m => tls::server_message(s, sc, m, out, x509::sign_data) };
 }
 
 var OUTER: u8[>..] = [];

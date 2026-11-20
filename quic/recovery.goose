@@ -73,6 +73,9 @@ fn cwnd_allows(r: const Recovery&, size: i64) -> bool { r.bytes_in_flight + size
 
 fn on_packet_sent(r: Recovery&, space: i64, pn: i64, now: i64, size: i64, ack_eliciting: bool, in_flight: bool,
                   rec_at: i64, rec_n: i64) {
+    // A packet of ACKs alone is kept only while the table is half empty: a
+    // peer acknowledging nothing would otherwise fill it with them.
+    if !in_flight && r.n_sent >= MAX_SENT / 2 { return; }
     var k: i64 = -1;
     for i in MAX_SENT { if k < 0 && !r.sent[i].used { k = i; } }
     if k < 0 { return; }
@@ -129,7 +132,12 @@ fn remove_sent(r: Recovery&, k: i64) {
 // ack_delay already scaled to microseconds. F is called for each packet
 // newly acknowledged (sent, true) or declared lost (sent, false). Returns
 // false when it acknowledges a packet never sent (PROTOCOL_VIOLATION).
-fn on_ack_received<F>(r: Recovery&, space: i64, ranges: const i64[:], ack_delay: i64, now: i64, confirmed: bool, next_pn: i64) -> bool {
+// At most this many ranges of one ACK frame are looked at (the highest):
+// each costs a pass over the table, and a frame can hold hundreds.
+let MAX_ACK_RANGES: i64 = 64;
+
+fn on_ack_received<F>(r: Recovery&, space: i64, all_ranges: const i64[:], ack_delay: i64, now: i64, confirmed: bool, next_pn: i64) -> bool {
+    let ranges = all_ranges[..::min(all_ranges.len, 2 * MAX_ACK_RANGES)];
     var largest: i64 = -1;
     var i = 0;
     while i + 1 < ranges.len { largest = ::max(largest, ranges[i + 1]); i += 2; }

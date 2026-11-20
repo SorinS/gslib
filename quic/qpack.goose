@@ -468,8 +468,11 @@ fn regular_ok(recs: const u8[:], pseudo: i64&) -> bool {
 
 // A request's fields (§4.3.1): :method, and :scheme and :path (not empty)
 // unless it is CONNECT, each once; an http or https request has
-// :authority or Host; CONNECT has :authority and no :scheme or :path,
-// unless it is extended (:protocol, RFC 9220); no other pseudo-headers.
+// :authority or Host, the same when it has both, and a :path that starts
+// with "/" (or is "*", for OPTIONS); CONNECT has :authority and no
+// :scheme or :path, unless it is extended (:protocol, RFC 9220); no other
+// pseudo-headers. A proxy or router that read one name from :authority
+// and another from Host could be steered by the difference.
 fn validate_request(recs: const u8[:]) -> i64 {
     var pseudo: i64 = 0;
     if !regular_ok(recs, pseudo) { return FIELDS_MALFORMED; }
@@ -483,14 +486,25 @@ fn validate_request(recs: const u8[:]) -> i64 {
     var is_connect = false;
     var http_scheme = false;
     var path_empty = false;
+    var path_form = false;              // "/..." or "*"
+    var path_star = false;
+    var is_options = false;
+    var authority_v: u8[>..] = [];
+    var host_v: u8[>..] = [];
+    var hosts = 0;
     each_qpack_field(recs) { n, v, never =>
-        if n == ":method" { method++; is_connect = v == "CONNECT"; if v.len == 0 { bad = true; } }
+        if n == ":method" { method++; is_connect = v == "CONNECT"; is_options = v == "OPTIONS"; if v.len == 0 { bad = true; } }
         else if n == ":scheme" { scheme++; http_scheme = v == "http" || v == "https"; }
-        else if n == ":path" { path++; path_empty = v.len == 0; }
-        else if n == ":authority" { authority++; }
+        else if n == ":path" {
+            path++;
+            path_empty = v.len == 0;
+            path_star = v == "*";
+            path_form = path_star || (v.len > 0 && v[0] == '/');
+        }
+        else if n == ":authority" { authority++; authority_v.clear(); authority_v.append(v); }
         else if n == ":protocol" { protocol++; }
         else if n.len > 0 && n[0] == ':' { bad = true; }
-        else if n == "host" { host = true; }
+        else if n == "host" { host = true; hosts++; host_v.clear(); host_v.append(v); }
     };
     if bad || method != 1 || scheme > 1 || path > 1 || authority > 1 || protocol > 1 { return FIELDS_MALFORMED; }
     if is_connect && protocol == 0 {
@@ -500,6 +514,8 @@ fn validate_request(recs: const u8[:]) -> i64 {
     if protocol > 0 && !is_connect { return FIELDS_MALFORMED; }
     if scheme != 1 || path != 1 || path_empty { return FIELDS_MALFORMED; }
     if http_scheme && authority == 0 && !host { return FIELDS_MALFORMED; }
+    if hosts > 1 || (authority == 1 && host && authority_v != host_v) { return FIELDS_MALFORMED; }
+    if http_scheme && (!path_form || (path_star && !is_options)) { return FIELDS_MALFORMED; }
     return FIELDS_OK;
 }
 

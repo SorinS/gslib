@@ -763,10 +763,25 @@ tools/govectors.sh > test/vectors/xcrypto.txt   # regenerate it
   RSA private and constant-time public operations, X25519, ECDSA P-256 and
   secp256k1 and Ed25519 signing, Shamir's sharing (a split and a join in
   GF(2^8), a split in a prime field), Camellia (a block, a key schedule)
-  and Camellia-CMAC. Two controls must leak (an early-exit comparison, BigInt's
-  modpow) and a third, constant time by construction, sets the machine's
-  floor: a leak is t above 500, or above 10 with ten times that floor's
-  effect size.
+  and Camellia-CMAC; AES (a block, AES-256's key schedule), GCM's GHASH
+  under a secret key, ChaCha20-Poly1305, Poly1305, HMAC-SHA-256, X25519
+  with any peer's point, X448, P-256 ECDH, Ed448 signing and ML-KEM-768
+  decapsulation (KyberSlash's divisions). Some targets turn the input
+  into a choice between two cases, class 0 all zeros (FIXED_ZERO): the
+  tag checks of AES-GCM, AES-CCM and ChaCha20-Poly1305 (a tag wrong in
+  its last byte against one wrong in its first), ct_eq_bytes, ML-KEM's
+  implicit rejection (a good ciphertext against a changed one), RSA PKCS
+  #1 v1.5 session-key decryption (good padding against bad: Bleichenbacher,
+  Marvin), RSA-OAEP's two failures (Manger), and HMAC over a CBC record
+  whose length is the secret (Lucky13). Two controls must leak (an
+  early-exit comparison, BigInt's modpow) and a third, constant time by
+  construction, sets the machine's floor: a leak is t above 500, or above
+  10 with ten times that floor's effect size. `dut_or_bytes`, the same
+  loads and ORs as ct_eq_bytes without the comparison, shows what all
+  zeros against random bytes does by itself: on a Xeon both show a t of
+  a few hundred over 500 million measurements (an effect a hundredth of
+  the noise), the control more than ct_eq_bytes, whose code clang makes
+  four loads, three ORs and one compare.
 - `x25519_field`: GF(2^255 − 19) arithmetic against `BigInt`, including
   non-canonical encodings.
 - `x25519_rfc`: the RFC 7748 §5.2 vectors (with the 1,000-iteration chain)

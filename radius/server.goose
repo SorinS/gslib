@@ -137,7 +137,9 @@ fn handle_eap<F>(srv: Server&, cfg: const EapConfig&, req: const Packet&, resp: 
     }
     if st == EAP_DONE_OK {
         resp.code = ACCESS_ACCEPT;
-        let who = srv.sessions[i].s.identity;
+        // The name the conversation authenticated, not the outer identity
+        // a tunnel's peer gave unchecked (a NAS bills and authorizes by it).
+        let who = authenticated_identity(srv.sessions[i].s);
         if who.len > 0 { let oku = add(resp, USER_NAME, who); }
         let msk = session_msk(srv.sessions[i].s);
         if msk.len > 0 && !add_mppe_keys(resp, msk, srv.secret, req.auth) {

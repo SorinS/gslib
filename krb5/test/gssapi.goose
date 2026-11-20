@@ -261,6 +261,43 @@ fn delegation() {
     tv::check_int("delegated count", n, 1);
 }
 
+// With any_name, the server reported is the keytab entry whose key opened
+// the ticket: a ticket for HTTP/web.example whose cleartext sname (outside
+// the encrypted part) was rewritten to admin/anything is reported as for
+// HTTP/web.example.
+fn any_name_server() {
+    let svc = krb5::random_key(18);
+    let sess = krb5::random_key(18);
+    let tp = krb5::EncTicketPart {
+        flags: 0, key: sess, crealm: "EXAMPLE.COM", cname: krb5::principal_name(1, "alice"), tr_type: 1, transited: "",
+        authtime: NOW - 600, has_starttime: true, starttime: NOW - 600, endtime: NOW + 3000, has_renew_till: false, renew_till: 0,
+        has_caddr: false, caddr: [], has_authz: false, authz: [],
+    };
+    var plain: u8[>..] = [];
+    krb5::encode_enc_ticket_part(plain, tp);
+    var c: u8[>..] = [];
+    krb5::encrypt(svc, 2, plain, c);
+    // The cleartext sname rewritten to a name the keytab does not hold.
+    let t = krb5::Ticket { realm: "EXAMPLE.COM", sname: krb5::principal_name(1, "admin/anything"),
+                           enc_part: krb5::EncryptedData { etype: 18, has_kvno: true, kvno: 3, cipher: copy(c) } };
+    var der: u8[>..] = [];
+    krb5::encode_ticket(der, t);
+    let cred = krb5::Credential {
+        client_type: 1, client: "alice", client_realm: "EXAMPLE.COM", server_type: 1, server: "HTTP/web.example",
+        server_realm: "EXAMPLE.COM", key: sess, authtime: NOW - 600, starttime: NOW - 600, endtime: NOW + 3000, renew_till: 0,
+        is_skey: false, flags: 0, addresses: [], authdata: [], ticket: copy(der), second_ticket: "",
+    };
+    var kt: krb5::KeytabEntry[>..] = [];
+    kt.push(krb5::KeytabEntry { name_type: 1, name: "HTTP/web.example", realm: "EXAMPLE.COM", timestamp: 0, kvno: 3, key: svc });
+    var rc: krb5::ReplayEntry[>..] = [];
+    var t1: u8[>..] = [];
+    var ictx, err = krb5::gss_init(cred, 0, "", false, "", NOW, 1, t1);
+    var t2: u8[>..] = [];
+    var actx, acc, aerr = krb5::gss_accept(t1, kt, true, rc, NOW, 0, 300, "", false, t2);
+    tv::check("any_name: the keytab entry that opened the ticket is the server, not its cleartext sname",
+              aerr == 0 && acc.ap.server == "HTTP/web.example");
+}
+
 fn main() {
     exchange("aes256 mutual", 18, true);
     exchange("aes128 mutual", 17, true);
@@ -270,5 +307,6 @@ fn main() {
     exchange("rc4 mutual", 23, true);
     acceptor_checks();
     delegation();
+    any_name_server();
     tv::done("gssapi");
 }

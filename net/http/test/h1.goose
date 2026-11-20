@@ -415,7 +415,28 @@ fn writing() {
           http::reason_phrase(299) == "");
 }
 
+// Heads are written only from field sections add_field would have made:
+// a bare LF or CR in a value, CRLF CRLF, a line without a name, or one with
+// no CRLF at its end is refused, so that a caller's text cannot add a
+// field or a request.
+fn written_fields() {
+    let good = "X-User: bob\r\nAccept: */*\r\n";
+    check("fields as add_field makes them", http::fields_ok(good) && http::fields_ok(""));
+    let bad = ["X-User: bob\nX-Injected: 1\r\n", "X-User: bob\rX: 1\r\n", "X-User: bob\r\n\r\nGET /admin HTTP/1.1\r\n",
+               "no colon\r\n", ": no name\r\n", "X-User: bob", "Bad Name: x\r\n", "X: trailing \r\n"];
+    var refused = 0;
+    for f in bad {
+        var out: u8[>..] = [];
+        if !http::fields_ok(f) && !http::write_request_head(out, "GET", "/", f) && !http::write_response_head(out, 200, f) &&
+           out.len == 0 {
+            refused++;
+        }
+    }
+    check("eight bad field sections refused", refused == 8);
+}
+
 fn main() {
+    written_fields();
     requests();
     limits();
     incremental();

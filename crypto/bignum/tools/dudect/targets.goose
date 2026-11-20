@@ -18,6 +18,14 @@ import gslib.crypto.bignum.ed25519;
 import gslib.crypto.bignum.camellia;
 import gslib.crypto.bignum.cmac;
 import gslib.crypto.bignum.shamir;
+import gslib.crypto.bignum.aes;
+import gslib.crypto.bignum.gcm;
+import gslib.crypto.bignum.ccm;
+import gslib.crypto.bignum.chacha20;
+import gslib.crypto.bignum.hmac;
+import gslib.crypto.bignum.mlkem;
+import gslib.crypto.bignum.x448;
+import gslib.crypto.bignum.ed448;
 
 var rsa_key = bignum::RsaPrivateKey { n: [], e: [], d: [], p: [], q: [], dp: [], dq: [], qinv: [] };
 var m512: u32[..16] = [];           // an odd 512-bit modulus, with its R^2 and -1/m
@@ -27,6 +35,19 @@ var x512: u32[..16] = [];
 var m1024: u32[..32] = [];
 var big_m: u8[..64] = [];           // the control's modulus, as bytes
 var big_x: u8[..64] = [];
+// For the targets whose class 0 is all zeros (FIXED_ZERO in harness.c):
+// two ciphertexts or sealed messages that the input chooses between.
+var gcm_sealed: u8[..80] = [];
+var ccm_sealed: u8[..80] = [];
+var chacha_sealed: u8[..80] = [];
+var pkcs1_good: u8[..128] = [];        // 00 02 PS 00 and a 32-byte key
+var pkcs1_bad: u8[..128] = [];         // 00 02 PS without the 00
+var oaep_y1: u8[..128] = [];           // OAEP's first byte not zero
+var oaep_hash: u8[..128] = [];         // first byte zero, label hash wrong
+var mlkem_seed: u8[..64] = [];
+var mlkem_ct: u8[..1088] = [];         // ML-KEM-768: a ciphertext that decapsulates
+var mlkem_ct_bad: u8[..1088] = [];     // and one with a byte changed (implicit rejection)
+var p256_peer: u8[..65] = [];
 
 fn pseudo(seed: u32, n: i64) -> u8[>..] {
     var out: u8[>..] = [];
@@ -59,6 +80,62 @@ fn main() {
     bignum::limbs_from_be(m1024, mb2);
     big_m.append(mb);
     big_x.append(xb);
+
+    let msg = pseudo(10, 64);
+    let nonce: u8[12] = [0; 12];
+    let key16 = pseudo(11, 16);
+    let key32 = pseudo(12, 32);
+    gcm_sealed.append(bignum::aes_gcm_seal(key16, nonce, "", msg));
+    ccm_sealed.append(bignum::aes_ccm_seal(key16, nonce, "", msg, 16));
+    chacha_sealed.append(bignum::chacha20_poly1305_seal(key32, nonce, "", msg));
+
+    // RSA blocks built by hand and encrypted with the raw public operation.
+    var em = pseudo(13, 128);
+    for i in 128 { if em[i] == 0 { em[i] = 1; } }
+    em[0] = 0;
+    em[1] = 2;
+    em[128 - 33] = 0;
+    let c1, ok1 = bignum::rsa_public_op_ct(rsa_key, em);
+    pkcs1_good.append(c1);
+    em[128 - 33] = 7;
+    let c2, ok2 = bignum::rsa_public_op_ct(rsa_key, em);
+    pkcs1_bad.append(c2);
+    var em2 = pseudo(14, 128);
+    em2[0] = 1;
+    let c3, ok3 = bignum::rsa_public_op_ct(rsa_key, em2);
+    oaep_y1.append(c3);
+    em2[0] = 0;
+    let c4, ok4 = bignum::rsa_public_op_ct(rsa_key, em2);
+    oaep_hash.append(c4);
+
+    mlkem_seed.append(pseudo(15, 64));
+    let ek, dk = bignum::mlkem_keys_from_seed(3, mlkem_seed);
+    let ss, ct, oke = bignum::mlkem_encaps_with(3, ek, pseudo(16, 32));
+    mlkem_ct.append(ct);
+    mlkem_ct_bad.append(ct);
+    mlkem_ct_bad[500] = mlkem_ct_bad[500] ^ 1;
+
+    var psk = pseudo(17, 32);
+    psk[0] = psk[0] & 0x7f;
+    let curve = bignum::p256();
+    p256_peer.append(bignum::ec_public_key(curve, psk));
+}
+
+// a when the input's first byte is even, b when it is odd, chosen with a
+// mask (the choice is the secret).
+fn choose(out: u8[>..]&, a: const u8[:], b: const u8[:], data: const u8[:]) {
+    let m: u8 = (0 - ((data[0] & 1) as u32)) as! u8;
+    for i in a.len { out.push(a[i] ^ (m & (a[i] ^ b[i]))); }
+}
+
+// A sealed message whose tag is wrong: in its last byte only when the
+// input is all zeros (class 0), from its first byte on, almost always,
+// when it is random. The tag check must take the same time for both.
+fn spoil_tag(out: u8[>..]&, sealed: const u8[:], data: const u8[:]) {
+    let n = sealed.len - 16;
+    out.append(sealed[..n]);
+    for i in 15 { out.push(sealed[n + i] ^ data[i]); }
+    out.push(sealed[n + 15] ^ (data[15] | 1));
 }
 
 // The control, which must be caught: BigInt's modpow, whose time follows
@@ -220,4 +297,174 @@ export fn dut_cmac_camellia(data: const u8[:]) -> u8 {
     let k = bignum::camellia_init(data[..16]);
     let t = bignum::cmac(k, "a message of forty bytes, give or take..");
     return t[0];
+}
+
+// AES-128 encryption of one block under a fixed key, the input the block
+// (16 bytes).
+export fn dut_aes128_encrypt(data: const u8[:]) -> u8 {
+    let key: u8[16] = [0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c];
+    let k = bignum::aes_init(key);
+    let out = bignum::aes_encrypt_block(k, data[..16]);
+    return out[0];
+}
+
+// AES-256's key schedule and one block's decryption, the input the key
+// (32 bytes).
+export fn dut_aes256_key(data: const u8[:]) -> u8 {
+    let zero: u8[16] = [0; 16];
+    let k = bignum::aes_init(data[..32]);
+    let out = bignum::aes_decrypt_block(k, zero);
+    return out[0];
+}
+
+// AES-128-GCM sealing of 64 bytes, the input the key (16 bytes): GHASH
+// multiplies by H, which the key makes secret.
+export fn dut_aes_gcm_seal(data: const u8[:]) -> u8 {
+    let nonce: u8[12] = [0; 12];
+    let sealed = bignum::aes_gcm_seal(data[..16], nonce, "", big_x);
+    return sealed[79];
+}
+
+// AES-128-GCM opening with a wrong tag (spoil_tag; class 0 all zeros).
+export fn dut_aes_gcm_open_tag(data: const u8[:]) -> u8 {
+    let key16 = pseudo(11, 16);
+    let nonce: u8[12] = [0; 12];
+    var s: u8[>..] = [];
+    spoil_tag(s, gcm_sealed, data);
+    let out, ok = bignum::aes_gcm_open(key16, nonce, "", s);
+    return if ok { 1 } else { 0 };
+}
+
+// AES-128-CCM opening with a wrong tag, as above.
+export fn dut_aes_ccm_open_tag(data: const u8[:]) -> u8 {
+    let key16 = pseudo(11, 16);
+    let nonce: u8[12] = [0; 12];
+    var s: u8[>..] = [];
+    spoil_tag(s, ccm_sealed, data);
+    let out, ok = bignum::aes_ccm_open(key16, nonce, "", s, 16);
+    return if ok { 1 } else { 0 };
+}
+
+// ChaCha20-Poly1305 sealing of 64 bytes, the input the key (32 bytes).
+export fn dut_chacha20_poly1305_seal(data: const u8[:]) -> u8 {
+    let nonce: u8[12] = [0; 12];
+    let sealed = bignum::chacha20_poly1305_seal(data[..32], nonce, "", big_x);
+    return sealed[79];
+}
+
+// ChaCha20-Poly1305 opening with a wrong tag, as above.
+export fn dut_chacha20_poly1305_open_tag(data: const u8[:]) -> u8 {
+    let key32 = pseudo(12, 32);
+    let nonce: u8[12] = [0; 12];
+    var s: u8[>..] = [];
+    spoil_tag(s, chacha_sealed, data);
+    let out, ok = bignum::chacha20_poly1305_open(key32, nonce, "", s);
+    return if ok { 1 } else { 0 };
+}
+
+// Poly1305 of 64 bytes, the input the one-time key (32 bytes).
+export fn dut_poly1305(data: const u8[:]) -> u8 {
+    let t = bignum::poly1305(data[..32], big_x);
+    return t[0];
+}
+
+// HMAC-SHA-256 of 64 bytes, the input the key (32 bytes).
+export fn dut_hmac_sha256(data: const u8[:]) -> u8 {
+    let t = bignum::hmac_sha256(data[..32], big_x);
+    return t[0];
+}
+
+// HMAC-SHA-256 over a TLS CBC record's 13-byte header and the first len
+// of 64 bytes, len from 32 to 63 taken from the input's first byte (the
+// padding's length, which is secret: Lucky13).
+export fn dut_hmac_prefix_ct(data: const u8[:]) -> u8 {
+    let key: u8[32] = [0x11; 32];
+    let hdr: u8[13] = [0x17; 13];
+    let len: i64 = 32 + ((data[0] & 31) as i64);
+    let t = bignum::hmac_prefix_ct(256, key, hdr, big_x, len, 32);
+    return t[0];
+}
+
+// The constant-time byte comparison: the input against zeros, so class 0
+// is equal throughout and class 1 differs at the first byte (64 bytes).
+export fn dut_ct_eq_bytes(data: const u8[:]) -> u8 {
+    let zero: u8[64] = [0; 64];
+    return bignum::ct_eq_bytes(zero, data[..64]) as! u8;
+}
+
+// A control for dut_ct_eq_bytes: the same loads and ORs of the same
+// input, no comparison, so whatever it shows comes from the input's
+// values (all zeros against random), not from ct_eq_bytes.
+export fn dut_or_bytes(data: const u8[:]) -> u8 {
+    var acc: u8 = 0;
+    for i in 64 { acc = acc | data[i]; }
+    return acc;
+}
+
+// X25519 with a fixed peer's point, the input the scalar (32 bytes).
+export fn dut_x25519(data: const u8[:]) -> u8 {
+    let u = pseudo(18, 32);
+    let s = bignum::x25519(data[..32], u);
+    return s[0];
+}
+
+// X448 on the base point, the input the scalar (56 bytes).
+export fn dut_x448_base(data: const u8[:]) -> u8 {
+    let pk = bignum::x448_base(data[..56]);
+    return pk[0];
+}
+
+// ECDH on P-256 with a fixed peer, the input the private key (32 bytes,
+// top bit cleared so that it is below n).
+export fn dut_ecdh_p256(data: const u8[:]) -> u8 {
+    var sk: u8[32] = [0; 32];
+    for i in 32 { sk[i] = data[i]; }
+    sk[0] = sk[0] & 0x7f;
+    let curve = bignum::p256();
+    let s, ok = bignum::ecdh_shared(curve, sk, p256_peer);
+    return if ok { s[0] } else { 0 };
+}
+
+// Ed448 signing of one message, the input the seed (57 bytes).
+export fn dut_ed448_sign(data: const u8[:]) -> u8 {
+    let sig = bignum::ed448_sign(data[..57], "a message");
+    return sig[0];
+}
+
+// ML-KEM-768 decapsulation under a fixed key, the input the ciphertext
+// (1088 bytes): its decompression divides by q (KyberSlash).
+export fn dut_mlkem768_decaps(data: const u8[:]) -> u8 {
+    let ss, ok = bignum::mlkem_decaps(3, mlkem_seed, data[..1088]);
+    return if ok { ss[0] } else { 0 };
+}
+
+// ML-KEM-768 decapsulation of a good ciphertext or of one with a byte
+// changed (choose; class 0 the good one): implicit rejection must not
+// show.
+export fn dut_mlkem768_reject(data: const u8[:]) -> u8 {
+    var c: u8[>..] = [];
+    choose(c, mlkem_ct, mlkem_ct_bad, data);
+    let ss, ok = bignum::mlkem_decaps(3, mlkem_seed, c);
+    return if ok { ss[0] } else { 0 };
+}
+
+// RSA PKCS #1 v1.5 decryption of a 32-byte session key, from a well
+// formed block or from one with no 00 after the padding (choose; class 0
+// the good one): Bleichenbacher's oracle, and Marvin's timing.
+export fn dut_rsa_pkcs1_session_key(data: const u8[:]) -> u8 {
+    var c: u8[>..] = [];
+    choose(c, pkcs1_good, pkcs1_bad, data);
+    var key: u8[32] = [0x42; 32];
+    let ok = bignum::rsa_decrypt_pkcs1_session_key(rsa_key, c, key);
+    return key[0];
+}
+
+// RSA-OAEP decryption of two bad blocks: one whose first byte is not
+// zero, one whose label hash is wrong (choose; class 0 the first). Manger's
+// attack tells them apart by time.
+export fn dut_rsa_oaep_manger(data: const u8[:]) -> u8 {
+    var c: u8[>..] = [];
+    choose(c, oaep_y1, oaep_hash, data);
+    let m, ok = bignum::rsa_decrypt_oaep(rsa_key, c);
+    return if ok { 1 } else { 0 };
 }

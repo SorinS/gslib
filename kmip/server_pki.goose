@@ -607,8 +607,9 @@ fn op_create_split_key(s: Server&, owner: const u8[:], v: Version, buf: const u8
     } else if method != SPLIT_XOR && method != SPLIT_POLYNOMIAL_SHARING_GF_2_8 && method != SPLIT_POLYNOMIAL_SHARING_GF_2_16 {
         return fail(REASON_INVALID_FIELD, "an unknown Split Key Method");
     }
-    let a = payload_attrs(buf, doc, p, TAG_TEMPLATE_ATTRIBUTE, TAG_ATTRIBUTES);
+    var a = payload_attrs(buf, doc, p, TAG_TEMPLATE_ATTRIBUTE, TAG_ATTRIBUTES);
     var src = new_object(OBJ_SYMMETRIC_KEY);
+    var src_sensitive = false;
     if child(doc, p, TAG_UNIQUE_IDENTIFIER) >= 0 {
         let i = find_object(s, owner, uid_in(s, buf, doc, p));
         if i < 0 { return fail(REASON_ITEM_NOT_FOUND, "no such object"); }
@@ -618,6 +619,14 @@ fn op_create_split_key(s: Server&, owner: const u8[:], v: Version, buf: const u8
             return fail(REASON_INVALID_OBJECT_TYPE, "keys and secret data are split");
         }
         if o.wrapped { return fail(REASON_INVALID_OBJECT_TYPE, "a wrapped key is not split"); }
+        // The parts are the key: one that may not leave is not split, and
+        // a sensitive one's parts are sensitive, leaving wrapped only (Get
+        // would otherwise give them in clear, and they join into the key).
+        let sa = attrs_of(s.objects[i]);
+        let ext, eok = get_bool(sa, TAG_EXTRACTABLE);
+        if eok && !ext { return fail(REASON_NOT_EXTRACTABLE, "a key that is not extractable is not split"); }
+        let sens, sok = get_bool(sa, TAG_SENSITIVE);
+        src_sensitive = sok && sens;
         src = copy(o);
     } else {
         let alg, aok = get_enum(a, TAG_CRYPTOGRAPHIC_ALGORITHM);
@@ -634,6 +643,11 @@ fn op_create_split_key(s: Server&, owner: const u8[:], v: Version, buf: const u8
         return fail(REASON_INVALID_FIELD, "the method does not take those (XOR: threshold = parts; GF(2^8): up to 255 parts; GF(2^16): an even length; prime field: a prime above the key)");
     }
     if src.length == 0 { src.length = (src.material.len * 8) as! i32; }
+    if src_sensitive {
+        var item: u8[>..] = [];
+        put_bool(item, TAG_SENSITIVE, true);
+        set_single(a, item);
+    }
     for x in n as i64 {
         var o = new_object(OBJ_SPLIT_KEY);
         o.key_format = src.key_format;

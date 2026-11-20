@@ -118,7 +118,18 @@ loop {
 
 An EAP method's MSK goes to the NAS as MS-MPPE-Recv-Key (its first half)
 and MS-MPPE-Send-Key, salt-encrypted, as RFC 2548 and every access
-point expect; the outer identity as User-Name.
+point expect; as User-Name, the name the conversation authenticated
+(`authenticated_identity`): PEAP's and TTLS's inner identity, not the
+outer one the peer gives unchecked; EAP-MD5's and MS-CHAPv2's identity;
+none for EAP-TLS, which authenticates a certificate.
+
+EAP-TLS succeeds only with a client certificate that was given and
+verified, whatever the TLS configuration says: one configuration shared
+with PEAP and TTLS can only ask for a certificate if given, and a peer
+without one must not get in by choosing EAP-TLS. A Nak is taken only
+before the method's first response, so a TLS connection set up for one
+method is never carried on as another's. A peer takes an MS-CHAPv2
+Success only after answering a Challenge with the same identifier.
 
 The EAP steps know nothing of RADIUS: `peer_step` and `server_step` take
 an EAP packet and give the next, so EAPOL could carry them as well.

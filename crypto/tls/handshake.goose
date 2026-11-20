@@ -362,6 +362,8 @@ struct Conn {
     peer_verified: bool,              // the peer's certificate was checked against the roots
     peer_schemes: u16[..32], alpn: u8[..255], sni: u8[..255],
     tickets: i64, key_updates: i64,
+    renegotiations: i64,              // TLS 1.2 renegotiations refused, HelloRequests ignored
+    session_created: i64,             // a resumed session's first handshake, in s (0: not resumed)
     psk_offered: bool, resumed: bool,  // the client offered its session; the PSK was accepted
     psk_dhe: bool,                     // the client allows psk_dhe_ke, so takes tickets
     peer_not_after: i64,               // the server certificate's notAfter, for sessions (0: unchecked)
@@ -375,6 +377,7 @@ struct Conn {
     ech_offered: bool, ech_seen: bool, ech_confirm: bool, ech_accepted: bool, ech_backend: bool,
     ech_ctx: bignum::HpkeContext, ech_kdf: u16, ech_aead: u16, ech_config_id: u8, ech_max_name: i64,
     ech_public_name: u8[..255], ech_enc: u8[..2048], outer_random: u8[32], ech_retry: u8[..8192],
+    ech_retry_ok: bool,               // the public name's handshake succeeded: ech_retry is authenticated
     th_inner: Transcript,             // the client's inner transcript
     // TLS 1.2: the client offers TLS 1.2 and 1.3, and its TLS 1.2 session;
     // the master secret, extended or not; the peer's random; the peer
@@ -410,11 +413,11 @@ fn new_conn(is_server: bool, seed: u64) -> Conn {
         drbg_k: [0; 32], drbg_v: [1; 32], random: [0; 32], session_id: [],
         group: 0, group2: 0, x25519_sk: [0; 32], ec_sk: [], mlkem_seed: [0; 64], hrr: false, ccs_sent: false, cert_requested: false,
         ccs_seen: false, wiped: false, useless: 0, skip_early: false, early_skipped: 0, ch1_digest: [0; 32], client_version: 0,
-        cr_context: [], cert_scheme: 0, peer_verified: false, peer_schemes: [], alpn: [], sni: [], tickets: 0, key_updates: 0,
+        cr_context: [], cert_scheme: 0, peer_verified: false, peer_schemes: [], alpn: [], sni: [], tickets: 0, key_updates: 0, renegotiations: 0, session_created: 0,
         psk_offered: false, resumed: false, psk_dhe: false, peer_not_after: 0, has_session: false, session: no_session(),
         ech_offered: false, ech_seen: false, ech_confirm: false, ech_accepted: false, ech_backend: false,
         ech_ctx: bignum::hpke_empty_context(), ech_kdf: 0, ech_aead: 0, ech_config_id: 0, ech_max_name: 0,
-        ech_public_name: [], ech_enc: [], outer_random: [0; 32], ech_retry: [], th_inner: transcript(256),
+        ech_public_name: [], ech_enc: [], outer_random: [0; 32], ech_retry: [], ech_retry_ok: false, th_inner: transcript(256),
         offer12: false, offer13: false, session12_offered: false, master: [], ems: false, peer_random: [0; 32],
         secure_reneg: false, ticket12: false, peer_share: [], log: log12(),
         quic: false, rlevel: 0, wlevel: 0, quic_local: [], quic_peer: [], has_quic_peer: false,
@@ -491,12 +494,15 @@ fn peer_verified(c: const Conn&) -> bool { c.peer_verified }
 // Whether ECH was accepted: the server took the inner ClientHello. A
 // client whose ECH was not accepted fails with ech_required once the
 // handshake with the public name is done; ech_retry_configs then has the
-// configs the server sent for a retry (empty for none).
+// configs the server sent for a retry (empty for none). They are given
+// only after that handshake succeeded, the server's certificate and
+// Finished checked (§6.1.6): a handshake that failed in any other way
+// gives none, since whoever sent them was not authenticated.
 fn ech_accepted(c: const Conn&) -> bool { c.ech_accepted }
 
 fn ech_retry_configs(c: const Conn&) -> u8[>..] {
     var out: u8[>..] = [];
-    out.append(c.ech_retry);
+    if c.ech_retry_ok { out.append(c.ech_retry); }
     return out;
 }
 
@@ -1529,9 +1535,17 @@ fn client_encrypted_extensions(c: Conn&, cfg: const ClientConfig&, m: const u8[:
                 c.ech_retry.clear();
                 c.ech_retry.append(m[e.pos..e.end]);
             }
-        } else if ty == EXT_KEY_SHARE || ty == EXT_SUPPORTED_VERSIONS || ty == EXT_COOKIE || ty == EXT_SIGNATURE_ALGORITHMS {
-            return fail(c, ALERT_ILLEGAL_PARAMETER, out);     // forbidden in EncryptedExtensions
+        } else if ty == EXT_KEY_SHARE || ty == EXT_SUPPORTED_VERSIONS || ty == EXT_COOKIE || ty == EXT_SIGNATURE_ALGORITHMS ||
+                  ty == EXT_PRE_SHARED_KEY || ty == EXT_PSK_KEY_EXCHANGE_MODES || ty == EXT_CERTIFICATE_AUTHORITIES ||
+                  ty == EXT_PADDING || ty == EXT_EC_POINT_FORMATS || ty == EXT_EXTENDED_MASTER_SECRET ||
+                  ty == EXT_SESSION_TICKET || ty == EXT_RENEGOTIATION_INFO {
+            // Known, and of other messages: forbidden here (RFC 8446 §4.2).
+            return fail(c, ALERT_ILLEGAL_PARAMETER, out);
+        } else if ty == EXT_EARLY_DATA {
+            // Never offered: 0-RTT is not sent.
+            return fail(c, ALERT_UNSUPPORTED_EXTENSION, out);
         }
+        // Others, unknown here, are ignored, as Go and BoringSSL do.
     }
     // Over QUIC the server must send its transport parameters and agree
     // on a protocol (RFC 9001 §8).
@@ -1821,7 +1835,10 @@ fn client_finished<F>(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: u
     c.state = ST_CONNECTED;
     // ECH not accepted: the handshake with the public name only served to
     // authenticate the retry configs (§6.1.6).
-    if c.ech_offered && !c.ech_accepted { return fail(c, ALERT_ECH_REQUIRED, out); }
+    if c.ech_offered && !c.ech_accepted {
+        c.ech_retry_ok = c.peer_verified;
+        return fail(c, ALERT_ECH_REQUIRED, out);
+    }
     return 0;
 }
 
@@ -2396,6 +2413,7 @@ fn server_client_hello<F>(c: Conn&, cfg: const ServerConfig&, m: const u8[:], ou
                t.sni[..] == c.sni[..] && ticket_client_ok(cfg, t, now) {
                 psk_identity = idx;
                 psk.append(t.psk);
+                c.session_created = t.created;
                 // The client's certificate, carried over.
                 c.chain.clear();
                 c.chain.append(t.client_chain);
@@ -2404,6 +2422,23 @@ fn server_client_hello<F>(c: Conn&, cfg: const ServerConfig&, m: const u8[:], ou
             }
             idx++;
         }
+        // As many binders as identities (§4.2.11), each 32 to 255 bytes.
+        var ni = h.psk_ids;
+        var identities = 0;
+        while ni.pos < ni.end && !ni.bad {
+            let one = get_vec(ni, m, 2);
+            let age = get_bytes(ni, 4);
+            identities++;
+        }
+        var nb = h.psk_binders;
+        var binders = 0;
+        while nb.pos < nb.end && !nb.bad {
+            let one = get_vec(nb, m, 1);
+            if one.end - one.pos < 32 { nb.bad = true; }
+            binders++;
+        }
+        if ni.bad { return fail(c, ALERT_DECODE_ERROR, out); }
+        if nb.bad || binders != identities { return fail(c, ALERT_ILLEGAL_PARAMETER, out); }
         if psk_identity >= 0 {
             var bl = h.psk_binders;
             var binder = empty_rd();
@@ -2611,7 +2646,11 @@ fn send_session_ticket(c: Conn&, cfg: const ServerConfig&, out: u8[>..]&) -> boo
     drbg_fill(c, age_add);
     var tn: u8[12] = [0; 12];
     drbg_fill(c, tn);
-    var t = TicketState { version: VERSION_TLS13, suite: c.suite.id, psk: [], ems: false, created: now_ms(cfg.now) / 1000,
+    // A ticket from a resumed connection keeps the first handshake's time:
+    // resuming again and again does not stretch a session past the
+    // lifetime (nor a client certificate checked then).
+    let created = if c.session_created > 0 { c.session_created } else { now_ms(cfg.now) / 1000 };
+    var t = TicketState { version: VERSION_TLS13, suite: c.suite.id, psk: [], ems: false, created: created,
                           age_add: (age_add[0] as u32) << 24 | (age_add[1] as u32) << 16 | (age_add[2] as u32) << 8 | age_add[3],
                           lifetime: MAX_TICKET_LIFETIME, alpn: [], sni: [], client_not_after: 0,
                           client_verified: false, client_chain: [] };

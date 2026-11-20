@@ -38,6 +38,15 @@ import gslib.sys;
 let IDLE_MS: i32 = 30000;
 let MAX_ROOT: i64 = 4096;
 let MAX_FILE: i64 = 1 << 28;
+// What one HTTP/2 connection may hold at once, its streams' request bodies
+// and the content its peer's windows have not let out yet: past it, a
+// request is answered 503 without its file being read. A client that
+// opens its streams and never lets data out, or uploads to many, holds no
+// more than this.
+let MAX_H2_HELD: i64 = 1 << 24;
+// Streams a client may reset on one connection: each reset after its
+// HEADERS costs this side a request's work (Rapid Reset, CVE-2023-44487).
+let MAX_H2_RESETS: i64 = 1000;
 var late_ticket = false;
 var http2 = true;
 
@@ -351,7 +360,20 @@ fn h2_answer(c: http::H2Conn&, recs: u8[>..]&, root: const u8[:], sid: i64, out:
     rec_drop(recs, sid, 0);
     var f: u8[>..] = [];
     var data: u8[>..] = [];
-    let status = make_answer(root, method, target, body, f, data);
+    if recs.len >= MAX_H2_HELD {
+        f.append("Server: goose-httpd\r\nRetry-After: 1\r\n");
+        http::add_content_length(f, 0);
+        http::h2_respond(c, sid, 503, f, true, out);
+        log(method, target, 503, 0);
+        return;
+    }
+    var status = make_answer(root, method, target, body, f, data);
+    if recs.len + data.len > MAX_H2_HELD {
+        f.clear();
+        data.clear();
+        f.append("Server: goose-httpd\r\nRetry-After: 1\r\n");
+        status = 503;
+    }
     http::add_content_length(f, data.len);
     let head = method[..] == "HEAD";
     http::h2_respond(c, sid, status, f, head || data.len == 0, out);
@@ -375,6 +397,7 @@ fn serve_h2(fd: i64, root: const u8[:], on_tls: bool, tc: tls::Conn&, scfg: cons
     var fields: u8[>..] = [];
     var body: u8[>..] = [];
     var recs: u8[>..] = [];
+    var resets = 0;
     http::h2_start(c, plain);
     var done = false;
     while !done {
@@ -399,7 +422,7 @@ fn serve_h2(fd: i64, root: const u8[:], on_tls: bool, tc: tls::Conn&, scfg: cons
                 if ev.end_stream { h2_answer(c, recs, root, ev.stream, plain); }
             } else if ev.kind == http::EV2_DATA {
                 let ba, bn = rec_find(recs, ev.stream, K_BODY);
-                if bn + body.len > max_body {
+                if bn + body.len > max_body || recs.len + body.len > MAX_H2_HELD {
                     rec_drop(recs, ev.stream, 0);
                     var f: u8[>..] = [];
                     f.append("Server: goose-httpd\r\n");
@@ -414,6 +437,12 @@ fn serve_h2(fd: i64, root: const u8[:], on_tls: bool, tc: tls::Conn&, scfg: cons
                 }
             } else if ev.kind == http::EV2_RESET {
                 rec_drop(recs, ev.stream, 0);
+                resets++;
+                if resets > MAX_H2_RESETS {
+                    let e = http::h2_fail(c, http::E2_ENHANCE_YOUR_CALM, plain);
+                    done = true;
+                    break;
+                }
             } else if ev.kind == http::EV2_WINDOW {
                 // Every stream with content waiting.
                 var sids: i64[>..] = [];

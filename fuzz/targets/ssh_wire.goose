@@ -205,7 +205,7 @@ fn messages(b: const u8[:], server: bool) {
             if at + n > b.len { break; }
             out.clear();
             events.clear();
-            let r = ssh::handle_message(c, cfg, b[at..at + n], out, events);
+            let r = ssh::handle_message(c, cfg, b[at..at + n], out, events, x509::sign_data);
             server_app(c, events, out);
             at += n;
         }
@@ -225,7 +225,7 @@ fn messages(b: const u8[:], server: bool) {
             if at + n > b.len { break; }
             out.clear();
             events.clear();
-            let r = ssh::handle_message(c, cfg, b[at..at + n], out, events);
+            let r = ssh::handle_message(c, cfg, b[at..at + n], out, events, x509::sign_data);
             client_app(c, cfg, events, out);
             at += n;
         }

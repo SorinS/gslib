@@ -168,6 +168,10 @@ fn eap(srv: radius::Server&, cfg: const radius::EapConfig&, pc: const radius::Pe
         if r != radius::EAP_DONE_OK { return radius::ERR_EAP; }
         let keys, okk = radius::mppe_keys(resp, SECRET, req.auth);
         if !okk || keys[..] != radius::peer_msk(p)[..] { return radius::ERR_EAP; }
+        // The Accept names who the tunnel authenticated, never the outer
+        // identity the peer gave unchecked ("ceo" here).
+        let un, hun = radius::get(resp, radius::USER_NAME);
+        if (pc.method == radius::EAP_PEAP || pc.method == radius::EAP_TTLS) && (!hun || un != "alice") { return radius::ERR_EAP; }
         return radius::OK;
     }
     return radius::ERR_EAP;
@@ -176,6 +180,7 @@ fn eap(srv: radius::Server&, cfg: const radius::EapConfig&, pc: const radius::Pe
 fn peer_cfg(method: u8, inner: u8, pw: const u8[:], v: u16) -> radius::PeerConfig {
     var pc = radius::peer_config("alice", pw, method);
     pc.inner = inner;
+    pc.outer_identity.append("ceo");
     pc.tls = tls::client_config("example.com", field("root", "", 2));
     pc.tls.now = NOW;
     pc.tls.max_version = v;

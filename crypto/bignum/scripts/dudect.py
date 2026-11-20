@@ -46,7 +46,32 @@ TARGETS = [
     ("dut_camellia128_encrypt", 16, False),
     ("dut_camellia256_key", 32, False),
     ("dut_cmac_camellia", 16, False),
+    ("dut_aes128_encrypt", 16, False),
+    ("dut_aes256_key", 32, False),
+    ("dut_aes_gcm_seal", 16, False),
+    ("dut_aes_gcm_open_tag", 16, False),
+    ("dut_aes_ccm_open_tag", 16, False),
+    ("dut_chacha20_poly1305_seal", 32, False),
+    ("dut_chacha20_poly1305_open_tag", 16, False),
+    ("dut_poly1305", 32, False),
+    ("dut_hmac_sha256", 32, False),
+    ("dut_hmac_prefix_ct", 16, False),
+    ("dut_ct_eq_bytes", 64, False),
+    ("dut_or_bytes", 64, False),
+    ("dut_x25519", 32, False),
+    ("dut_x448_base", 56, False),
+    ("dut_ecdh_p256", 32, False),
+    ("dut_ed448_sign", 57, False),
+    ("dut_mlkem768_decaps", 1088, False),
+    ("dut_mlkem768_reject", 16, False),
+    ("dut_rsa_pkcs1_session_key", 16, False),
+    ("dut_rsa_oaep_manger", 16, False),
 ]
+
+# Targets whose class 0 is all zeros (harness.c's FIXED_ZERO): the input
+# chooses between two cases, zeros always the same one.
+FIXED_ZERO = {"dut_aes_gcm_open_tag", "dut_aes_ccm_open_tag", "dut_chacha20_poly1305_open_tag",
+              "dut_ct_eq_bytes", "dut_or_bytes", "dut_mlkem768_reject", "dut_rsa_pkcs1_session_key", "dut_rsa_oaep_manger"}
 
 
 def find_goose(arg):
@@ -97,7 +122,7 @@ def main():
             objs.append(obj)
         for name, chunk, leaky in targets:
             exe = os.path.join(tmp, name)
-            flags = [f"-DTARGET={name}", f"-DCHUNK={chunk}"]
+            flags = [f"-DTARGET={name}", f"-DCHUNK={chunk}"] + (["-DFIXED_ZERO"] if name in FIXED_ZERO else [])
             p = subprocess.run([args.cc, "-O2", "-std=gnu11", "-w", "-I", os.path.dirname(header), *flags, "-o", exe,
                                 os.path.join(ROOT, "tools", "dudect", "harness.c"), *objs, "-lm", "-pthread", "-ldl"],
                                capture_output=True, text=True)

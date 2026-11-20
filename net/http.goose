@@ -266,6 +266,28 @@ fn reason_phrase(status: i64) -> const u8[:] {
 
 // --- Building field sections ----------------------------------------------
 
+// Whether a field section built by a caller is what add_field would have
+// built: lines "name: value" each ended by CRLF, the name a token, the
+// value a field value, no CR or LF anywhere else. Heads are written only
+// from such sections, so that text from elsewhere cannot start a field
+// or a message of its own (a bare LF that some servers take as a line's
+// end, CRLF CRLF that ends the head).
+fn fields_ok(fields: const u8[:]) -> bool {
+    var pos = 0;
+    while pos < fields.len {
+        let rel = find(fields[pos..], "\r\n");
+        if rel <= 0 { return false; }                // no CRLF after it, or an empty line
+        let line = fields[pos..pos + rel];
+        let colon = position(line, ':');
+        if colon <= 0 || !is_token(line[..colon]) { return false; }
+        var v = colon + 1;
+        while v < line.len && (line[v] == ' ' || line[v] == '\t') { v++; }
+        if !is_field_value(line[v..]) { return false; }
+        pos += rel + 2;
+    }
+    return true;
+}
+
 // Appends "name: value\r\n" to a field section being built, if the name is
 // a token and the value a valid field value; false, and nothing appended,
 // otherwise (a CR or LF in either would let the caller's data start a new

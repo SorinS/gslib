@@ -252,7 +252,10 @@ public name:
 - a certificate request is answered with none.
 
 It then fails with `ech_required`, and `tls::ech_retry_configs(c)` holds
-the server's retry configs to try again with.
+the server's retry configs to try again with. Only then: a handshake that
+failed any other way (a certificate refused, say), or one whose
+certificate was not verified, gives none, since whoever sent them was not
+authenticated, and a retry with them would seal the real name to them.
 
 The server tries each of its keys on an outer ClientHello. With the first
 that opens it, it rebuilds the inner one and goes on with that one: the
@@ -288,7 +291,7 @@ that could do better.
 | Master secret | extended (RFC 7627) when both take it; a session keeps what it had | the same |
 | Resumption | session tickets (RFC 5077): `tls::session(c)` is a TLS 1.2 session after a TLS 1.2 handshake, offered again in session_ticket | stateless tickets under `cfg.ticket_key`, a new one on each resumption |
 | Client certificates | sent when the server asks for its key's type and scheme and, if it names CAs, one of them issued it; not Ed25519 or Ed448 ones (below) | Go's five modes, as in TLS 1.3; CertificateRequest offers every scheme above but Ed25519 and Ed448 |
-| Renegotiation | refused: secure renegotiation's extension is sent, and a HelloRequest gets a `no_renegotiation` warning | a ClientHello after the handshake gets the same warning |
+| Renegotiation | refused: secure renegotiation's extension is sent, and a HelloRequest gets a `no_renegotiation` warning; a second one ends the connection | a ClientHello after the handshake gets the same warning, and a second one ends it |
 
 TLS 1.2's CertificateVerify signs all the handshake messages before it,
 with the hash of a scheme that is settled only when CertificateRequest
@@ -520,7 +523,8 @@ library only).
 
   Not accepted:
   - a server without keys, with another key (whose retry configs then
-    work), or without retry configs;
+    work), or without retry configs; none given out when the server's
+    certificate was refused;
   - a changed payload;
   - a certificate request answered with none;
   - a public name the certificate does not cover.
@@ -548,7 +552,7 @@ library only).
     messages themselves (PKCS #1 v1.5 and ECDSA are deterministic), and
     none for other messages; Ed25519 refused;
   - a wrong name, an unknown root; renegotiation refused both ways while
-    data keeps flowing; a changed record under GCM, ChaCha20-Poly1305 and
+    data keeps flowing, and a second request ending the connection; a changed record under GCM, ChaCha20-Poly1305 and
     CBC;
   - sessions: one got without verifying is not offered when verifying,
     nor one whose roots were replaced; a client certificate's ticket is

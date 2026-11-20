@@ -5,7 +5,10 @@
    then class 0's overwritten with the fixed ones), as dudect's examples
    do. dut_memcmp is a control that must be caught: a comparison with a
    secret that stops at the first difference, class 0 the secret itself
-   (every byte compared), class 1 random (one).
+   (every byte compared), class 1 random (one). With -DFIXED_ZERO, class
+   0 is all zeros: for the targets that turn the input into a choice
+   (a good or a bad ciphertext, a tag wrong in its last byte or its
+   first), zeros are the one side and random bytes, mostly, the other.
 
    Runs dudect_main for argv[1] seconds (60 by default), whatever it says
    on the way: a noisy machine crosses dudect's moderate threshold (t 10)
@@ -67,6 +70,9 @@ int main(int argc, char **argv) {
     double budget = argc > 1 ? atof(argv[1]) : 60.0;
     goose_init(0, NULL);
     randombytes(fixed_input, CHUNK);
+#ifdef FIXED_ZERO
+    memset(fixed_input, 0, CHUNK);
+#endif
     memcpy(secret, fixed_input, CHUNK);
     dudect_config_t config = { .chunk_size = CHUNK, .number_measurements = 500 };
     dudect_ctx_t ctx;

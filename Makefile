@@ -73,7 +73,7 @@ BINARIES    := $(foreach p,$(PROGRAMS),$(BIN)/$(call prog_name,$(p))) $(BIN)/goo
 
 # Every tool and example with a main, for check.
 CHECKED := $(shell cd $(ROOT) && grep -l '^fn main' */*/tools/*.goose examples/*/*.goose \
-	websocket/tools/*.goose quic/tools/*.goose compress/tools/*.goose mime/tools/*.goose krb5/tools/*.goose jwx/tools/*.goose pkcs11/tools/*.goose dns/tools/*.goose mail/tools/*.goose acme/tools/*.goose oauth/tools/*.goose tsp/tools/*.goose est/tools/*.goose scep/tools/*.goose saml/tools/*.goose webauthn/tools/*.goose ntlm/tools/*.goose tpm2/tools/*.goose radius/tools/*.goose smb/tools/*.goose kmip/tools/*.goose)
+	websocket/tools/*.goose quic/tools/*.goose compress/tools/*.goose mime/tools/*.goose krb5/tools/*.goose jwx/tools/*.goose pkcs11/tools/*.goose dns/tools/*.goose mail/tools/*.goose acme/tools/*.goose oauth/tools/*.goose tsp/tools/*.goose est/tools/*.goose scep/tools/*.goose saml/tools/*.goose webauthn/tools/*.goose ntlm/tools/*.goose tpm2/tools/*.goose radius/tools/*.goose smb/tools/*.goose kmip/tools/*.goose fuzz/targets/*.goose)
 
 # ------------------------------------------------------------------------------
 # Helpers
@@ -129,7 +129,7 @@ $(BIN)/goose-ldapadd: $(BIN)/goose-ldapmodify
 # ------------------------------------------------------------------------------
 
 .PHONY: check
-check: ## Type-check every tool and example
+check: ## Type-check every tool, example and fuzz target
 	$(call echo,"Type-checking $(words $(CHECKED)) programs")
 	@cd $(ROOT) && fail=0; for f in $(CHECKED); do \
 		if out=$$($(GOOSE) check $$f 2>&1); then echo "  ok    $$f"; \

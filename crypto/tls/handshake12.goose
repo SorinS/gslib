@@ -504,7 +504,11 @@ fn client_message12<F>(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: 
     if t == HS_HELLO_REQUEST {
         // Renegotiation is refused, with a warning (RFC 5746 §4.2); a
         // HelloRequest during the handshake is ignored (RFC 5246 §7.4.1.1).
+        // Once: a peer that keeps asking is answered with nothing but
+        // sealed alerts, so the second request ends the connection.
         if m.len != 4 { return fail(c, ALERT_DECODE_ERROR, out); }
+        c.renegotiations++;
+        if c.renegotiations > 1 { return fail(c, ALERT_UNEXPECTED_MESSAGE, out); }
         if c.state == ST_CONNECTED {
             let a = alert(ALERT_WARNING, ALERT_NO_RENEGOTIATION);
             out.append(seal_record(c.write, CT_ALERT, a));
@@ -588,6 +592,7 @@ fn server_client_hello12<F>(c: Conn&, cfg: const ServerConfig&, m: const u8[:], 
             if t.ems && !h.ems { return fail(c, ALERT_HANDSHAKE_FAILURE, out); }
             if t.ems == h.ems {
                 resumed = true;
+                c.session_created = t.created;
                 let st, okst = suite(t.suite);
                 s = st;
                 set48(c.master, t.psk);
@@ -706,7 +711,8 @@ fn send_certificate_request12(c: Conn&, cfg: const ServerConfig&, out: u8[>..]&)
 fn send_ticket12(c: Conn&, cfg: const ServerConfig&, out: u8[>..]&) {
     var tn: u8[12] = [0; 12];
     drbg_fill(c, tn);
-    var t = TicketState { version: VERSION_TLS12, suite: c.suite.id, psk: [], ems: c.ems, created: now_ms(cfg.now) / 1000,
+    let created = if c.session_created > 0 { c.session_created } else { now_ms(cfg.now) / 1000 };   // as in TLS 1.3
+    var t = TicketState { version: VERSION_TLS12, suite: c.suite.id, psk: [], ems: c.ems, created: created,
                           age_add: 0, lifetime: MAX_TICKET_LIFETIME, alpn: [], sni: [], client_not_after: 0,
                           client_verified: false, client_chain: [] };
     t.psk.append(c.master);
@@ -827,8 +833,12 @@ fn server_finished12(c: Conn&, cfg: const ServerConfig&, m: const u8[:], out: u8
 fn server_message12(c: Conn&, cfg: const ServerConfig&, m: const u8[:], out: u8[>..]&) -> i64 {
     let t = m[0];
     if c.state == ST_CONNECTED {
-        // Renegotiation is refused, with a warning; the connection goes on.
+        // Renegotiation is refused, with a warning, and the connection goes
+        // on; once: a second ClientHello ends it (each would cost a sealed
+        // alert, and one record holds thousands of them).
         if t == HS_CLIENT_HELLO {
+            c.renegotiations++;
+            if c.renegotiations > 1 { return fail(c, ALERT_UNEXPECTED_MESSAGE, out); }
             let a = alert(ALERT_WARNING, ALERT_NO_RENEGOTIATION);
             out.append(seal_record(c.write, CT_ALERT, a));
             return 0;

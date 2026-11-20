@@ -29,6 +29,7 @@ import quic.frame;
 import quic.params;
 import quic.recovery;
 import quic.stream;
+import crypto.bignum;
 import crypto.tls;
 import crypto.tls.handshake;
 import crypto.x509;
@@ -44,6 +45,10 @@ let STATE_CLOSING: i64 = 2;
 let STATE_DRAINING: i64 = 3;
 let STATE_CLOSED: i64 = 4;
 
+// A handshake not done in 10 s is dropped: a connection whose peer only
+// keeps it alive (Initial keys are public) holds a server's slot.
+let HANDSHAKE_TIMEOUT: i64 = 10000000;
+
 // What a sent packet carried that may need sending again.
 let REC_CRYPTO: i64 = 1;
 let REC_STREAM: i64 = 2;
@@ -54,6 +59,13 @@ let REC_MAX_STREAMS: i64 = 6;
 let REC_RESET: i64 = 7;
 let REC_STOP: i64 = 8;
 let REC_ACK: i64 = 9;
+let REC_RETIRE: i64 = 10;
+
+// At most this many of the peer's connection IDs retired by one
+// NEW_CONNECTION_ID, or waiting to be sent again: a Retire Prior To far
+// ahead of what was issued is CONNECTION_ID_LIMIT_ERROR (§5.1.2), not
+// that many RETIRE_CONNECTION_ID frames.
+let MAX_RETIRE: i64 = 16;
 
 struct Rec { kind: i64, id: i64, off: i64, len: i64, fin: bool }
 
@@ -67,13 +79,14 @@ struct Space {
     largest_recv_time: i64,
     recv: i64[64],             // (smallest, largest) pairs, highest first
     n_recv: i64,
+    floor: i64,                // below it, ranges dropped: taken as received (§12.3)
     ack_needed: bool,
     eliciting_unacked: i64,    // ack-eliciting packets received since the last ACK sent
     ack_deadline: i64,
 }
 
 fn space() -> Space {
-    Space { next_pn: 0, largest_recv: -1, largest_recv_time: 0, recv: [0; 64], n_recv: 0, ack_needed: false,
+    Space { next_pn: 0, largest_recv: -1, largest_recv_time: 0, recv: [0; 64], n_recv: 0, floor: 0, ack_needed: false,
             eliciting_unacked: 0, ack_deadline: 0 }
 }
 
@@ -139,12 +152,16 @@ struct Conn {
     bytes_recv: i64, bytes_sent: i64,        // before validation, for the 3x limit
     path_response: u8[8], path_response_pending: bool,
     retire_pending: i64, retire_seq: u64,
+    retire_lost: u64[..16],                  // RETIRE_CONNECTION_IDs lost, to send again
     probes: i64, probe_space: i64,
     // Closing: the error we send or got, its reason, whether ours was an
     // application's, when the closing or draining period ends.
     error: u64, error_frame: u64, app_error: bool, reason: u8[..256], peer_closed: bool,
     close_pending: bool, close_until: i64,
+    close_triggers: i64,                     // packets received while closing; answered at 1, 2, 4, 8...
     idle_timeout: i64, last_activity: i64,
+    started: i64,                            // when the connection was made, for HANDSHAKE_TIMEOUT
+    newest: bool,                            // the last recv opened a packet numbered above all before
     now: i64,
     streams: Stream[..32],
 }
@@ -169,10 +186,10 @@ fn new_conn(is_server: bool) -> Conn {
         max_streams_bidi_send: 0, max_streams_uni_send: 0, max_streams_bidi_recv: 16, max_streams_uni_recv: 8,
         streams_bidi_opened: 0, streams_uni_opened: 0, peer_bidi_opened: 0, peer_uni_opened: 0, max_streams_update: false,
         handshake_done_pending: false, confirmed: false, validated: !is_server, bytes_recv: 0, bytes_sent: 0,
-        path_response: [0; 8], path_response_pending: false, retire_pending: 0, retire_seq: 0,
+        path_response: [0; 8], path_response_pending: false, retire_pending: 0, retire_seq: 0, retire_lost: [],
         probes: 0, probe_space: -1,
-        error: 0, error_frame: 0, app_error: false, reason: [], peer_closed: false, close_pending: false, close_until: 0,
-        idle_timeout: 30000000, last_activity: 0, now: 0, streams: [],
+        error: 0, error_frame: 0, app_error: false, reason: [], peer_closed: false, close_pending: false, close_until: 0, close_triggers: 0,
+        idle_timeout: 30000000, last_activity: 0, started: 0, newest: false, now: 0, streams: [],
     };
     var cid: u8[8] = [0; 8];
     entropy::random_bytes(cid);
@@ -205,6 +222,7 @@ fn client(cfg: const tls::ClientConfig&, now: i64) -> Conn {
     var c = new_conn(false);
     c.now = now;
     c.last_activity = now;
+    c.started = now;
     var d: u8[8] = [0; 8];
     entropy::random_bytes(d);
     c.dcid.append(d);
@@ -224,6 +242,7 @@ fn server(cfg: const tls::ServerConfig&, first: const u8[:], now: i64) -> Conn {
     var c = new_conn(true);
     c.now = now;
     c.last_activity = now;
+    c.started = now;
     let h, ok = read_header(first, 0, CID_LEN);
     c.odcid.append(first[h.dcid_at..h.dcid_at + h.dcid_len]);
     c.dcid.append(first[h.scid_at..h.scid_at + h.scid_len]);
@@ -326,6 +345,7 @@ fn settle(c: Conn&, s: const Sent&, acked: bool) {
             if k >= 0 && r.kind == REC_MAX_STREAM_DATA { c.streams[k].max_update = true; }
             if k >= 0 && r.kind == REC_RESET { c.streams[k].reset_pending = true; }
             if k >= 0 && r.kind == REC_STOP { c.streams[k].stop_send = true; }
+            if r.kind == REC_RETIRE && c.retire_lost.len < MAX_RETIRE { c.retire_lost.push(r.id as! u64); }
         }
     }
 }
@@ -428,7 +448,7 @@ fn handshake_complete(c: Conn&) {
     c.max_streams_uni_send = p.initial_max_streams_uni as! i64;
     c.rec.max_ack_delay = (p.max_ack_delay as! i64) * 1000;
     // The idle timeout: the smaller of the two that are set (§10.1).
-    let peer_idle = (p.max_idle_timeout as! i64) * 1000;
+    let peer_idle = (::min(p.max_idle_timeout, 1 << 40) as! i64) * 1000;      // ms, 2^62 at most: capped
     if peer_idle > 0 && peer_idle < c.idle_timeout { c.idle_timeout = peer_idle; }
     c.state = STATE_CONNECTED;
     if c.is_server {
@@ -611,8 +631,11 @@ fn space_ptype(sp: i64) -> u8 {
     return PT_ONE_RTT;
 }
 
-// Whether pn was received already in the space.
+// Whether pn was received already in the space; below the floor, where
+// the history no longer reaches, every number is taken as received, so
+// that an old packet replayed is dropped.
 fn seen_pn(s: const Space&, pn: i64) -> bool {
+    if pn < s.floor { return true; }
     var i = 0;
     while i + 1 < 2 * s.n_recv {
         if pn >= s.recv[i] && pn <= s.recv[i + 1] { return true; }
@@ -622,7 +645,8 @@ fn seen_pn(s: const Space&, pn: i64) -> bool {
 }
 
 // Adds pn to the received ranges, highest first, merging neighbours; at
-// most 32 ranges, the oldest dropped.
+// most 32 ranges: when full, the lowest is dropped and the floor raised
+// above it, and a pn below every range is not kept at all.
 fn note_pn(s: Space&, pn: i64) {
     var n = s.n_recv;
     // Find where it goes: ranges are (lo, hi), highest first.
@@ -648,7 +672,11 @@ fn note_pn(s: Space&, pn: i64) {
         s.n_recv = n;
         return;
     }
-    if n == 32 { n = 31; }                       // the lowest range goes
+    if n == 32 {
+        if i == 32 { s.floor = ::max(s.floor, pn + 1); return; }
+        s.floor = s.recv[2 * 31 + 1] + 1;        // the lowest range goes
+        n = 31;
+    }
     var j = n;
     while j > i { s.recv[2 * j] = s.recv[2 * (j - 1)]; s.recv[2 * j + 1] = s.recv[2 * (j - 1) + 1]; j--; }
     s.recv[2 * i] = pn;
@@ -660,6 +688,7 @@ fn note_pn(s: Space&, pn: i64) {
 // handled. cfg is TLS's configuration, the client's or the server's.
 fn recv(c: Conn&, cfg, d: const u8[:], now: i64) {
     c.now = now;
+    c.newest = false;
     if c.state == STATE_CLOSED || c.state == STATE_DRAINING { return; }
     if !c.validated { c.bytes_recv += d.len; }
     var at = 0;
@@ -712,7 +741,7 @@ fn recv(c: Conn&, cfg, d: const u8[:], now: i64) {
         }
         if !opened {
             // A stateless reset ends in the peer's token (§10.3.1).
-            if !h.long && c.has_reset_token && d.len >= 21 && d[d.len - 16..] == c.peer_reset_token[..] {
+            if !h.long && c.has_reset_token && d.len >= 21 && bignum::ct_eq_bytes(d[d.len - 16..], c.peer_reset_token) == 1 {
                 c.error = NO_ERROR;
                 c.reason.clear();
                 c.reason.append("stateless reset");
@@ -747,12 +776,22 @@ fn recv(c: Conn&, cfg, d: const u8[:], now: i64) {
         if payload.len == 0 { fail(c, PROTOCOL_VIOLATION, 0, "an empty packet"); return; }
         let eliciting = handle_frames(c, cfg, sp, payload);
         if closing(c) && c.state != STATE_CLOSING { return; }
-        if c.state == STATE_CLOSING && !c.peer_closed { c.close_pending = true; return; }
+        if c.state == STATE_CLOSING && !c.peer_closed {
+            // CONNECTION_CLOSE again, but less and less often (§10.2.1): a
+            // peer that keeps sending is not answered packet for packet.
+            c.close_triggers++;
+            if (c.close_triggers & (c.close_triggers - 1)) == 0 { c.close_pending = true; }
+            return;
+        }
         // The handshake may have ended in this packet, its keys gone with
         // it: then there is nothing to acknowledge in that space any more.
         if c.discarded[sp] { at = next; continue; }
         note_pn(c.spaces[sp], pn);
-        if pn > c.spaces[sp].largest_recv { c.spaces[sp].largest_recv = pn; c.spaces[sp].largest_recv_time = now; }
+        if pn > c.spaces[sp].largest_recv {
+            c.spaces[sp].largest_recv = pn;
+            c.spaces[sp].largest_recv_time = now;
+            c.newest = true;
+        }
         if eliciting {
             c.spaces[sp].ack_needed = true;
             c.spaces[sp].eliciting_unacked++;
@@ -779,6 +818,7 @@ fn version_negotiation_received(c: Conn&, d: const u8[:], h: const Header&) {
 
 fn retry_received(c: Conn&, d: const u8[:], h: const Header&) {
     if c.is_server || c.retried || c.got_peer_scid || h.token_len <= 16 { return; }
+    if h.token_len - 16 > c.token.cap { return; }        // a token longer than any we keep: ignored
     // A Retry naming the client's own Destination Connection ID as its
     // Source is not from the server (§17.2.5.2).
     if d[h.scid_at..h.scid_at + h.scid_len] == c.dcid[..] { return; }
@@ -879,6 +919,10 @@ fn handle_frame(c: Conn&, cfg, sp: i64, b: const u8[:], f: const Frame&) {
         if c.dcid.len == 0 { fail(c, PROTOCOL_VIOLATION, t, "NEW_CONNECTION_ID with a zero-length ID"); return; }
         // The ID is not used (no migration), but one that retires the
         // current one is moved to, and the old one retired.
+        if f.retire_prior_to > c.retire_seq && f.retire_prior_to - c.retire_seq > MAX_RETIRE as! u64 {
+            fail(c, CONNECTION_ID_LIMIT_ERROR, t, "NEW_CONNECTION_ID retires too many connection IDs");
+            return;
+        }
         if f.retire_prior_to > c.retire_seq && f.seq >= f.retire_prior_to {
             c.dcid.clear();
             c.dcid.append(b[f.cid_at..f.cid_at + f.cid_len]);
@@ -912,7 +956,8 @@ fn ack_frame(c: Conn&, sp: i64, b: const u8[:], f: const Frame&) {
         ranges.push(pairs[i] as! i64);
         i += 2;
     }
-    let delay = if sp == SPACE_APP { (f.ack_delay << c.peer.ack_delay_exponent) as! i64 } else { 0 };
+    // The delay saturates: a peer's 2^62 shifted would wrap negative.
+    let delay = if sp == SPACE_APP { (::min(f.ack_delay, 1 << 40) << c.peer.ack_delay_exponent) as! i64 } else { 0 };
     var done: Sent[>..] = [];
     var acks: bool[>..] = [];
     let ok = on_ack_received(c.rec, sp, ranges, delay, c.now, c.confirmed, c.spaces[sp].next_pn) { s, acked =>
@@ -972,6 +1017,8 @@ fn stream_frame(c: Conn&, id: i64, off: i64, data: const u8[:], fin: bool) {
     if is_uni(id) && is_local(c, id) { fail(c, STREAM_STATE_ERROR, 0x08, "STREAM on a send-only stream"); return; }
     let k = peer_stream(c, id, 0x08);
     if k < 0 { return; }
+    // The window we advertised for the stream, not only the buffer's (§4.1).
+    if off + data.len > c.streams[k].max_recv { fail(c, FLOW_CONTROL_ERROR, 0x08, "stream window"); return; }
     let before = rb_highest(c.streams[k].recv);
     let e = rb_insert(c.streams[k].recv, off, data, fin);
     if e != 0 { fail(c, e, 0x08, "stream data"); return; }
@@ -1048,8 +1095,15 @@ fn build_payload(c: Conn&, sp: i64, room: i64, out: u8[>..]&, force_ack: bool) -
             c.path_response_pending = false;
             eliciting = true;
         }
-        while c.retire_pending > 0 {
+        while c.retire_lost.len > 0 && out.len + 16 <= room {
+            let seq = c.retire_lost.pop();
+            put_retire_connection_id(out, seq);
+            add_rec(c, REC_RETIRE, seq as! i64, 0, 0, false);
+            eliciting = true;
+        }
+        while c.retire_pending > 0 && out.len + 16 <= room {
             put_retire_connection_id(out, c.retire_seq);
+            add_rec(c, REC_RETIRE, c.retire_seq as! i64, 0, 0, false);
             c.retire_seq++;
             c.retire_pending--;
             eliciting = true;
@@ -1133,9 +1187,20 @@ fn poll(c: Conn&, now: i64) -> u8[>..] {
     var dg: u8[>..] = [];
     if c.state == STATE_CLOSED || c.state == STATE_DRAINING { return dg; }
     if c.state == STATE_CLOSING {
-        if c.close_pending { close_datagram(c, dg); c.close_pending = false; }
+        if c.close_pending {
+            close_datagram(c, dg);
+            c.close_pending = false;
+            // Within the 3x limit too, before the address is validated.
+            if !c.validated {
+                if c.bytes_sent + dg.len > 3 * c.bytes_recv { dg.clear(); }
+                c.bytes_sent += dg.len;
+            }
+        }
         return dg;
     }
+    // Every packet sent is tracked until acknowledged or lost; with the
+    // table full, nothing goes but a probe (an ACK frees slots).
+    if !can_track(c.rec) && c.probes == 0 { return dg; }
     // The server's limit before the client's address is validated (§8.1).
     var budget = DATAGRAM;
     if !c.validated { budget = ::min(budget, 3 * c.bytes_recv - c.bytes_sent); }
@@ -1148,6 +1213,10 @@ fn poll(c: Conn&, now: i64) -> u8[>..] {
     var used: i64 = 0;
     for sp in 3 {
         if !c.has_wkeys[sp] || c.discarded[sp] { continue; }
+        // A server's Initial is padded to 1200 bytes when ack-eliciting
+        // (§14.1): before validation, not sent while the 3x limit has less
+        // than that left, rather than sent past it.
+        if sp == SPACE_INITIAL && c.is_server && !c.validated && budget < DATAGRAM { continue; }
         let overhead = 1 + 4 + 2 + c.dcid.len + c.scid.len + 2 + c.token.len + 4 + 16 + 4;
         let room = budget - used - overhead;
         if room < 32 { continue; }
@@ -1238,6 +1307,7 @@ fn next_timeout(c: const Conn&) -> i64 {
     if c.state == STATE_CLOSED { return 0; }
     if c.state == STATE_CLOSING || c.state == STATE_DRAINING { return c.close_until; }
     var t = c.last_activity + c.idle_timeout;
+    if c.is_server && c.state == STATE_HANDSHAKE { t = ::min(t, c.started + HANDSHAKE_TIMEOUT); }
     let lt, ls, is_pto = loss_timer(c.rec, c.confirmed, c.has_wkeys[1], !c.is_server, c.discarded);
     if lt != 0 && lt < t { t = lt; }
     for sp in 3 {
@@ -1254,6 +1324,13 @@ fn on_timeout(c: Conn&, now: i64) {
         return;
     }
     if c.state == STATE_CLOSED { return; }
+    if c.is_server && c.state == STATE_HANDSHAKE && now >= c.started + HANDSHAKE_TIMEOUT {
+        c.error = NO_ERROR;
+        c.reason.clear();
+        c.reason.append("handshake timeout");
+        c.state = STATE_CLOSED;
+        return;
+    }
     if now >= c.last_activity + c.idle_timeout {
         // Silently closed (§10.1).
         c.error = NO_ERROR;

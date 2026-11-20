@@ -267,6 +267,11 @@ fn h3_poll(c: Conn&, h: H3&) {
         if stream_finished(c, id) { h3_fail(c, h, H3_CLOSED_CRITICAL_STREAM, "a critical stream closed"); return; }
     }
     for k in H3_MAX_EXCHANGES {
+        // A server's request that failed is not handed to the application
+        // (h3_next_request), so nothing would forget it: its slot is freed
+        // here, or 16 bad requests would leave the connection none. An id
+        // the application still holds then finds no exchange.
+        if h.is_server && h.ex[k].used && h.ex[k].err != 0 { h.ex[k].used = false; continue; }
         if !h.ex[k].used || h.ex[k].done || h.ex[k].err != 0 { continue; }
         let id = h.ex[k].id;
         var buf: u8[>..] = [];

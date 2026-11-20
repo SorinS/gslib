@@ -79,6 +79,13 @@ client certificate, with P-256 and RSA keys over TLS 1.3 and 1.2.
 
 ## Strictness
 
+What this package writes is held to the same rules: a request or
+response head is written only from fields as `add_field` makes them
+(`fields_ok`), so a caller's `fields` text with a CR or LF inside a value,
+a line without a name, or an empty line in it is refused (the client's
+`ERR_REQUEST`) rather than sent as a field or a request of its own; the
+proxy's CONNECT head is built the same way, User-Agent included.
+
 Two parsers that read one byte stream as different messages are how
 request smuggling works, so the parser takes one reading of each message
 and refuses what could be read another way. Against Go's net/http server
@@ -163,10 +170,15 @@ goose build tools/http.goose && tools/goose-http [-L] [-X M] [-d DATA] [-H 'N: v
 
 ## Not yet
 
-- goose-httpd's HTTP/2 has no defence against rapid reset (CVE-2023-44487:
-  streams opened and reset at once) beyond its limit of streams open at
-  a time, and no timeout on an unacknowledged SETTINGS; each connection
-  is a process of its own.
+- goose-httpd is a file server for tests and examples, not one hardened
+  for the open internet. An HTTP/2 connection holds at most 16 MiB of
+  request bodies and unsent content (past it, requests get 503 without
+  their file being read), and one that resets more than 1,000 streams
+  gets GOAWAY with ENHANCE_YOUR_CALM (rapid reset, CVE-2023-44487); but
+  files are read whole (up to 256 MiB) before they are sent, a request's
+  head and body have no overall deadline (a byte every 29 s keeps a
+  connection, and with it one of `--max-conns`), writes have no timeout,
+  and nothing times out an unacknowledged SETTINGS.
 - HTTP/2's server push (the client turns it off), priorities (RFC 9113
   deprecates them), extended CONNECT (RFC 8441, WebSockets over HTTP/2),
   and the Upgrade from HTTP/1.1 to h2c (RFC 9113 drops it too).

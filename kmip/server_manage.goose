@@ -223,13 +223,31 @@ fn op_register(s: Server&, owner: const u8[:], v: Version, buf: const u8[:], doc
     return done();
 }
 
-// A key that wraps or unwraps another: the owner's, not destroyed, with
-// the usage; its Cryptographic Parameters attribute, when it has one.
+// A key that wraps or unwraps another: the owner's, with the usage; its
+// Cryptographic Parameters attribute, when it has one. A key retired from
+// protecting (Deactivated, Compromised, past its Protect Stop Date) wraps
+// nothing new, and one destroyed, or before its Process Start Date,
+// unwraps nothing. Pre-Active keys are taken, as clients commonly wrap
+// with a key they never activated.
 fn wrapping_key(s: const Server&, owner: const u8[:], uid: const u8[:], usage: u32, k: Object&, own: CryptoParams&,
                 has_own: bool&) -> Outcome {
     let i = find_object(s, owner, uid);
     if i < 0 { return fail(REASON_WRAPPING_OBJECT_NOT_FOUND, "no such wrapping key"); }
     let a = attrs_of(s.objects[i]);
+    let st = s.objects[i].state;
+    let now = now_of(s);
+    if st == STATE_DESTROYED || st == STATE_DESTROYED_COMPROMISED {
+        return fail(REASON_WRONG_KEY_LIFECYCLE_STATE, "the wrapping key is destroyed");
+    }
+    if (usage & USAGE_WRAP_KEY) != 0 {
+        let stop, sok = get_datetime(a, TAG_PROTECT_STOP_DATE);
+        if st == STATE_DEACTIVATED || st == STATE_COMPROMISED || (sok && stop <= now) {
+            return fail(REASON_WRONG_KEY_LIFECYCLE_STATE, "the wrapping key no longer protects");
+        }
+    } else {
+        let start, pok = get_datetime(a, TAG_PROCESS_START_DATE);
+        if pok && start > now { return fail(REASON_WRONG_KEY_LIFECYCLE_STATE, "the unwrapping key is before its Process Start Date"); }
+    }
     let m, mok = get_int(a, TAG_CRYPTOGRAPHIC_USAGE_MASK);
     if !mok || ((m as! u32) & usage) == 0 { return fail(REASON_INCOMPATIBLE_CRYPTOGRAPHIC_USAGE_MASK, "the wrapping key's usage mask does not allow it"); }
     var ok = false;

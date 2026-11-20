@@ -169,6 +169,21 @@ fn tls_methods() {
             let pc2 = peer_cfg(radius::EAP_TLS, 0, v, frag);
             let nocert = run(pc2, sc, "");
             check(str("EAP-TLS without a certificate ", what), nocert.server == radius::EAP_DONE_FAIL && nocert.peer == radius::EAP_DONE_FAIL);
+            // A server offering PEAP, TTLS and EAP-TLS on one configuration,
+            // which can then only ask for a certificate if given (or not ask
+            // at all): EAP-TLS without one is still refused.
+            let all: u8[3] = [radius::EAP_PEAP, radius::EAP_TTLS, radius::EAP_TLS];
+            var shared = server_cfg(all, frag);
+            check("client CA", x509::pool_add(shared.tls.client_cas, field("clientca", "", 2)));
+            for mode in [tls::VERIFY_CLIENT_CERT_IF_GIVEN, tls::NO_CLIENT_CERT] {
+                shared.tls.client_auth = mode;
+                let r = run(pc2, shared, "");
+                check(str("EAP-TLS without a certificate, PEAP and TTLS offered too, ", what),
+                      r.server == radius::EAP_DONE_FAIL && r.peer == radius::EAP_DONE_FAIL);
+            }
+            shared.tls.client_auth = tls::VERIFY_CLIENT_CERT_IF_GIVEN;
+            let r_shared = run(pc, shared, "");
+            ok_run(str("EAP-TLS with a certificate, PEAP and TTLS offered too, ", what), r_shared, true);
         }
         let what = version_name(v);
         // Wrong passwords inside the tunnels.
@@ -198,6 +213,23 @@ fn hostile() {
     var out: u8[>..] = [];
     let succ = radius::eap_packet(radius::EAP_SUCCESS, 1, 0, "");
     check("early Success refused", radius::peer_step(p, pc, succ, out) == radius::EAP_DONE_FAIL);
+    // An MS-CHAPv2 Success with no Challenge before it: its authenticator
+    // response would be checked against zeros, which anyone can make.
+    let mc = radius::peer_config("alice", "alice-pw", radius::EAP_MSCHAPV2);
+    var pm = radius::peer(mc);
+    let r0 = radius::peer_step(pm, mc, radius::eap_packet(radius::EAP_REQUEST, 1, radius::EAP_IDENTITY, ""), out);
+    let z16: u8[16] = [0; 16];
+    let z24: u8[24] = [0; 24];
+    let a = radius::authenticator_response(z16, z24, z16, z16, "alice");
+    var d: u8[>..] = [];
+    d.push(3);
+    d.push(0);
+    d.push(0);
+    d.push((4 + a.len) as! u8);
+    d.append(a);
+    out.clear();
+    let r1 = radius::peer_step(pm, mc, radius::eap_packet(radius::EAP_REQUEST, 2, radius::EAP_MSCHAPV2, d), out);
+    check("MS-CHAPv2 Success without a Challenge refused", r1 == radius::EAP_DONE_FAIL && radius::peer_msk(pm).len == 0);
     // Truncated and inconsistent packets.
     var p2 = radius::peer(pc);
     let trunc: u8[3] = [1, 1, 0];

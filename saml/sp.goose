@@ -286,11 +286,17 @@ fn sp_decrypt_options(sp: const Sp&) -> xml::DecryptOptions {
 // Decrypts the one xenc:EncryptedData of a SAML wrapper (EncryptedAssertion,
 // EncryptedID, EncryptedAttribute) in place; the one element of `local`
 // in SAML's namespace it held, or -1 with an error.
-fn decrypt_wrapper(sp: const Sp&, d: xml::Doc&, wrapper: i64, local: const u8[:]) -> i64, i64 {
+// cbc_ok: whether the ciphertext is under a signature already verified.
+// CBC unsigned is a padding oracle (Jager and Somorovsky): its errors, or
+// its timing, tell a bad padding from bad XML, and byte flips then recover
+// the plaintext; so an EncryptedAssertion in a Response not signed is
+// refused CBC before it is decrypted, whatever allow_cbc says.
+fn decrypt_wrapper(sp: const Sp&, d: xml::Doc&, wrapper: i64, local: const u8[:], cbc_ok: bool) -> i64, i64 {
     if !sp.has_enc_key && !sp.signer.has_key { return -1, ERR_DECRYPT; }
     if xml::count_children(d, wrapper, xml::XENC_NS, "EncryptedData") != 1 { return -1, ERR_MALFORMED; }
     let ed = xml::child(d, wrapper, xml::XENC_NS, "EncryptedData");
-    let o = sp_decrypt_options(sp);
+    var o = sp_decrypt_options(sp);
+    o.allow_cbc = o.allow_cbc && cbc_ok;
     let e = if sp.has_enc_key { xml::decrypt_replace(d, ed, sp.enc_key, o) } else { xml::decrypt_replace(d, ed, sp.signer.key, o) };
     if e == xml::ERR_ENC_ALGORITHM { return -1, ERR_ALGORITHM; }
     if e == xml::ERR_ENC_CONTENT || e == xml::ERR_ENC_MALFORMED { return -1, ERR_MALFORMED; }
@@ -425,7 +431,7 @@ fn read_subject(sp: const Sp&, d: xml::Doc&, asrt: i64, request_id: const u8[:],
     if nid < 0 {
         let eid = xml::child(d, subj, SAML_NS, "EncryptedID");
         if eid < 0 { return fail_assertion(a, ERR_SUBJECT, "a BaseID, not a NameID"); }
-        let n, e = decrypt_wrapper(sp, d, eid, "NameID");
+        let n, e = decrypt_wrapper(sp, d, eid, "NameID", true);
         if e != OK { return fail_assertion(a, e, "the EncryptedID does not decrypt to a NameID"); }
         nid = n;
     }
@@ -525,7 +531,8 @@ fn process_response(sp: const Sp&, idp: const Entity&, m: const Received&, reque
     if plain + enc != 1 { return fail_assertion(a, ERR_ASSERTION, "not exactly one Assertion"); }
     var asrt: i64 = -1;
     if enc == 1 {
-        let n, e = decrypt_wrapper(sp, d, xml::child(d, resp, SAML_NS, "EncryptedAssertion"), "Assertion");
+        let n, e = decrypt_wrapper(sp, d, xml::child(d, resp, SAML_NS, "EncryptedAssertion"), "Assertion",
+                                  a.response_signed);
         if e != OK { return fail_assertion(a, e, "the EncryptedAssertion does not decrypt to an Assertion"); }
         asrt = n;
         a.encrypted = true;
@@ -587,7 +594,7 @@ fn process_response(sp: const Sp&, idp: const Entity&, m: const Received&, reque
                 var el = at;
                 let nx = xml::next_element(d, at);
                 if xml::is(d, at, SAML_NS, "EncryptedAttribute") {
-                    let n, e = decrypt_wrapper(sp, d, at, "Attribute");
+                    let n, e = decrypt_wrapper(sp, d, at, "Attribute", true);
                     if e != OK { return fail_assertion(a, e, "an EncryptedAttribute does not decrypt to an Attribute"); }
                     el = n;
                 }

@@ -399,7 +399,14 @@ fn begin_session(c: Conn&) -> i64 {
 // 2.x ones when signing is required. Guest and anonymous sessions have no
 // keys, so they are refused when signing or encryption is required.
 fn finish_session(c: Conn&, gss_key: const u8[:], final: const u8[:]) -> i64 {
-    let anonymous = c.session_flags & (SESSION_FLAG_IS_GUEST | SESSION_FLAG_IS_NULL) != 0 || gss_key.len == 0;
+    // A login with a credential that the server calls a guest or null
+    // session: the flags are in the final response, whose signature could
+    // not be checked without keys, so a man in the middle could set them
+    // and strip signing and encryption from a real login. Refused, as
+    // Windows refuses a guest fallback.
+    let flagged = c.session_flags & (SESSION_FLAG_IS_GUEST | SESSION_FLAG_IS_NULL) != 0;
+    if flagged && gss_key.len > 0 { return ERR_AUTH; }
+    let anonymous = flagged || gss_key.len == 0;
     let server_requires = c.server_security & SIGNING_REQUIRED != 0;
     if anonymous {
         if c.opts.require_signing || c.opts.require_encryption || server_requires || c.session_flags & SESSION_FLAG_ENCRYPT_DATA != 0 {

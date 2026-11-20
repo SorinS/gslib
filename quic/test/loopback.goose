@@ -195,6 +195,65 @@ fn lossy() {
     check(c.rec.cwnd > 0 && s.rec.has_rtt, "an RTT estimate");
 }
 
+// NEW_CONNECTION_ID with Retire Prior To: a step of two retires the old
+// IDs, each in a RETIRE_CONNECTION_ID frame; a step far beyond what was
+// issued closes with CONNECTION_ID_LIMIT_ERROR instead of queueing that
+// many frames (found by fuzzing: 2^62 of them).
+fn connection_ids() {
+    let cc, sc = configs();
+    var now = NOW0;
+    var c, s = connect(cc, sc, now);
+    var w = wire(0);
+    run(c, cc, s, sc, w, now, now + 5000000, both_up);
+    let cid: u8[8] = [1, 2, 3, 4, 5, 6, 7, 8];
+    let token: u8[16] = [7; 16];
+    var f: u8[>..] = [];
+    quic::put_new_connection_id(f, 2, 2, cid, token);
+    let e1 = quic::handle_frames(s, sc, quic::SPACE_APP, f);
+    let d = quic::poll(s, now);
+    check(e1 && !quic::closing(s) && d.len > 0 && s.retire_seq == 2 && s.retire_pending == 0 && s.dcid == cid,
+          "Retire Prior To 2: two IDs retired, the new one used");
+    f.clear();
+    quic::put_new_connection_id(f, 1 << 40, 1 << 40, cid, token);
+    let e2 = quic::handle_frames(s, sc, quic::SPACE_APP, f);
+    let d2 = quic::poll(s, now);
+    let code, app, reason = quic::close_error(s);
+    check(quic::closing(s) && code == quic::CONNECTION_ID_LIMIT_ERROR && !app && d2.len < 1300,
+          "Retire Prior To 2^40: CONNECTION_ID_LIMIT_ERROR");
+}
+
+// What fuzzing and review found, kept: a received-packet history that
+// is full taking a packet older than all of it (it aborted on an index
+// past its end, from 33 Initials with no handshake); a Retry whose token
+// is longer than a client keeps (it aborted the client).
+fn hostile() {
+    var sp = quic::space();
+    var pn: i64 = 300;
+    for k in 32 { quic::note_pn(sp, pn); pn -= 2; }
+    quic::note_pn(sp, 100);
+    check(sp.n_recv == 32 && quic::seen_pn(sp, 100) && quic::seen_pn(sp, 50) && !quic::seen_pn(sp, 239),
+          "a full history: an older packet taken as seen, not stored");
+    quic::note_pn(sp, 1000);
+    check(sp.n_recv == 32 && quic::seen_pn(sp, 1000) && quic::seen_pn(sp, 238) && quic::seen_pn(sp, 240) && !quic::seen_pn(sp, 241),
+          "a new range: the lowest dropped, the floor above it");
+    let cc, sc = configs();
+    var c = quic::client(cc, NOW0);
+    let first = quic::poll(c, NOW0);
+    let new_cid: u8[8] = [9, 8, 7, 6, 5, 4, 3, 2];
+    var r: u8[>..] = [];
+    r.push(0xf5);
+    quic::put_u32be(r, quic::VERSION_1);
+    r.push(c.scid.len as! u8);
+    r.append(c.scid);
+    r.push(8);
+    r.append(new_cid);
+    for i in 1000 { r.push(0x41); }
+    let tag = quic::retry_tag(c.odcid, r);
+    r.append(tag);
+    quic::recv(c, cc, r, NOW0 + 1000);
+    check(!c.retried && c.token.len == 0 && !quic::closed(c), "a Retry with a 1000-byte token: ignored");
+}
+
 fn idle() {
     let cc, sc = configs();
     var now = NOW0;
@@ -326,12 +385,40 @@ fn http3() {
     check(quic::h3_status(hc, post) == 201 && b2 == "posted body", "a POST echoed");
     check(quic::h3_got_settings(hc) && quic::h3_got_settings(hs), "both sides read the other's SETTINGS");
     check(hc.error == 0 && hs.error == 0 && quic::established(c), "no errors");
+    // Twenty malformed requests (an empty :path), more than a connection's
+    // 16 exchanges: each is the stream's error, its slot freed, and a good
+    // request after them is still answered.
+    var bad_done = 0;
+    for i in 20 {
+        let bad = quic::h3_send_request(c, hc, "GET", "https", "localhost", "", "", "");
+        for round in 50 {
+            run(c, cc, s, sc, w, now, now + 20000, never);
+            quic::h3_poll(c, hc);
+            quic::h3_poll(s, hs);
+            if bad >= 0 && quic::h3_done(hc, bad) { bad_done++; quic::h3_forget(hc, bad); break; }
+        }
+    }
+    let good = quic::h3_send_request(c, hc, "GET", "https", "localhost", "/hello", hdrs, "");
+    for round in 200 {
+        run(c, cc, s, sc, w, now, now + 20000, never);
+        quic::h3_poll(c, hc);
+        quic::h3_poll(s, hs);
+        let id = quic::h3_next_request(hs);
+        if id >= 0 { let ok = quic::h3_respond(s, hs, id, 200, "", "still here"); }
+        if quic::h3_done(hc, good) { break; }
+    }
+    var b3: u8[>..] = [];
+    quic::h3_take_body(hc, good, b3);
+    check(bad_done == 20 && quic::h3_status(hc, good) == 200 && b3 == "still here" && hs.error == 0,
+          "twenty malformed requests, then one answered");
 }
 
 fn main() {
     clean();
     http3();
     lossy();
+    connection_ids();
+    hostile();
     idle();
     retry();
     version_negotiation();

@@ -110,6 +110,16 @@ fn ticket_key(kt: const KeytabEntry[:], t: const Ticket&, any_name: bool) -> Key
     return no_key(), 0, why;
 }
 
+// The name of keytab entry `who`, or `otherwise` for -1.
+fn entry_name(kt: const KeytabEntry[:], who: i64, otherwise: const u8[]&) -> u8[] {
+    var j: i64 = 0;
+    for e in kt {
+        if j == who { return copy(e.name); }
+        j++;
+    }
+    return copy(otherwise);
+}
+
 // Checks an AP-REQ for a service with keys in `kt` at time `now`
 // (seconds since 1970), with `usage` the authenticator's key usage (11,
 // or 7 inside a TGS-REQ). The context, or an error that a KRB-ERROR
@@ -124,11 +134,39 @@ fn verify_ap_req(apreq: const u8[:], kt: const KeytabEntry[:], any_name: bool, r
     }
     let t, terr = decode_ticket(ap.ticket);
     if terr != OK { return empty_ap_context(), terr; }
-    let key, kvno, kerr = ticket_key(kt, t, any_name);
-    if kerr != OK { return empty_ap_context(), kerr; }
+    // The key of the name the ticket gives; with any_name, failing that,
+    // each other key of the realm and type in turn. The server reported is
+    // the keytab entry whose key decrypted the ticket: sname is outside the
+    // encrypted part, and a ticket for one service with another's sname
+    // written in must not be reported as for that other.
+    let key0, kvno0, kerr0 = ticket_key(kt, t, false);
+    var kerr = kerr0;
     var tp_plain: u8[>..] = [];
-    let derr = decrypt(key, USAGE_KDC_REP_TICKET, t.enc_part.cipher, tp_plain);
-    if derr != OK { return empty_ap_context(), KRB_AP_ERR_BAD_INTEGRITY; }
+    var opened = kerr == OK && decrypt(key0, USAGE_KDC_REP_TICKET, t.enc_part.cipher, tp_plain) == OK;
+    var who: i64 = -1;                      // the keytab entry that opened it, when not by sname
+    var key = key0;
+    var kvno = kvno0;
+    if !opened && any_name {
+        let want: u32 = if t.enc_part.has_kvno { t.enc_part.kvno } else { 0 };
+        var tried = false;
+        var j: i64 = 0;
+        for e in kt {
+            if !opened && e.realm == t.realm && e.key.etype == t.enc_part.etype && (want == 0 || e.kvno == want) {
+                tried = true;
+                tp_plain.clear();
+                if decrypt(e.key, USAGE_KDC_REP_TICKET, t.enc_part.cipher, tp_plain) == OK {
+                    opened = true;
+                    who = j;
+                    key = e.key;
+                    kvno = e.kvno;
+                }
+            }
+            j++;
+        }
+        if tried { kerr = OK; }
+    }
+    if kerr != OK { return empty_ap_context(), kerr; }
+    if !opened { return empty_ap_context(), KRB_AP_ERR_BAD_INTEGRITY; }
     let tp, tperr = decode_enc_ticket_part(tp_plain);
     if tperr != OK { return empty_ap_context(), tperr; }
     if ap.authenticator.etype != tp.key.etype { return empty_ap_context(), KRB_AP_ERR_BAD_INTEGRITY; }
@@ -153,7 +191,7 @@ fn verify_ap_req(apreq: const u8[:], kt: const KeytabEntry[:], any_name: bool, r
     if !replay_check(rc, ap.authenticator.cipher, now, skew) { return empty_ap_context(), KRB_AP_ERR_REPEAT; }
     return ApContext {
         client: copy(tp.cname.name), client_realm: copy(tp.crealm), client_type: tp.cname.name_type,
-        server: copy(t.sname.name), server_realm: copy(t.realm), session_key: tp.key, has_subkey: a.has_subkey,
+        server: entry_name(kt, who, t.sname.name), server_realm: copy(t.realm), session_key: tp.key, has_subkey: a.has_subkey,
         subkey: a.subkey, has_seq_number: a.has_seq_number, seq_number: a.seq_number, ap_options: ap.ap_options,
         ticket_flags: tp.flags, authtime: tp.authtime, endtime: tp.endtime, ctime: a.ctime, cusec: a.cusec,
         has_cksum: a.has_cksum, cksum: copy(a.cksum), authz: copy(tp.authz), kvno: kvno, service_key: key,

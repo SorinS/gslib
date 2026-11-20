@@ -22,7 +22,7 @@ reading theirs. Only `krb5.net`, the file functions and the tools do I/O.
 | `krb5.fast` | FAST (RFC 6113), the client's side: armor from a TGT (`fast_armor_as`) or a TGS request's own (`fast_armor_tgs`), `fast_wrap`, the reply's checks (`fast_reply`: nonce, finished part, the ticket's checksum), `fast_reply_key` (the strengthen key), `fast_error` (the error inside the armor, the cookie), encrypted challenge both ways |
 | `krb5.pkinit` | PKINIT (RFC 4556) with RFC 8636's KDFs (SHA-1, -256, -384, -512) and octetstring2key, freshness tokens (RFC 8070) and anonymous PKINIT (RFC 8062, PA-PKINIT-KX checked): Diffie-Hellman in MODP 2048 and 4096 and P-256, P-384, P-521 (`pkinit_dh_min_bits`; another group from the KDC's TD-DH-PARAMETERS); the AuthPack signed in CMS (`x509.cms`) by an RSA or ECDSA key; the KDC's certificate checked against `pkinit_anchors` (`pkinit_pool`, `pkinit_kdc_hostname`, `pkinit_eku_checking` as MIT reads them); identities `FILE:cert[,key]` and `PKCS12:file` (`pkinit_load_identity`) |
 | `krb5.spake` | SPAKE pre-authentication (draft-ietf-kitten-krb-spake-preauth, MIT 1.17+), the client's side with SF-NONE: the four groups (edwards25519, P-256, P-384, P-521; `spake_preauth_groups` as MIT names them, edwards25519 by default), PA-SPAKE's messages, w, the transcript hash and K'[n]; `spake_on_challenge`, `spake_response` |
-| `krb5.service` | The acceptor: `verify_ap_req` (keytab, ticket times, skew, authenticator, replay cache), `make_ap_rep`, `verify_ap_rep`, `make_ap_req` |
+| `krb5.service` | The acceptor: `verify_ap_req` (keytab, ticket times, skew, authenticator, replay cache; with `any_name`, each key of the ticket's realm, type and version in turn, as MIT does, and the server reported the keytab entry whose key opened the ticket, never the ticket's cleartext sname), `make_ap_rep`, `verify_ap_rep`, `make_ap_req` |
 | `krb5.gssapi` | RFC 4121: `gss_init`, `gss_init_continue`, `gss_accept` (mutual authentication, channel bindings, delegation through KRB-CRED, acceptor subkeys), `gss_get_mic`, `gss_verify_mic`, `gss_wrap`, `gss_unwrap` (sealed or not, any RRC), sequence checks; RFC 4757's tokens for RC4 session keys |
 | `krb5.spnego` | RFC 4178: `spnego_init`, `spnego_init_continue`, `spnego_accept` (Kerberos under RFC 4121's OID or Microsoft's, a second round when another mechanism was preferred, mechListMIC both ways, NegTokenInit2, bare Kerberos tokens); `negotiate_header`, `negotiate_token`; NTLM as the mechanism on gslib's ntlm (`spnego_ntlm_*`: both sides, mechListMIC with the NTLM keys, bare NTLMSSP tokens; ntlm/README.md) |
 | `krb5.ndr` | NDR as MS-RPCE's type serialization: the reader the PAC's types use |
@@ -285,8 +285,6 @@ Go, and `tools/krb5oracle/go.mod` points (`replace`) at that checkout.
 - DNS SRV discovery of KDCs (`dns_lookup_kdc`), kpasswd (RFC 3244),
   KKDCP, MEMORY/KEYRING/KCM caches.
 - Windows is built for (the C has its Windows branches) but untested.
-- An acceptor taking any name (`any_name`) tries the first keytab key of
-  the ticket's realm, type and version, where MIT tries each in turn.
 - Against AD (one DC, one domain): no trust between AD domains or
   forests (an MIT realm trust only), no read-only DC, no AD-side checks of our initiator by
   Windows' own clients (only by our acceptor).

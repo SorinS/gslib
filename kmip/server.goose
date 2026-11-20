@@ -635,6 +635,47 @@ fn uid_in(s: const Server&, buf: const u8[:], doc: const Node[:], p: i64) -> con
     return "";
 }
 
+// The object a Unique Identifier field names: its text, or the ID
+// Placeholder (or another kept ID) its enumeration stands for.
+fn uid_at(s: const Server&, buf: const u8[:], doc: const Node[:], k: i64) -> const u8[:] {
+    let u, ok = as_text(buf, doc, k);
+    if ok { return u; }
+    let e, eok = as_enum(buf, doc, k);
+    if eok && e > 0 && e < 18 { return s.batch_ids[e]; }
+    return "";
+}
+
+// Operations that act on no stored object: with no Unique Identifier they
+// do not take the ID Placeholder's.
+fn names_no_object(op: u32) -> bool {
+    op == OP_CREATE || op == OP_CREATE_KEY_PAIR || op == OP_REGISTER || op == OP_LOCATE || op == OP_QUERY ||
+    op == OP_DISCOVER_VERSIONS || op == OP_RNG_RETRIEVE || op == OP_RNG_SEED || op == OP_HASH || op == OP_LOG ||
+    op == OP_LOGIN || op == OP_LOGOUT || op == OP_DELEGATED_LOGIN || op == OP_POLL || op == OP_CANCEL
+}
+
+// Whether a delegated ticket's Rights allow the item: every object it names,
+// in any field and at any depth (a Private Key Unique Identifier, a
+// wrapping key's, Derive Key's and Join Split Key's several), or, naming
+// none, the ID Placeholder's for an operation on an object, and no object
+// for the others (so that Rights limited to objects allow no Locate).
+fn delegated_ok(s: const Server&, owner: const u8[:], rights: const u8[:], op: u32, buf: const u8[:], doc: const Node[:],
+                p: i64) -> bool {
+    if p < 0 { return rights_allow(s, owner, rights, op, ""); }
+    var named = 0;
+    var ok = true;
+    var k = p + 1;
+    while k < doc.len && doc[k].start < doc[p].end {
+        let t = doc[k].tag;
+        if t == TAG_UNIQUE_IDENTIFIER || t == TAG_PRIVATE_KEY_UNIQUE_IDENTIFIER || t == TAG_PUBLIC_KEY_UNIQUE_IDENTIFIER {
+            named++;
+            if !rights_allow(s, owner, rights, op, uid_at(s, buf, doc, k)) { ok = false; }
+        }
+        k++;
+    }
+    if named > 0 { return ok; }
+    return rights_allow(s, owner, rights, op, if names_no_object(op) { "" } else { s.batch_ids[UID_ID_PLACEHOLDER] });
+}
+
 fn keep_id(s: Server&, which: u32, uid: const u8[:]) {
     s.batch_ids[which].clear();
     s.batch_ids[which].append(uid[..::min(uid.len, 64)]);
@@ -889,7 +930,7 @@ fn handle(s: Server&, owner: const u8[:], req: const u8[:], out: u8[>..]&) {
         if who.reason != 0 {
             res = fail(who.reason, who.msg);
         } else if delegated && (it.op == OP_LOGIN ||
-                                !rights_allow(s, me, s.tickets[who.ticket].rights, it.op, if it.payload >= 0 { uid_in(s, req, doc, it.payload) } else { "" }) ||
+                                !delegated_ok(s, me, s.tickets[who.ticket].rights, it.op, req, doc, it.payload) ||
                                 (it.op == OP_DELEGATED_LOGIN && (it.payload < 0 || child(doc, it.payload, TAG_RIGHTS) < 0 ||
                                  !rights_within(raw(req, doc, child(doc, it.payload, TAG_RIGHTS)), s.tickets[who.ticket].rights)))) {
             // A delegated ticket does what its Rights say, and delegates

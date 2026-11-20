@@ -85,7 +85,11 @@ Algorithms are xml's: RSA PKCS #1 v1.5 and PSS, ECDSA, Ed25519 with
 SHA-256/384/512; SHA-1 (signatures and digests, and the Redirect
 binding's SigAlg) only with `allow_sha1`; RSA keys under 2048 bits
 refused; AES-GCM content, AES-CBC only with `allow_cbc` (no integrity:
-take it only from IdPs that send nothing else, and only signed), RSA-OAEP
+take it only from IdPs that send nothing else; an EncryptedAssertion in
+CBC is decrypted only inside a signed Response, and refused otherwise
+before anything is decrypted, since decrypting an unsigned one makes a
+padding oracle that recovers the assertion: an IdP that signs only the
+assertion, as ADFS does by default, must also sign the Response), RSA-OAEP
 key transport, RSA 1.5 only with `allow_rsa15`, ECDH-ES.
 
 ### The bindings

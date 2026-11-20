@@ -178,7 +178,7 @@ fn validation() {
     check(quic::validate_request(connect) == quic::FIELDS_OK, "CONNECT");
     let ext = records([":method", "CONNECT", ":protocol", "websocket", ":scheme", "https", ":authority", "a", ":path", "/chat"]);
     check(quic::validate_request(ext) == quic::FIELDS_OK, "extended CONNECT");
-    let cases_n = 12;
+    let cases_n = 16;
     var n_bad = 0;
     let b1 = records([":method", "GET", ":scheme", "https", ":authority", "a", ":path", "/", "Accept", "x"]);
     if quic::validate_request(b1) == quic::FIELDS_MALFORMED { n_bad++; }
@@ -204,7 +204,21 @@ fn validation() {
     if quic::validate_request(b11) == quic::FIELDS_MALFORMED { n_bad++; }
     let b12 = records([":method", "GET", ":scheme", "https", ":authority", "a", ":path", "/", "x", " padded"]);
     if quic::validate_request(b12) == quic::FIELDS_MALFORMED { n_bad++; }
-    check(n_bad == cases_n, "twelve malformed requests refused");
+    // :authority and Host disagreeing, Host twice, a :path not starting
+    // with "/", "*" for a method other than OPTIONS.
+    let b13 = records([":method", "GET", ":scheme", "https", ":authority", "a", ":path", "/", "host", "b"]);
+    if quic::validate_request(b13) == quic::FIELDS_MALFORMED { n_bad++; }
+    let b14 = records([":method", "GET", ":scheme", "https", ":path", "/", "host", "a", "host", "b"]);
+    if quic::validate_request(b14) == quic::FIELDS_MALFORMED { n_bad++; }
+    let b15 = records([":method", "GET", ":scheme", "https", ":authority", "a", ":path", "index.html"]);
+    if quic::validate_request(b15) == quic::FIELDS_MALFORMED { n_bad++; }
+    let b16 = records([":method", "GET", ":scheme", "https", ":authority", "a", ":path", "*"]);
+    if quic::validate_request(b16) == quic::FIELDS_MALFORMED { n_bad++; }
+    check(n_bad == cases_n, "sixteen malformed requests refused");
+    let same = records([":method", "GET", ":scheme", "https", ":authority", "a", ":path", "/", "host", "a"]);
+    check(quic::validate_request(same) == quic::FIELDS_OK, ":authority and the same Host");
+    let star = records([":method", "OPTIONS", ":scheme", "https", ":authority", "a", ":path", "*"]);
+    check(quic::validate_request(star) == quic::FIELDS_OK, "OPTIONS *");
     check(quic::validate_response(records([":status", "200", "content-type", "text/plain"])) == quic::FIELDS_OK, "a response");
     check(quic::validate_response(records([":status", "20x"])) == quic::FIELDS_MALFORMED, "a status not of digits");
     check(quic::validate_response(records([":status", "200", ":path", "/"])) == quic::FIELDS_MALFORMED, "a request's pseudo-header");

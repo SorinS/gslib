@@ -11,6 +11,8 @@ import gslib from "../..";
 import gslib.kmip;
 import gslib.kmip.client;
 import gslib.kmip.client_session;
+import gslib.kmip.client_ops;
+import gslib.kmip.client_pki;
 import gslib.kmip.local;
 import gslib.kmip.server;
 import gslib.kmip.server_session;
@@ -241,6 +243,67 @@ fn tickets() {
     check("none, when one is required", e16 == kmip::ERR_FAILED && d.last_reason == kmip::REASON_AUTHENTICATION_NOT_SUCCESSFUL);
 }
 
+fn statuses(resp: const u8[:]) -> u32[>..] {
+    var out: u32[>..] = [];
+    var doc: kmip::Node[>..] = [];
+    let r, e = kmip::decode(resp, kmip::Options { .. }, doc);
+    let m, pe = kmip::parse_response(resp, doc, r);
+    for it in m.items { out.push(it.status); out.push(it.reason); }
+    return out;
+}
+
+fn ec_pair(c: kmip::Local&) -> u8[>..] {
+    var common = kmip::attrs();
+    kmip::attr_enum(common, kmip::TAG_CRYPTOGRAPHIC_ALGORITHM, kmip::ALG_EC);
+    kmip::attr_curve(common, kmip::CURVE_P_256);
+    var pa = kmip::attrs();
+    kmip::attr_usage(pa, kmip::USAGE_SIGN);
+    var pb = kmip::attrs();
+    kmip::attr_usage(pb, kmip::USAGE_VERIFY);
+    let pv, pu, e = kmip::create_key_pair(c, common, pa, pb);
+    return pv;
+}
+
+// A delegated ticket's Rights are checked against every object an item
+// names: Rights for Export and Re-key Key Pair on key A allow Re-key Key
+// Pair on A (named as the Private Key Unique Identifier), and not on X,
+// alone or after an Export of A that sets the ID Placeholder to A.
+fn delegated_batch() {
+    var c = kmip::local("alice");
+    c.version = kmip::V2_0;
+    let a = ec_pair(c);
+    let x = ec_pair(c);
+    var rights = kmip::rights();
+    var objs: u8[..64][>..] = [];
+    var xa: u8[..64] = [];
+    xa.append(a);
+    objs.push(xa);
+    let ops: u32[2] = [kmip::OP_EXPORT, kmip::OP_REKEY_KEY_PAIR];
+    kmip::add_right(rights, ops, objs);
+    let t, et = kmip::delegated_login(c, 0, 3600, rights);
+    let cred = kmip::ticket_credential(kmip::TICKET_LOGIN, t);
+    for target in 3 {
+        let batch = target == 1;
+        var req: u8[>..] = [];
+        let m = kmip::begin_request(req, kmip::V2_0, if batch { 2 } else { 1 }, cred);
+        if batch {
+            let i1, p1 = kmip::begin_item(req, kmip::OP_EXPORT, "");
+            kmip::put_text(req, kmip::TAG_UNIQUE_IDENTIFIER, a);
+            kmip::end_item(req, i1, p1);
+        }
+        let i2, p2 = kmip::begin_item(req, kmip::OP_REKEY_KEY_PAIR, "");
+        kmip::put_text(req, kmip::TAG_PRIVATE_KEY_UNIQUE_IDENTIFIER, if target == 2 { a } else { x });
+        kmip::end_item(req, i2, p2);
+        kmip::end(req, m);
+        var out: u8[>..] = [];
+        kmip::handle(c.srv, "alice", req, out);
+        let st = statuses(out);
+        if target == 0 { check("delegated: Re-key Key Pair of another key refused", st.len == 2 && st[0] != 0); }
+        if target == 1 { check("delegated: Export A, then Re-key Key Pair of X, refused", st.len == 4 && st[0] == 0 && st[2] != 0); }
+        if target == 2 { check("delegated: Re-key Key Pair of A, named so, allowed", st.len == 2 && st[0] == 0); }
+    }
+}
+
 fn small_operations() {
     var c = kmip::local("alice");
     c.version = kmip::V2_1;
@@ -413,6 +476,7 @@ fn server_to_client() {
 }
 
 fn main() {
+    delegated_batch();
     versions();
     asynchronous();
     tickets();

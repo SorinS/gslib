@@ -554,7 +554,7 @@ fn chunked_feed(d: Chunked&, lim: const Limits&, input: const u8[:], body: u8[>.
 // written, if the method is no token or the target has a byte outside
 // visible ASCII.
 fn write_request_head(out: u8[>..]&, method: const u8[:], target: const u8[:], fields: const u8[:]) -> bool {
-    if !is_token(method) || target.len == 0 { return false; }
+    if !is_token(method) || target.len == 0 || !fields_ok(fields) { return false; }
     for c in target { if c < 0x21 || c > 0x7e { return false; } }
     out.append(method);
     out.push(' ');
@@ -567,7 +567,7 @@ fn write_request_head(out: u8[>..]&, method: const u8[:], target: const u8[:], f
 
 // A response head: "HTTP/1.1 status reason", the fields, the empty line.
 fn write_response_head(out: u8[>..]&, status: i64, fields: const u8[:]) -> bool {
-    if status < 100 || status > 999 { return false; }
+    if status < 100 || status > 999 || !fields_ok(fields) { return false; }
     out.append("HTTP/1.1 ");
     format(out, status);
     out.push(' ');

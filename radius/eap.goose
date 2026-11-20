@@ -294,6 +294,7 @@ struct Peer {
     commitment: bool,         // EAP-TLS 1.3: the server's 0x00 came
     last_id: i64,
     ms_auth_ch: u8[16], ms_peer_ch: u8[16], ms_nt: u8[24], ms_hash: u8[16], ms_ident: u8,
+    ms_answered: bool,         // our MS-CHAPv2 Response went: only then can a Success be checked
     ms_keys: u8[..32],        // MS-CHAPv2's MSK
     keys: u8[..128],          // MSK then EMSK (EAP-MS-CHAPv2: a 32-byte MSK)
     last_out: u8[..2048],
@@ -303,7 +304,7 @@ struct Peer {
 fn peer(cfg: const PeerConfig&) -> Peer {
     Peer {
         method: 0, error: OK, method_ok: false, inner_ok: false, avps_sent: false, commitment: false, last_id: -1,
-        ms_auth_ch: [0; 16], ms_peer_ch: [0; 16], ms_nt: [0; 24], ms_hash: [0; 16], ms_ident: 0,
+        ms_auth_ch: [0; 16], ms_peer_ch: [0; 16], ms_nt: [0; 24], ms_hash: [0; 16], ms_ident: 0, ms_answered: false,
         ms_keys: [], keys: [], last_out: [], layer: tls_layer(tls::client(cfg.tls)),
     }
 }
@@ -405,10 +406,15 @@ fn peer_mschapv2(p: Peer&, cfg: const PeerConfig&, data: const u8[:], r: u8[>..]
         body.push(0);
         body.append(cfg.identity);
         r.append(ms_data(MS_OP_RESPONSE, data[1], body));
+        p.ms_answered = true;
         return EAP_SEND;
     }
     if op == MS_OP_SUCCESS {
         if data.len < 4 { return peer_fail(p, ERR_MALFORMED); }
+        // A Success before any Challenge would be checked against zeros,
+        // which anyone can compute from the user name: the authenticator
+        // would not be authenticated.
+        if !p.ms_answered || data[1] != p.ms_ident { return peer_fail(p, ERR_AUTHENTICATOR); }
         let user = ms_user(cfg.identity);
         if !authenticator_response_ok(data[4..], p.ms_hash, p.ms_nt, p.ms_peer_ch, p.ms_auth_ch, user) {
             return peer_fail(p, ERR_AUTHENTICATOR);
@@ -624,6 +630,7 @@ struct EapSession {
     id: u8, method: u8, step: i64, error: i64,
     identity: u8[..253], inner_identity: u8[..253],
     challenge: u8[16], ms_ok: bool, inner_ok: bool, ttls_ms: bool,
+    answered: bool,            // the method has had a response: a Nak is too late
     ms_keys: u8[..32],
     keys: u8[..128],
     layer: TlsLayer,
@@ -635,12 +642,23 @@ let SS_INNER: i64 = 2;         // the tunnel up, its inner method under way
 let SS_RESULT: i64 = 3;        // PEAP: the Result TLV sent; TTLS, EAP-TLS: the last message sent
 let SS_DONE: i64 = 4;
 
+// The name a successful conversation authenticated: the inner identity
+// in PEAP and TTLS (the outer one is unchecked, often "anonymous"), the
+// identity the password was checked for in EAP-MD5 and MS-CHAPv2, and
+// none in EAP-TLS, which authenticates a certificate, not the name the
+// peer gave.
+fn authenticated_identity(s: const EapSession&) -> const u8[:] {
+    if s.method == EAP_PEAP || s.method == EAP_TTLS { return s.inner_identity[..]; }
+    if s.method == EAP_MD5 || s.method == EAP_MSCHAPV2 { return s.identity[..]; }
+    return "";
+}
+
 fn eap_session(cfg: const EapConfig&) -> EapSession {
     var idb: u8[1] = [0];
     entropy::random_bytes(idb);
     EapSession {
         id: idb[0], method: 0, step: SS_IDENTITY, error: OK, identity: [], inner_identity: [],
-        challenge: [0; 16], ms_ok: false, inner_ok: false, ttls_ms: false, ms_keys: [], keys: [],
+        challenge: [0; 16], ms_ok: false, inner_ok: false, ttls_ms: false, answered: false, ms_keys: [], keys: [],
         layer: tls_layer(tls::server(cfg.tls)),
     }
 }
@@ -717,13 +735,16 @@ fn server_step<F>(s: EapSession&, cfg: const EapConfig&, input: const u8[:], out
     }
     if t == EAP_NAK {
         // Before the method's first answer only: another one it asks for.
-        if s.layer.inbuf.len > 0 || s.ms_ok { return server_done(s, false, ERR_EAP, out); }
+        // After it, a TLS connection may be up, and a method switched to
+        // would take it over (PEAP's handshake ending as EAP-TLS's).
+        if s.answered || s.layer.inbuf.len > 0 || s.ms_ok { return server_done(s, false, ERR_EAP, out); }
         for want in data {
             if want != s.method && offers(cfg, want) { return server_method_start(s, cfg, want, out); }
         }
         return server_done(s, false, ERR_EAP, out);
     }
     if t != s.method { return server_done(s, false, ERR_EAP, out); }
+    s.answered = true;
     if t == EAP_MD5 {
         let pw = F(s.identity);
         if data.len != 17 || data[0] != 16 || pw.len == 0 { return server_done(s, false, ERR_REJECTED, out); }
@@ -827,6 +848,11 @@ fn server_tls<F>(s: EapSession&, cfg: const EapConfig&, t: u8, data: const u8[:]
 fn server_inner<F>(s: EapSession&, cfg: const EapConfig&, t: u8, r: i64, app: const u8[:]) -> i64 {
     var l = &s.layer;
     if t == EAP_TLS {
+        // EAP-TLS authenticates the peer by its certificate alone: a
+        // handshake without one, or with one not verified, fails, whatever
+        // the TLS configuration (shared with PEAP and TTLS, it may ask for
+        // a certificate only if given).
+        if tls::peer_certificates(l.conn).len == 0 || !tls::peer_verified(l.conn) { return EAP_DONE_FAIL; }
         // TLS 1.2: the peer acknowledged our Finished. TLS 1.3: the
         // commitment message goes once, then its acknowledgment ends it.
         if tls::version(l.conn) == tls::VERSION_TLS12 { return if r == LAYER_ACK { EAP_DONE_OK } else { EAP_SEND }; }

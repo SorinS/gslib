@@ -1093,15 +1093,14 @@ fn read_at_least<S>(c: Client&, i: i64, got: u8[>..]&, n: i64) -> i64 {
 // §9.3.6). A refusal leaves its status and fields in c.proxy_status and
 // c.proxy_fields (a 407's Proxy-Authenticate, say).
 fn http_connect<S>(c: Client&, i: i64, authority: const u8[:]) -> i64 {
+    // Built with add_field like any head: a User-Agent or credentials with
+    // a CR or LF in them refuse the tunnel rather than add a field to it.
+    var f: u8[>..] = [];
+    var ok = add_field(f, "Host", authority);
+    if c.proxy_authz.len > 0 { ok = ok && add_field(f, "Proxy-Authorization", c.proxy_authz); }
+    if c.opt.user_agent.len > 0 { ok = ok && add_field(f, "User-Agent", c.opt.user_agent[..]); }
     var req: u8[>..] = [];
-    req.append("CONNECT ");
-    req.append(authority);
-    req.append(" HTTP/1.1\r\nHost: ");
-    req.append(authority);
-    req.append("\r\n");
-    if c.proxy_authz.len > 0 { req.append("Proxy-Authorization: "); req.append(c.proxy_authz); req.append("\r\n"); }
-    if c.opt.user_agent.len > 0 { req.append("User-Agent: "); req.append(c.opt.user_agent[..]); req.append("\r\n"); }
-    req.append("\r\n");
+    if !ok || !write_request_head(req, "CONNECT", authority, f) { return ERR_REQUEST; }
     c.wire.clear();
     c.wire.append(req);
     var e = link_write_wire(c, i, wait_ms(c, c.opt.connect_timeout_ms));
@@ -1643,6 +1642,9 @@ fn round_trip(c: Client&, method: const u8[:], u: const Url&, fields: const u8[:
 }
 
 fn round_trip<S>(c: Client&, method: const u8[:], u: const Url&, fields: const u8[:], body: const u8[:]) -> Response {
+    // Fields as add_field makes them, over HTTP/1 and HTTP/2 alike: a CR or
+    // LF in a value would otherwise start a field, or a request, of its own.
+    if !fields_ok(fields) { return empty_response(ERR_REQUEST); }
     let te, has_te = field_value(fields, "Transfer-Encoding");
     if has_te && !eq_fold(te, "chunked") { return empty_response(ERR_REQUEST); }
     let f = fields_without(fields, "Transfer-Encoding");
@@ -1678,6 +1680,7 @@ fn begin_request(c: Client&, method: const u8[:], u: const Url&, fields: const u
 }
 
 fn begin_request<S>(c: Client&, method: const u8[:], u: const Url&, fields: const u8[:], length: i64) -> Response {
+    if !fields_ok(fields) { return empty_response(ERR_REQUEST); }
     if has_field_named(fields, "Transfer-Encoding") || has_field_named(fields, "Content-Length") {
         return empty_response(ERR_REQUEST);
     }

@@ -208,6 +208,15 @@ fn main() {
     let r2 = connect(cc, other);
     check("other key: retry configs", !r2.ok && r2.client_alert == tls::ALERT_ECH_REQUIRED &&
           r2.retry == tls::ech_config_list(config2));
+    // Retry configs from a server whose certificate the client refuses
+    // are not given out: whoever sent them was not authenticated, and a
+    // retry would seal the real name to them (§6.1.6).
+    var cc_untrusting = tls::client_config("localhost", field("client", "p256", 2));
+    cc_untrusting.now = NOW;
+    cc_untrusting.ech_config_list.append(cc.ech_config_list);
+    let r2b = connect(cc_untrusting, other);
+    check("unverified server: no retry configs", !r2b.ok && r2b.client_alert != tls::ALERT_ECH_REQUIRED &&
+          r2b.retry.len == 0);
     let cc_retry = client_cfg(r2.retry);
     let r3 = connect(cc_retry, other);
     check("retry configs accepted", accepted(r3));
