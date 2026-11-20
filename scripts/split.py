@@ -79,7 +79,7 @@ LIBRARIES = {
     "ssh": "crypto/ssh", "openpgp": "crypto/openpgp",
     "asn1": "encoding/asn1", "yaml": "encoding/yaml", "xml": "encoding/xml",
     "cbor": "encoding/cbor",
-    "net": "net", "http": "net/http", "ldap": "net/ldap", "websocket": "websocket",
+    "net": "net", "http": "net/http", "ldap": "net/ldap", "websocket": "websocket", "quic": "quic",
     "compress": "compress", "mime": "mime", "krb5": "krb5", "jwx": "jwx",
     "pkcs11": "pkcs11", "dns": "dns", "mail": "mail", "acme": "acme",
     "oauth": "oauth", "tsp": "tsp", "est": "est", "scep": "scep",
@@ -212,6 +212,17 @@ SPLITS = {
             "the HTTP client example are not here: they need krb5, dns and http,\n"
             "and http needs ntlm. They are in gslib (`ntlm/tools`, `ntlm/scripts`,\n"
             "`examples/ntlm`).\n"),
+    ),
+    "quic": dict(
+        repo="quicgoose", new=True,
+        gitignore=["__pycache__/"],
+        fixups=[
+            ("README.md", "make test-quic                             # or: cd quic && python3 scripts/run_tests.py",
+             "python3 scripts/run_tests.py"),
+            ("README.md", "make interop-quic                          # Linux with Docker",
+             "python3 scripts/interop.py                 # Linux with Docker"),
+            ("README.md", "`scripts/interop.py` (`make interop-quic`)", "`scripts/interop.py`"),
+        ],
     ),
     "websocket": dict(
         repo="websocketgoose", new=True,

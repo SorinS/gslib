@@ -318,6 +318,26 @@ time. `scripts/cbc_timing.py` measures it. TLS 1.2's warning
 alerts are dropped, as Go drops them, and KeyUpdate is TLS 1.3's alone. ECH
 is TLS 1.3's too: a client that offers it offers nothing older.
 
+### QUIC
+
+A connection made with `quic_client(cfg, params)` or `quic_server(cfg,
+params)` runs the TLS 1.3 handshake for QUIC (RFC 9001 §4): its
+messages go out as chunks tagged with their encryption level
+(`QUIC_INITIAL`, `QUIC_HANDSHAKE`, `QUIC_APPLICATION`; `quic_next_chunk`
+reads them) rather than records, the client's first flight from
+`quic_start`, and `feed_crypto(c, cfg, level, data, out)` takes what
+arrives in CRYPTO frames, refusing data at a level other than the one
+read now. `params` is this side's transport parameters, sent in the
+quic_transport_parameters extension (ClientHello, EncryptedExtensions);
+`quic_peer_params` gives the peer's, whose absence is missing_extension.
+ALPN is required (no_application_protocol otherwise), TLS 1.2 and the
+compatibility mode's session ID and change_cipher_spec are not used, a
+KeyUpdate message is refused (QUIC updates its own keys), and an alert
+is not sent but left in `c.alert` for QUIC's CRYPTO_ERROR.
+`quic_secret(c, level, write)` gives the traffic secrets QUIC derives its
+packet keys from, `quic_read_level` and `quic_write_level` where the
+handshake is. gslib's `quic` is built on it.
+
 ## The key schedule
 
 `schedule(hash, psk)` starts from the early secret.
@@ -440,6 +460,12 @@ x509goose.git beside this repository. The live scripts run everything on
 127.0.0.1 and leave nothing running; go_interop.py needs Go (standard
 library only).
 
+- `quic`: the QUIC mode: a client and a server through CRYPTO data
+  only, at the right levels, both reaching the same handshake and
+  application secrets, the transport parameters exchanged, ALPN
+  agreed; after a HelloRetryRequest and with resumption (the ticket at
+  the 1-RTT level); refused: no common protocol, no transport
+  parameters, data at the wrong level, a KeyUpdate: 28 checks.
 - `rfc8448`: the simple 1-RTT handshake of RFC 8448 §3, end to end. It
   starts from the two X25519 key pairs, runs every secret, key and
   Finished message, and reproduces every record of the trace byte for

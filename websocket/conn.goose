@@ -413,7 +413,8 @@ fn step(c: Conn&, out: u8[>..]&) -> u8 {
                 starts = true;
             }
             let compressed = if starts { (h.rsv & RSV1) != 0 } else { c.st.compressed };
-            if !compressed && c.opt.read_limit > 0 && c.st.msg_len + h.length > c.opt.read_limit {
+            // Compared without adding: a frame may say it is 2^63 - 1 bytes long.
+            if !compressed && c.opt.read_limit > 0 && h.length > c.opt.read_limit - c.st.msg_len {
                 return fail(c, CLOSE_MESSAGE_TOO_BIG, ERR_TOO_BIG);
             }
             c.inpos += h.size;

@@ -14,15 +14,15 @@ PYTHON  ?= python3
 GOOSE   ?= $(or $(shell command -v goose 2>/dev/null),$(abspath $(ROOT)/../goose.git/build/goose))
 export GOOSE
 
-LIBS    := asn1 bignum x509 tls ssh ldap yaml http websocket compress mime krb5 jwx pkcs11 dns mail openpgp acme oauth tsp xml est scep saml cbor webauthn ntlm tpm2 radius smb kmip
+LIBS    := asn1 bignum x509 tls ssh ldap yaml http websocket quic compress mime krb5 jwx pkcs11 dns mail openpgp acme oauth tsp xml est scep saml cbor webauthn ntlm tpm2 radius smb kmip
 
 # ------------------------------------------------------------------------------
 # Derived values
 # ------------------------------------------------------------------------------
 
 # A program is rebuilt when any of the package's sources changes.
-SOURCES := $(ROOT)/gslib.goose $(ROOT)/gslib.build $(ROOT)/net.goose $(ROOT)/websocket.goose $(ROOT)/compress.goose $(ROOT)/mime.goose $(ROOT)/krb5.goose $(ROOT)/jwx.goose $(ROOT)/pkcs11.goose $(ROOT)/dns.goose $(ROOT)/mail.goose $(ROOT)/acme.goose $(ROOT)/oauth.goose $(ROOT)/tsp.goose $(ROOT)/est.goose $(ROOT)/scep.goose $(ROOT)/saml.goose $(ROOT)/webauthn.goose $(ROOT)/ntlm.goose $(ROOT)/tpm2.goose $(ROOT)/radius.goose $(ROOT)/smb.goose $(ROOT)/kmip.goose \
-	$(shell find $(ROOT)/crypto $(ROOT)/encoding $(ROOT)/net $(ROOT)/websocket $(ROOT)/compress $(ROOT)/mime $(ROOT)/krb5 $(ROOT)/jwx $(ROOT)/pkcs11 $(ROOT)/dns $(ROOT)/mail $(ROOT)/acme $(ROOT)/oauth $(ROOT)/tsp $(ROOT)/est $(ROOT)/scep $(ROOT)/saml $(ROOT)/webauthn $(ROOT)/ntlm $(ROOT)/tpm2 $(ROOT)/radius $(ROOT)/smb $(ROOT)/kmip \
+SOURCES := $(ROOT)/gslib.goose $(ROOT)/gslib.build $(ROOT)/net.goose $(ROOT)/websocket.goose $(ROOT)/quic.goose $(ROOT)/compress.goose $(ROOT)/mime.goose $(ROOT)/krb5.goose $(ROOT)/jwx.goose $(ROOT)/pkcs11.goose $(ROOT)/dns.goose $(ROOT)/mail.goose $(ROOT)/acme.goose $(ROOT)/oauth.goose $(ROOT)/tsp.goose $(ROOT)/est.goose $(ROOT)/scep.goose $(ROOT)/saml.goose $(ROOT)/webauthn.goose $(ROOT)/ntlm.goose $(ROOT)/tpm2.goose $(ROOT)/radius.goose $(ROOT)/smb.goose $(ROOT)/kmip.goose \
+	$(shell find $(ROOT)/crypto $(ROOT)/encoding $(ROOT)/net $(ROOT)/websocket $(ROOT)/quic $(ROOT)/compress $(ROOT)/mime $(ROOT)/krb5 $(ROOT)/jwx $(ROOT)/pkcs11 $(ROOT)/dns $(ROOT)/mail $(ROOT)/acme $(ROOT)/oauth $(ROOT)/tsp $(ROOT)/est $(ROOT)/scep $(ROOT)/saml $(ROOT)/webauthn $(ROOT)/ntlm $(ROOT)/tpm2 $(ROOT)/radius $(ROOT)/smb $(ROOT)/kmip \
 		\( -name '*.goose' -o -name '*.c' -o -name '*.build' \) \
 		-not -path '*/test/*' -not -path '*/examples/*')
 
@@ -32,6 +32,8 @@ PROGRAMS := \
 	goose-httpd:net/http/tools/httpd.goose \
 	goose-wscat:websocket/tools/wscat.goose \
 	goose-wsecho:websocket/tools/wsecho.goose \
+	goose-h3:quic/tools/h3.goose \
+	goose-h3d:quic/tools/h3d.goose \
 	goose-ssh:crypto/ssh/tools/ssh.goose \
 	goose-sshd:crypto/ssh/tools/sshd.goose \
 	goose-scp:crypto/ssh/tools/scp.goose \
@@ -71,7 +73,7 @@ BINARIES    := $(foreach p,$(PROGRAMS),$(BIN)/$(call prog_name,$(p))) $(BIN)/goo
 
 # Every tool and example with a main, for check.
 CHECKED := $(shell cd $(ROOT) && grep -l '^fn main' */*/tools/*.goose examples/*/*.goose \
-	websocket/tools/*.goose compress/tools/*.goose mime/tools/*.goose krb5/tools/*.goose jwx/tools/*.goose pkcs11/tools/*.goose dns/tools/*.goose mail/tools/*.goose acme/tools/*.goose oauth/tools/*.goose tsp/tools/*.goose est/tools/*.goose scep/tools/*.goose saml/tools/*.goose webauthn/tools/*.goose ntlm/tools/*.goose tpm2/tools/*.goose radius/tools/*.goose smb/tools/*.goose kmip/tools/*.goose)
+	websocket/tools/*.goose quic/tools/*.goose compress/tools/*.goose mime/tools/*.goose krb5/tools/*.goose jwx/tools/*.goose pkcs11/tools/*.goose dns/tools/*.goose mail/tools/*.goose acme/tools/*.goose oauth/tools/*.goose tsp/tools/*.goose est/tools/*.goose scep/tools/*.goose saml/tools/*.goose webauthn/tools/*.goose ntlm/tools/*.goose tpm2/tools/*.goose radius/tools/*.goose smb/tools/*.goose kmip/tools/*.goose)
 
 # ------------------------------------------------------------------------------
 # Helpers
@@ -160,7 +162,7 @@ test-native: ## Run the unit tests, also built with the C compiler
 
 # test-asn1, test-bignum, ... (scripts/run_all.py refuses a name not in
 # LIBS). Not .PHONY: make looks for no pattern rule for a phony target.
-test-%: ## Run one library's unit tests: test-entropy test-asn1 test-bignum test-x509 test-tls test-ssh test-net test-ldap test-yaml test-http test-websocket test-compress test-mime test-krb5 test-jwx test-pkcs11 test-dns test-mail test-openpgp test-acme test-oauth test-tsp test-xml test-est test-scep test-saml test-cbor test-webauthn test-ntlm test-tpm2 test-radius test-smb test-kmip test-service test-sys test-sspi
+test-%: ## Run one library's unit tests: test-entropy test-asn1 test-bignum test-x509 test-tls test-ssh test-net test-ldap test-yaml test-http test-websocket test-quic test-compress test-mime test-krb5 test-jwx test-pkcs11 test-dns test-mail test-openpgp test-acme test-oauth test-tsp test-xml test-est test-scep test-saml test-cbor test-webauthn test-ntlm test-tpm2 test-radius test-smb test-kmip test-service test-sys test-sspi
 	$(call echo,"Running $* unit tests")
 	cd $(ROOT) && $(PYTHON) scripts/run_all.py --only $*
 
@@ -168,7 +170,7 @@ test-%: ## Run one library's unit tests: test-entropy test-asn1 test-bignum test
 # needs installed is in its library's README; a missing tool is skipped.
 
 .PHONY: interop
-interop: interop-http interop-h2spec interop-websocket interop-tls interop-ssh interop-ldap interop-krb5 interop-pkcs11 interop-dns interop-mail interop-openpgp interop-acme interop-oauth interop-tsp interop-xml interop-est interop-scep interop-saml interop-webauthn interop-ntlm interop-tpm2 interop-radius interop-smb interop-kmip ## Run every live interop test
+interop: interop-http interop-h2spec interop-websocket interop-quic interop-tls interop-ssh interop-ldap interop-krb5 interop-pkcs11 interop-dns interop-mail interop-openpgp interop-acme interop-oauth interop-tsp interop-xml interop-est interop-scep interop-saml interop-webauthn interop-ntlm interop-tpm2 interop-radius interop-smb interop-kmip ## Run every live interop test
 
 .PHONY: interop-http
 interop-http: ## HTTP against curl, Go's net/http, Python, nghttp2
@@ -186,6 +188,13 @@ interop-h2spec: ## h2spec against goose-httpd, TLS and h2c (needs h2spec)
 interop-websocket: ## goose-wsecho against Autobahn's fuzzingclient and the client against its fuzzingserver (every case, whole and a frame at a time), both against Python's websockets (Docker)
 	$(call echo,"WebSocket against Autobahn and websockets")
 	cd $(ROOT)/websocket && $(PYTHON) scripts/interop.py
+
+# Docker (Linux): aioquic and quic-go in containers, their servers' UDP
+# ports on loopback only.
+.PHONY: interop-quic
+interop-quic: ## goose-h3 against aioquic (with and without Retry) and quic-go servers, their clients against goose-h3d (Docker)
+	$(call echo,"QUIC and HTTP/3 against aioquic and quic-go")
+	cd $(ROOT)/quic && $(PYTHON) scripts/interop.py
 
 .PHONY: interop-tls
 interop-tls: ## TLS against OpenSSL and Go's crypto/tls

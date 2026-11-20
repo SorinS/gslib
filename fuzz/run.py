@@ -57,7 +57,7 @@ BUILD = os.environ.get("FUZZ_BUILD") or os.path.join(FUZZ, "build")
 # Linked into every target; only the symbols a target calls are pulled in.
 # sys's C (mime and tpm2 use it) takes the runtime's goose.h, from
 # runtime_include().
-NATIVE = ["entropy/src/entropy.c", "net/src/net.c",
+NATIVE = ["net/src/net.c",
           "sys/src/posix.c", "sys/src/unix.c", "sys/src/spawn.c", "sys/src/win.c", "sys/src/winreg.c",
           "sys/src/winmgmt.c", "sys/src/winspawn.c", "sys/src/gssys_stubs.c"]
 
