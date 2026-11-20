@@ -5,7 +5,7 @@
 // canonicalization, signatures and encryption (xml), CBOR, strict and
 // deterministic, and COSE keys (cbor), HTTP/1.1 and
 // HTTP/2 (http), WebSocket with permessage-deflate, client and server
-// (websocket), TCP sockets (net), compression and archives (compress),
+// (websocket), QUIC and HTTP/3, client and server (quic), TCP sockets (net), compression and archives (compress),
 // MIME (mime), and Kerberos with GSS-API, SPNEGO and the PAC (krb5),
 // JOSE: JWK, JWS, JWE and JWT (jwx), PKCS#11 modules, HSMs and tokens (pkcs11), the
 // DNS: messages, zone files, DNSSEC, TSIG, a client and a server (dns),
@@ -33,7 +33,7 @@
 // the OS's random bytes for keys under all of it (entropy). A program
 // declares the package once and imports the
 // modules it uses, grouped as Go groups them (compress, crypto/,
-// encoding/, mime, net/; websocket, krb5, jwx, pkcs11, dns, mail, acme, oauth, tsp, est, scep, saml, ntlm, tpm2, webauthn, radius, smb, kmip, service, sys, sspi, entropy and
+// encoding/, mime, net/; websocket, quic, krb5, jwx, pkcs11, dns, mail, acme, oauth, tsp, est, scep, saml, ntlm, tpm2, webauthn, radius, smb, kmip, service, sys, sspi, entropy and
 // net's sockets at the top too);
 // each keeps its own namespace:
 //

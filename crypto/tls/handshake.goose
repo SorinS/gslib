@@ -89,6 +89,7 @@ let EXT_EARLY_DATA: u16 = 42;
 let EXT_PADDING: u16 = 21;
 let EXT_PSK_KEY_EXCHANGE_MODES: u16 = 45;
 let EXT_CERTIFICATE_AUTHORITIES: u16 = 47;
+let EXT_QUIC_TRANSPORT_PARAMETERS: u16 = 57;     // RFC 9001 §8.2
 // TLS 1.2's: point formats (RFC 8422), extended master secret (RFC 7627),
 // session tickets (RFC 5077), secure renegotiation (RFC 5746).
 let EXT_EC_POINT_FORMATS: u16 = 11;
@@ -384,6 +385,12 @@ struct Conn {
     offer12: bool, offer13: bool, session12_offered: bool,
     master: u8[..48], ems: bool, peer_random: u8[32], secure_reneg: bool, ticket12: bool,
     peer_share: u8[..256], log: Log12,
+    // QUIC (RFC 9001 §4): handshake messages go out as CRYPTO data, each
+    // tagged with its encryption level, instead of records; the level
+    // read and written now; the transport parameters this side sends and
+    // the peer's.
+    quic: bool, rlevel: u8, wlevel: u8,
+    quic_local: u8[..1024], quic_peer: u8[..1024], has_quic_peer: bool,
     ch_inner: u8[..8192],             // the client's first ClientHelloInner, until the hash is known
     ch: u8[..8192],                   // the client's first ClientHello, until the hash is known
     inbuf: u8[..18437],               // one record in arrival
@@ -410,6 +417,7 @@ fn new_conn(is_server: bool, seed: u64) -> Conn {
         ech_public_name: [], ech_enc: [], outer_random: [0; 32], ech_retry: [], th_inner: transcript(256),
         offer12: false, offer13: false, session12_offered: false, master: [], ems: false, peer_random: [0; 32],
         secure_reneg: false, ticket12: false, peer_share: [], log: log12(),
+        quic: false, rlevel: 0, wlevel: 0, quic_local: [], quic_peer: [], has_quic_peer: false,
         ch_inner: [], ch: [], inbuf: [], hs: [], chain: [],
     };
     var seed_bytes: u8[32] = [0; 32];
@@ -574,7 +582,9 @@ fn done(r: const Rd&) -> bool { !r.bad && r.pos == r.end }
 fn send_hs(c: Conn&, msg: const u8[:], out: u8[>..]&) {
     transcript_add(c.th, msg);
     if c.version == VERSION_TLS12 { log12_add(c.log, msg); }
-    if c.write_protected {
+    if c.quic {
+        quic_chunk(out, c.wlevel, msg);
+    } else if c.write_protected {
         out.append(seal_records(c.write, CT_HANDSHAKE, msg));
     } else {
         // 0x0301 only on the first ClientHello (§5.1), which does not come
@@ -591,7 +601,7 @@ fn hs_add(c: Conn&, msg: const u8[:]) {
 }
 
 fn send_ccs(c: Conn&, out: u8[>..]&) {
-    if c.ccs_sent { return; }
+    if c.ccs_sent || c.quic { return; }
     let one: u8[1] = [1];
     out.append(plain_record(CT_CHANGE_CIPHER_SPEC, one));
     c.ccs_sent = true;
@@ -625,7 +635,9 @@ fn wipe(c: Conn&) {
 fn fail(c: Conn&, desc: u8, out: u8[>..]&) -> i64 {
     if c.state == ST_FAILED { return -1; }
     let a = alert(ALERT_FATAL, desc);
-    if c.write_protected { out.append(seal_record(c.write, CT_ALERT, a)); }
+    // QUIC carries the alert as its CONNECTION_CLOSE's code instead.
+    if c.quic {}
+    else if c.write_protected { out.append(seal_record(c.write, CT_ALERT, a)); }
     else { out.append(plain_record(CT_ALERT, a)); }
     c.alert = desc;
     c.state = ST_FAILED;
@@ -635,7 +647,7 @@ fn fail(c: Conn&, desc: u8, out: u8[>..]&) -> i64 {
 
 // Application data, as records.
 fn send(c: Conn&, data: const u8[:], out: u8[>..]&) -> bool {
-    if c.state != ST_CONNECTED { return false; }
+    if c.state != ST_CONNECTED || c.quic { return false; }
     out.append(seal_records(c.write, CT_APPLICATION_DATA, data));
     return true;
 }
@@ -643,7 +655,7 @@ fn send(c: Conn&, data: const u8[:], out: u8[>..]&) -> bool {
 // close_notify; the connection sends nothing after it, and once closed
 // forgets its secrets.
 fn close(c: Conn&, out: u8[>..]&) {
-    if !c.write_protected || c.state == ST_FAILED || c.wiped { return; }
+    if !c.write_protected || c.state == ST_FAILED || c.wiped || c.quic { return; }
     let a = alert(ALERT_WARNING, ALERT_CLOSE_NOTIFY);
     out.append(seal_record(c.write, CT_ALERT, a));
     if c.state == ST_CONNECTED { c.state = ST_CLOSED; }
@@ -663,7 +675,7 @@ fn update_write(c: Conn&) {
 // Sends a KeyUpdate and moves to the next write keys; with `request`, the
 // peer is asked to update its own.
 fn key_update(c: Conn&, request: bool, out: u8[>..]&) -> bool {
-    if c.state != ST_CONNECTED || c.version != VERSION_TLS13 { return false; }
+    if c.state != ST_CONNECTED || c.version != VERSION_TLS13 || c.quic { return false; }
     let body: u8[1] = [if request { 1 } else { 0 }];
     out.append(seal_record(c.write, CT_HANDSHAKE, handshake_message(HS_KEY_UPDATE, body)));
     update_write(c);
@@ -1112,6 +1124,11 @@ fn hello_message(c: const Conn&, cfg: const ClientConfig&, sni: const u8[:], ran
             b.append(cookie);
             patch_len(b, ck, 2);
         }
+        if c.quic {
+            let qp = begin_ext(b, EXT_QUIC_TRANSPORT_PARAMETERS);
+            b.append(c.quic_local);
+            patch_len(b, qp, 2);
+        }
         // psk_key_exchange_modes always, without which servers send no
         // tickets (§4.2.9).
         if c.offer13 {
@@ -1236,12 +1253,13 @@ fn client_start(c: Conn&, cfg: const ClientConfig&, out: u8[>..]&) {
     // with ECH, which is TLS 1.3's alone.
     c.offer13 = cfg.max_version >= VERSION_TLS13 && cfg.min_version <= VERSION_TLS13 && cfg.suites.len > 0;
     c.offer12 = cfg.min_version <= VERSION_TLS12 && cfg.max_version >= VERSION_TLS12 && cfg.suites12.len > 0 &&
-                cfg.ech_config_list.len == 0;
+                cfg.ech_config_list.len == 0 && !c.quic;
     // Checking the certificate needs a name to check it for: with none,
     // the client refuses to start, as Go does ("either ServerName or
     // InsecureSkipVerify must be specified").
+    // QUIC needs TLS 1.3 and an application protocol (RFC 9001 §8.1).
     if !c.offer13 && !c.offer12 || (cfg.ech_config_list.len > 0 && !c.offer13) ||
-       (cfg.verify && cfg.server_name.len == 0) {
+       (cfg.verify && cfg.server_name.len == 0) || (c.quic && (!c.offer13 || cfg.alpn.len == 0)) {
         c.alert = ALERT_INTERNAL_ERROR;
         c.state = ST_FAILED;
         return;
@@ -1249,7 +1267,9 @@ fn client_start(c: Conn&, cfg: const ClientConfig&, out: u8[>..]&) {
     drbg_fill(c, c.random);
     var sid: u8[32] = [0; 32];
     drbg_fill(c, sid);
-    c.session_id.append(sid);                      // middlebox compatibility mode; TLS 1.2 resumption
+    // Middlebox compatibility mode and TLS 1.2 resumption; not over QUIC
+    // (RFC 9001 §8.4).
+    if !c.quic { c.session_id.append(sid); }
     // A session is offered when it is still good for this server and one of
     // the suites offered has its hash (TLS 1.3), or is its suite (TLS 1.2).
     c.psk_offered = false;
@@ -1302,7 +1322,8 @@ fn client_start(c: Conn&, cfg: const ClientConfig&, out: u8[>..]&) {
     let ch, inner = build_client_hello(c, cfg, share_group, "");
     c.ch.append(ch);
     c.ch_inner.append(inner);
-    out.append(plain_records(CT_HANDSHAKE, ch, 0x0301));
+    if c.quic { quic_chunk(out, QUIC_INITIAL, ch); }
+    else { out.append(plain_records(CT_HANDSHAKE, ch, 0x0301)); }
     c.state = ST_WAIT_SH;
 }
 
@@ -1460,6 +1481,7 @@ fn client_server_hello(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: 
     schedule_handshake(c.sch, shared, transcript_hash(c.th));
     c.read = record_keys(s, c.sch.s_hs);
     c.read_protected = true;
+    c.rlevel = QUIC_HANDSHAKE;
     c.state = ST_WAIT_EE;
     return 0;
 }
@@ -1496,6 +1518,10 @@ fn client_encrypted_extensions(c: Conn&, cfg: const ClientConfig&, m: const u8[:
         if exts.bad { return fail(c, ALERT_DECODE_ERROR, out); }
         if ty == EXT_ALPN {
             if accept_alpn(c, cfg, m, e, out) != 0 { return -1; }
+        } else if ty == EXT_QUIC_TRANSPORT_PARAMETERS && c.quic {
+            if c.has_quic_peer || e.end - e.pos > c.quic_peer.cap { return fail(c, ALERT_ILLEGAL_PARAMETER, out); }
+            c.quic_peer.append(m[e.pos..e.end]);
+            c.has_quic_peer = true;
         } else if ty == EXT_ENCRYPTED_CLIENT_HELLO && c.ech_offered {
             // Retry configs, only when ECH was not accepted (§7.1).
             if c.ech_accepted { return fail(c, ALERT_UNSUPPORTED_EXTENSION, out); }
@@ -1507,6 +1533,10 @@ fn client_encrypted_extensions(c: Conn&, cfg: const ClientConfig&, m: const u8[:
             return fail(c, ALERT_ILLEGAL_PARAMETER, out);     // forbidden in EncryptedExtensions
         }
     }
+    // Over QUIC the server must send its transport parameters and agree
+    // on a protocol (RFC 9001 §8).
+    if c.quic && !c.has_quic_peer { return fail(c, ALERT_MISSING_EXTENSION, out); }
+    if c.quic && c.alpn.len == 0 { return fail(c, ALERT_NO_APPLICATION_PROTOCOL, out); }
     transcript_add(c.th, m);
     // Resumed, the server authenticates with the PSK alone.
     c.state = if c.resumed { ST_WAIT_FINISHED } else { ST_WAIT_CERT_CR };
@@ -1769,6 +1799,7 @@ fn client_finished<F>(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: u
     send_ccs(c, out);
     c.write = record_keys(c.suite, c.sch.c_hs);
     c.write_protected = true;
+    c.wlevel = QUIC_HANDSHAKE;
     if c.cert_requested && c.cert_scheme == 0 {
         let cm, okm = certificate_message(c.cr_context, "");
         send_hs(c, cm, out);
@@ -1785,6 +1816,8 @@ fn client_finished<F>(c: Conn&, cfg: const ClientConfig&, m: const u8[:], out: u
     schedule_resumption(c.sch, transcript_hash(c.th));
     c.write = record_keys(c.suite, c.sch.c_ap);
     c.read = record_keys(c.suite, c.sch.s_ap);
+    c.wlevel = QUIC_APPLICATION;
+    c.rlevel = QUIC_APPLICATION;
     c.state = ST_CONNECTED;
     // ECH not accepted: the handshake with the public name only served to
     // authenticate the retry configs (§6.1.6).
@@ -1865,6 +1898,7 @@ struct Hello {
     version: i64, has_versions: bool, has_versions12: bool, points: Rd, has_points: bool, ems: bool,
     has_reneg: bool, reneg_empty: bool, ticket: Rd, has_ticket: bool,
     comp_null_only: bool, early_data: bool,
+    quic_params: Rd, has_quic_params: bool,
     alert: u8,                        // when parsing fails: the alert, if not decode_error
 }
 
@@ -1878,7 +1912,7 @@ fn parse_hello(m: const u8[:]) -> Hello, bool {
         psk_ids: empty_rd(), psk_binders: empty_rd(), binders_at: 0, has_psk: false, psk_dhe: false,
         version: 0, has_versions: false, has_versions12: false, points: empty_rd(), has_points: false, ems: false,
         has_reneg: false, reneg_empty: false, ticket: empty_rd(), has_ticket: false,
-        comp_null_only: false, early_data: false, alert: 0,
+        comp_null_only: false, early_data: false, quic_params: empty_rd(), has_quic_params: false, alert: 0,
     };
     var b = Rd { pos: 4, end: m.len, bad: false };
     let ver = get_u16(b, m);
@@ -2001,6 +2035,11 @@ fn parse_hello(m: const u8[:]) -> Hello, bool {
             if l.bad { return h, false; }
         } else if ty == EXT_COOKIE {
             h.cookie = get_vec(e, m, 2);
+        } else if ty == EXT_QUIC_TRANSPORT_PARAMETERS {
+            if h.has_quic_params { return h, false; }
+            h.quic_params = e;
+            h.has_quic_params = true;
+            e.pos = e.end;
         } else if ty == EXT_PSK_KEY_EXCHANGE_MODES {
             var l = get_vec(e, m, 1);
             while l.pos < l.end { if get_u8(l, m) == PSK_DHE_KE { h.psk_dhe = true; } }
@@ -2263,7 +2302,7 @@ fn server_client_hello<F>(c: Conn&, cfg: const ServerConfig&, m: const u8[:], ou
     let v12 = (if h.has_versions { h.has_versions12 } else { h.version >= 0x0303 }) &&
               cfg.min_version <= VERSION_TLS12 && cfg.max_version >= VERSION_TLS12 && cfg.suites12.len > 0;
     if !v13 {
-        if v12 && !second && !c.ech_confirm { return server_client_hello12(c, cfg, m, h, out, F); }
+        if v12 && !second && !c.ech_confirm && !c.quic { return server_client_hello12(c, cfg, m, h, out, F); }
         // TLS_FALLBACK_SCSV from a client that could do better is told so,
         // even when its version is one this server lacks (RFC 7507 §3).
         if in_u16_list(m, h.suites, TLS_FALLBACK_SCSV) && client_max_version(h) < cfg.max_version {
@@ -2277,6 +2316,16 @@ fn server_client_hello<F>(c: Conn&, cfg: const ServerConfig&, m: const u8[:], ou
     c.skip_early = h.early_data && !second;
     if !h.has_groups || !h.has_shares || !h.has_schemes { return fail(c, ALERT_MISSING_EXTENSION, out); }
     if second && m[h.sid.pos..h.sid.end] != c.session_id[..] { return fail(c, ALERT_ILLEGAL_PARAMETER, out); }
+    // Over QUIC: the client's transport parameters, no compatibility mode
+    // (RFC 9001 §8.2, §8.4).
+    if c.quic && !h.has_quic_params { return fail(c, ALERT_MISSING_EXTENSION, out); }
+    if c.quic && h.sid.end > h.sid.pos { return fail(c, ALERT_ILLEGAL_PARAMETER, out); }
+    if c.quic && !second {
+        if h.quic_params.end - h.quic_params.pos > c.quic_peer.cap { return fail(c, ALERT_ILLEGAL_PARAMETER, out); }
+        c.quic_peer.clear();
+        c.quic_peer.append(m[h.quic_params.pos..h.quic_params.end]);
+        c.has_quic_peer = true;
+    }
     // The suite: the server's first that the client offers.
     var chosen: u16 = 0;
     for s in cfg.suites {
@@ -2319,6 +2368,7 @@ fn server_client_hello<F>(c: Conn&, cfg: const ServerConfig&, m: const u8[:], ou
     take_peer_schemes(c, m, h.schemes, SIG_SCHEMES);
     let scheme = pick_scheme(cfg.key, c.peer_schemes);
     if select_alpn(c, cfg, h, m, out) != 0 { return -1; }
+    if c.quic && c.alpn.len == 0 { return fail(c, ALERT_NO_APPLICATION_PROTOCOL, out); }
     c.sni.clear();
     c.sni.append(m[h.sni.pos..h.sni.end]);       // at most 255 bytes (parse_hello)
     if !second {
@@ -2383,6 +2433,8 @@ fn server_client_hello<F>(c: Conn&, cfg: const ServerConfig&, m: const u8[:], ou
     c.write_protected = true;
     c.read = record_keys(s, c.sch.c_hs);
     c.read_protected = true;
+    c.wlevel = QUIC_HANDSHAKE;
+    c.rlevel = QUIC_HANDSHAKE;
     // EncryptedExtensions, Certificate, CertificateVerify, Finished.
     var ee: u8[>..] = [];
     let exts = begin_vec(ee, 2);
@@ -2393,6 +2445,11 @@ fn server_client_hello<F>(c: Conn&, cfg: const ServerConfig&, m: const u8[:], ou
         ee.append(c.alpn);
         patch_len(ee, l, 2);
         patch_len(ee, a, 2);
+    }
+    if c.quic {
+        let qp = begin_ext(ee, EXT_QUIC_TRANSPORT_PARAMETERS);
+        ee.append(c.quic_local);
+        patch_len(ee, qp, 2);
     }
     // ECH offered and not accepted: the retry configs, if any (§7.1).
     if c.ech_seen && !c.ech_confirm {
@@ -2416,6 +2473,7 @@ fn server_client_hello<F>(c: Conn&, cfg: const ServerConfig&, m: const u8[:], ou
     send_hs(c, handshake_message(HS_FINISHED, fin), out);
     schedule_master(c.sch, transcript_hash(c.th));
     c.write = record_keys(s, c.sch.s_ap);
+    c.wlevel = QUIC_APPLICATION;
     c.state = if c.cert_requested { ST_WAIT_CLIENT_CERT } else { ST_WAIT_CLIENT_FINISHED };
     return 0;
 }
@@ -2576,7 +2634,9 @@ fn send_session_ticket(c: Conn&, cfg: const ServerConfig&, out: u8[>..]&) -> boo
     b.append(ticket);
     put_u16(b, 0);
     // After the handshake, outside the transcript.
-    out.append(seal_records(c.write, CT_HANDSHAKE, handshake_message(HS_NEW_SESSION_TICKET, b)));
+    let nst = handshake_message(HS_NEW_SESSION_TICKET, b);
+    if c.quic { quic_chunk(out, c.wlevel, nst); }
+    else { out.append(seal_records(c.write, CT_HANDSHAKE, nst)); }
     return true;
 }
 
@@ -2605,6 +2665,7 @@ fn server_message<F>(c: Conn&, cfg: const ServerConfig&, m: const u8[:], out: u8
         transcript_add(c.th, m);
         schedule_resumption(c.sch, transcript_hash(c.th));
         c.read = record_keys(c.suite, c.sch.c_ap);
+        c.rlevel = QUIC_APPLICATION;
         c.state = ST_CONNECTED;
         // Tickets only for a client that can use them (§4.2.9).
         if c.psk_dhe { for i in cfg.tickets { let ok = send_session_ticket(c, cfg, out); } }
@@ -2624,6 +2685,8 @@ fn post_handshake(c: Conn&, m: const u8[:], out: u8[>..]&) -> i64 {
         return 0;
     }
     if m[0] == HS_KEY_UPDATE {
+        // QUIC updates its own keys (RFC 9001 §6).
+        if c.quic { return fail(c, ALERT_UNEXPECTED_MESSAGE, out); }
         if m.len != 5 { return fail(c, ALERT_DECODE_ERROR, out); }
         if m[4] > 1 { return fail(c, ALERT_ILLEGAL_PARAMETER, out); }
         if c.hs.len != 0 { return fail(c, ALERT_UNEXPECTED_MESSAGE, out); }
@@ -2730,6 +2793,12 @@ fn handle_record<F>(c: Conn&, cfg, rec: const u8[:], out: u8[>..]&, app: u8[>..]
         return 0;
     }
     if ctype != CT_HANDSHAKE || payload.len == 0 { return fail(c, ALERT_UNEXPECTED_MESSAGE, out); }
+    return handshake_data(c, cfg, payload, out, F);
+}
+
+// Handshake bytes, from records or (QUIC) CRYPTO frames: reassembled into
+// messages, each handled in turn.
+fn handshake_data<F>(c: Conn&, cfg, payload: const u8[:], out: u8[>..]&) -> i64 {
     // A handshake message longer than MAX_HANDSHAKE: its length is wrong
     // for this implementation, so decode_error (RFC 8446 §6.2: "the length
     // of the message was incorrect"), as tlsfuzzer expects; Go sends
@@ -2814,4 +2883,98 @@ fn client_feed<F>(c: Conn&, cfg: const ClientConfig&, input: const u8[:], out: u
 
 fn server_feed<F>(c: Conn&, cfg: const ServerConfig&, input: const u8[:], out: u8[>..]&, app: u8[>..]&) -> i64 {
     return feed(c, cfg, input, out, app, F);
+}
+
+// --- QUIC (RFC 9001 §4) ---------------------------------------------------------
+
+// The encryption levels: where handshake bytes travel, and which keys
+// protect the packets that carry them.
+let QUIC_INITIAL: u8 = 0;
+let QUIC_EARLY: u8 = 1;
+let QUIC_HANDSHAKE: u8 = 2;
+let QUIC_APPLICATION: u8 = 3;
+
+// A connection for QUIC: its handshake goes out as CRYPTO data rather
+// than records. params is this side's transport parameters (RFC 9000
+// §18), encoded; the peer's are quic_peer_params once its hello is read.
+fn quic_client(cfg: const ClientConfig&, params: const u8[:]) -> Conn {
+    var c = new_conn(false, cfg.seed);
+    c.quic = true;
+    c.quic_local.append(params[..::min(params.len, c.quic_local.cap)]);
+    return c;
+}
+
+fn quic_server(cfg: const ServerConfig&, params: const u8[:]) -> Conn {
+    var c = new_conn(true, cfg.seed);
+    c.quic = true;
+    c.quic_local.append(params[..::min(params.len, c.quic_local.cap)]);
+    return c;
+}
+
+// Handshake bytes to send in CRYPTO frames at a level, in `out` as
+// chunks: the level, a 3-byte length, the bytes.
+fn quic_chunk(out: u8[>..]&, level: u8, msg: const u8[:]) {
+    out.push(level);
+    out.push((msg.len >> 16) as! u8);
+    out.push((msg.len >> 8) as! u8);
+    out.push(msg.len as! u8);
+    out.append(msg);
+}
+
+// The chunk at out[at..]: its level, the bytes' offset and length, and
+// the next chunk's offset; false at the end.
+fn quic_next_chunk(out: const u8[:], at: i64) -> u8, i64, i64, i64, bool {
+    if at + 4 > out.len { return 0, 0, 0, at, false; }
+    let n = (out[at + 1] as i64) << 16 | (out[at + 2] as i64) << 8 | out[at + 3];
+    if at + 4 + n > out.len { return 0, 0, 0, at, false; }
+    return out[at], at + 4, n, at + 4 + n, true;
+}
+
+// CRYPTO data received at a level, in order (QUIC reassembles the
+// stream): handshake messages, handled as feed handles them in records.
+// What to send goes into `out` as chunks. 0, or -1 once the handshake has
+// failed (c.alert is the alert, which QUIC sends as CRYPTO_ERROR + it).
+// Data at a level other than the one TLS reads now is unexpected_message.
+fn feed_crypto(c: Conn&, cfg, level: u8, data: const u8[:], out: u8[>..]&) -> i64 {
+    return feed_crypto(c, cfg, level, data, out, x509::sign_data);
+}
+
+fn feed_crypto<F>(c: Conn&, cfg, level: u8, data: const u8[:], out: u8[>..]&) -> i64 {
+    if c.state == ST_FAILED { return -1; }
+    if !c.quic { return fail(c, ALERT_INTERNAL_ERROR, out); }
+    if data.len == 0 { return 0; }
+    if level != c.rlevel { return fail(c, ALERT_UNEXPECTED_MESSAGE, out); }
+    return handshake_data(c, cfg, data, out, F);
+}
+
+// The client's first flight (its ClientHello), as a chunk in `out`.
+fn quic_start(c: Conn&, cfg: const ClientConfig&, out: u8[>..]&) { client_start(c, cfg, out); }
+
+// The level TLS reads and writes at now.
+fn quic_read_level(c: const Conn&) -> u8 { c.rlevel }
+fn quic_write_level(c: const Conn&) -> u8 { c.wlevel }
+
+// The traffic secret for reading or writing at a level (HANDSHAKE or
+// APPLICATION), once TLS has it; with the suite (its hash and AEAD).
+fn quic_secret(c: const Conn&, level: u8, write: bool) -> u8[>..] {
+    var r: u8[>..] = [];
+    let client_side = c.is_server != write;            // the client's secret?
+    if level == QUIC_HANDSHAKE { r.append(if client_side { c.sch.c_hs[..] } else { c.sch.s_hs[..] }); }
+    if level == QUIC_APPLICATION { r.append(if client_side { c.sch.c_ap[..] } else { c.sch.s_ap[..] }); }
+    return r;
+}
+
+fn quic_suite(c: const Conn&) -> Suite { c.suite }
+
+fn quic_peer_params(c: const Conn&) -> u8[>..], bool {
+    var r: u8[>..] = [];
+    r.append(c.quic_peer);
+    return r, c.has_quic_peer;
+}
+
+// The protocol agreed (ALPN).
+fn alpn(c: const Conn&) -> u8[>..] {
+    var r: u8[>..] = [];
+    r.append(c.alpn);
+    return r;
 }

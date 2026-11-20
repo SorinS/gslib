@@ -40,14 +40,15 @@ later.
 | `webauthn` | WebAuthn Level 3 and passkeys for a relying party: registration and authentication options as the L3 JSON has them; registrations checked whole (clientDataJSON, the attestation object, authenticator data and its flags, the algorithm) with every attestation format but SafetyNet: none, packed, fido-u2f, tpm, android-key, apple, chained to the RP's roots by x509; authentications against the stored credential record (signature, user handle, counter, backup flags); FIDO MDS3 BLOBs verified and searched; goose-webauthn (options, verify, MDS, a demo RP for a real browser) | [README](webauthn/README.md) |
 | `net/http` | HTTP/1.1 and HTTP/2, server and client: a client with Go's policy (redirects, cookies, credentials, proxies, gzip, TLS session resumption, streaming uploads, several responses at once), URLs, cookies, HPACK; goose-http and goose-httpd | [README](net/http/README.md) |
 | `websocket` | WebSocket, both sides, as Go's gorilla/websocket: RFC 6455 framing and handshake, RFC 7692 permessage-deflate with every parameter (windows of 8 to 15 bits), ws:// and wss://, an HTTP proxy, an Upgrader for a server that reads the request or an HTTP server that did; messages whole or a frame at a time, pings and closes answered, UTF-8 checked as it arrives; goose-wscat and goose-wsecho; Autobahn's testsuite both ways | [README](websocket/README.md) |
+| `quic` | QUIC version 1 and HTTP/3, both sides: RFC 9000's transport sans-IO (coalesced packets, the amplification limit, Retry and Version Negotiation, key updates both ways, streams with flow control), RFC 9001's TLS 1.3 in QUIC mode, RFC 9002's loss detection and NewReno, a UDP driver for a client and a server, HTTP/3 with QPACK's static table; goose-h3 and goose-h3d; tested against RFC 9001's vectors, aioquic and quic-go both ways, and Cloudflare | [README](quic/README.md) |
 | `net` | Sockets and IP addresses, as Go's net and net/netip: TCP connections and listeners with timeouts, UDP connected or answering many, Unix-domain sockets, waiting on several sockets, the system resolver; addresses parsed, printed (RFC 5952), classified and checked against prefixes; host:port; Punycode host names; what http, ldap, dns, krb5 and the tools' servers talk through (POSIX and Winsock) | [README](net/README.md) |
 | `service` | Programs as system services, as Go's kardianos/service: one API for Windows services (the service control manager: dispatcher, control handler, stop, shutdown, pause, parameter changes; installing with a description, delayed start and restart on failure; the Application event log), systemd units (a user's or the system's) and launchd agents and daemons; begin, wait for the system's requests, end; install, uninstall, start, stop, restart, status, and those as a program's verbs | [README](service/README.md) |
 | `sys` | The operating system's own calls, as Go's golang.org/x/sys, os/user and x/term with go-win64api's Windows management, on Windows, Linux and macOS: the host, processes (list, arguments, executable, kill), users and groups, files by path and by descriptor (stat, links, locks, pipes, memory maps), errors sorted portably; the Windows registry; local accounts and groups, sessions, services, shares and installed software; signals as values, limits, usage and sysctl; terminals and consoles; its FFI generated from one table, as mksyscall | [README](sys/README.md) |
 | `sspi` | Windows' SSPI, as Go's alexbrainman/sspi: security packages, credentials (the login's or a password's), contexts a token at a time, sign/verify/seal/unseal; a TLS client on Windows' own Schannel (the system's roots, policy and TLS 1.3, peer certificate for x509, manual validation for test servers); HTTP Negotiate (RFC 4559) from the Windows login, Kerberos in a domain and NTLM otherwise, or as a user by password | [README](sspi/README.md) |
 
-## entropy, net, websocket, dns, pkcs11, jwx, mail, openpgp, acme, oauth, tsp, xml, est, scep, saml, ntlm, tpm2, webauthn, radius, smb, kmip, service, sys and sspi
+## entropy, net, websocket, quic, dns, pkcs11, jwx, mail, openpgp, acme, oauth, tsp, xml, est, scep, saml, ntlm, tpm2, webauthn, radius, smb, kmip, service, sys and sspi
 
-These twenty-four have the most to say beyond their table rows: what each
+These twenty-five have the most to say beyond their table rows: what each
 module does, how it was built and how it was tested. Each README has the
 full API.
 
@@ -136,6 +137,41 @@ client, every case, messages whole and a frame at a time (517 cases in
 each run, all OK but 3 that are only informational), and against
 Python's websockets both ways. A libFuzzer target covers the Conn on
 both sides, the handshake and the extension header.
+
+### quic: QUIC and HTTP/3
+
+`quic` is QUIC version 1 for both ends, with HTTP/3 on top. The
+connection is sans-IO, as gslib's TLS is: it takes datagrams and the
+time and gives datagrams and its next timer, so the tests run a client
+and a server in memory with a simulated clock and a lossy channel, and
+`quic.transport` carries the same connection over UDP (a client's
+`dial` and `step`, a server's `listen` and `serve_step`, routing by
+connection ID). TLS 1.3 runs inside, for which `tls` gained a QUIC mode:
+its handshake messages go out as CRYPTO data tagged with their
+encryption level instead of records, with the transport parameters
+extension, ALPN required and no compatibility mode, and its secrets
+become QUIC's packet keys. What is there: coalesced Initial, Handshake
+and 1-RTT packets, padding and the server's 3x amplification limit, key
+discarding, Retry and Version Negotiation as a client, key updates both
+ways, ACKs, RFC 9002's loss detection, PTO probes and NewReno, stream
+and connection flow control, resets, the idle timeout, closing and
+draining, stateless resets. HTTP/3 opens the control and QPACK streams,
+reads the peer's, and sends and answers requests; QPACK uses the static
+table only and asks the peer to do the same. goose-h3 is a client,
+goose-h3d a server. Not there: 0-RTT, migration, path MTU discovery, a
+server's Retry, QPACK's dynamic table, push.
+
+Tested against RFC 9001 Appendix A byte for byte (both Initials, the
+Retry tag, a ChaCha20 short header packet), RFC 9002's rules, every
+frame and transport parameter, RFC 9204's QPACK examples, and the two
+ends in memory: the handshake, 300 KB over a stream with 15% of
+datagrams lost and some reordered, key updates, a Retry, HTTP/3 GET and
+POST (1752 checks); live (`make interop-quic`, Docker) against aioquic
+and quic-go, each side's client against the other's server, with
+aioquic's Retry too (15 checks); and against Cloudflare's
+cloudflare-quic.com. A libFuzzer target feeds frames and datagrams to an
+established connection and to one mid-handshake, transport parameters,
+QPACK and HTTP/3.
 
 ### dns: the DNS
 
@@ -1209,9 +1245,10 @@ gslib.goose, gslib.build              the package's entry and its sidecar
 <group>/<lib>/scripts                 its test runners, differentials, interop
 <group>/<lib>/README.md               its documentation
 compress.goose, compress/             compress, laid out the same way at the top
-entropy.goose, entropy/src/           entropy and its C, the same
+entropy.goose, entropy/               entropy, the same
 net.goose, net/                       net's sockets (net/src), addresses (net/ip.goose) and IDNA; net/ is also http's and ldap's group
 websocket.goose, websocket/           websocket, the same
+quic.goose, quic/                     quic, the same
 mime.goose, mime/                     mime, the same
 mail.goose, mail/                     mail, the same
 acme.goose, acme/                     acme, the same
@@ -1323,7 +1360,7 @@ make interop              # live: OpenSSL, Go, OpenSSH, OpenLDAP, curl, nghttp2,
                           # mailpit, dovecot, dkimpy, gpg, Pebble, OpenBao, node-oidc-provider,
                           # digitorus/timestamp, signxml, xmlsec, GlobalSign's EST, micromdm's SCEP,
                           # pyspnego, impacket, go-ntlmssp, swtpm, tpmemu, python-fido2, py_webauthn, go-webauthn,
-                          # Autobahn|Testsuite, Python's websockets
+                          # Autobahn|Testsuite, Python's websockets, aioquic, quic-go
 make differential         # against Go (net/http, net/url, hpack, compress, mime, jwx, miekg/dns), zlib, openssl,
                           # libxml2 (lxml, xmlsec), go-tpm, cbor2
 make live-service         # installs, starts, kills, stops and uninstalls a real service (a user's
