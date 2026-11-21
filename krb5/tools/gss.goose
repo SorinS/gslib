@@ -35,7 +35,7 @@ import gslib.krb5.gssapi;
 import gslib.krb5.spnego;
 import gslib.krb5.pac;
 import gslib.krb5.ndr;
-import gslib.krb5.ldap;
+import gslib.krb5.directory;
 import gslib.krb5.claims;
 import gslib.net.ldap;
 import gslib.net.ldap.conn;

@@ -1,4 +1,4 @@
-// krb5.ldap without a directory: the SASL GSSAPI bind played through
+// krb5.directory without a directory: the SASL GSSAPI bind played through
 // with this test as the server (our acceptor answering, offering layers,
 // checking the client's choice), each layer; then LDAP traffic under the
 // integrity and confidentiality layers both ways; a refused bind; SIDs to
@@ -15,7 +15,7 @@ import gslib.krb5.ccache;
 import gslib.krb5.service;
 import gslib.krb5.gssapi;
 import gslib.krb5.ndr;
-import gslib.krb5.ldap;
+import gslib.krb5.directory;
 import gslib.net.ldap;
 import gslib.net.ldap.conn;
 import gslib.encoding.asn1;

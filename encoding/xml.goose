@@ -316,36 +316,41 @@ fn line_col(s: const u8[:], pos: i64) -> i64, i64 {
     return line, col;
 }
 
+// The functions that take the Parser are generic over it (as yaml's are):
+// goose checks a plain function no call reaches on its own, and one that
+// reaches fail_at's return from parse_core that way has no parse_core to
+// return from. A program that declares xml but parses nothing (kmip's
+// tests, say) would not compile.
 fn fail_at(s: const u8[:], at: i64, code: i64, msg: const u8[:]) {
     let line, col = line_col(s, at);
     return Error { code: code, offset: at, line: line, column: col,
                    message: str("xml: line ", line, " column ", col, ": ", msg) } from parse_core;
 }
 
-fn fail(p: Parser&, code: i64, msg: const u8[:]) { fail_at(p.s, p.pos, code, msg); }
+fn fail<P>(p: P&, code: i64, msg: const u8[:]) { fail_at(p.s, p.pos, code, msg); }
 
-fn at_end(p: const Parser&) -> bool { p.pos >= p.s.len }
+fn at_end<P>(p: const P&) -> bool { p.pos >= p.s.len }
 
-fn peek(p: const Parser&, k: i64) -> i64 { if p.pos + k < p.s.len { p.s[p.pos + k] } else { -1 } }
+fn peek<P>(p: const P&, k: i64) -> i64 { if p.pos + k < p.s.len { p.s[p.pos + k] } else { -1 } }
 
-fn looking_at(p: const Parser&, w: const u8[:]) -> bool {
+fn looking_at<P>(p: const P&, w: const u8[:]) -> bool {
     p.pos + w.len <= p.s.len && p.s[p.pos..p.pos + w.len] == w
 }
 
-fn expect(p: Parser&, w: const u8[:]) {
+fn expect<P>(p: P&, w: const u8[:]) {
     if !looking_at(p, w) { fail(p, ERR_SYNTAX, str("expected ", w)); }
     p.pos += w.len;
 }
 
 // Skips white space; whether there was some.
-fn skip_space(p: Parser&) -> bool {
+fn skip_space<P>(p: P&) -> bool {
     let start = p.pos;
     while p.pos < p.s.len && is_space(p.s[p.pos]) { p.pos++; }
     return p.pos > start;
 }
 
 // One character, checked: the code point and its width.
-fn next_char(p: Parser&) -> i64, i64 {
+fn next_char<P>(p: P&) -> i64, i64 {
     let c, w = decode(p.s, p.pos);
     if c < 0 { fail(p, ERR_CHAR, "not UTF-8"); }
     if !is_char(c) { fail(p, ERR_CHAR, str("character U+", hex_of(c), " not allowed")); }
@@ -360,7 +365,7 @@ fn hex_of(c: i64) -> u8[>..] {
 }
 
 // A Name at the cursor: its bytes in the input.
-fn read_name(p: Parser&) -> i64, i64 {
+fn read_name<P>(p: P&) -> i64, i64 {
     let start = p.pos;
     var first = true;
     while p.pos < p.s.len {
@@ -376,18 +381,18 @@ fn read_name(p: Parser&) -> i64, i64 {
     return start, p.pos;
 }
 
-fn check_size(p: Parser&) {
+fn check_size<P>(p: P&) {
     if p.d.text.len - p.text0 > p.o.max_size + p.o.max_size { fail(p, ERR_LIMIT, "document too large"); }
 }
 
-fn new_node(p: Parser&, n: Node) -> i64 {
+fn new_node<P>(p: P&, n: Node) -> i64 {
     if p.d.nodes.len - p.nodes0 >= p.o.max_nodes { fail(p, ERR_LIMIT, "too many nodes"); }
     return add_node(p.d, n);
 }
 
 // A character or entity reference at '&', appended to the text: the
 // predefined five and &#N; and &#xN; of a Char.
-fn read_reference(p: Parser&) {
+fn read_reference<P>(p: P&) {
     let start = p.pos;
     p.pos++;
     if peek(p, 0) == '#' {
@@ -424,7 +429,7 @@ fn read_reference(p: Parser&) {
 
 // An attribute value at its quote, normalized (§3.3.3, every attribute
 // CDATA since there is no DTD), into the text.
-fn read_att_value(p: Parser&) -> Span {
+fn read_att_value<P>(p: P&) -> Span {
     let q = peek(p, 0);
     if q != '"' && q != '\'' { fail(p, ERR_SYNTAX, "expected a quoted attribute value"); }
     p.pos++;
@@ -451,7 +456,7 @@ fn read_att_value(p: Parser&) -> Span {
 }
 
 // The XML declaration, at "<?xml ".
-fn read_xml_decl(p: Parser&) {
+fn read_xml_decl<P>(p: P&) {
     p.pos += 5;
     var seen = 0;
     loop {
@@ -497,7 +502,7 @@ fn read_xml_decl(p: Parser&) {
 
 // A DOCTYPE, at "<!DOCTYPE": refused, unless allowed and without an
 // internal subset, when it is passed over.
-fn read_doctype(p: Parser&) {
+fn read_doctype<P>(p: P&) {
     if !p.o.allow_doctype { fail(p, ERR_DOCTYPE, "DOCTYPE not allowed"); }
     p.pos += 9;
     if !skip_space(p) { fail(p, ERR_SYNTAX, "malformed DOCTYPE"); }
@@ -524,7 +529,7 @@ fn read_doctype(p: Parser&) {
 }
 
 // A comment, at "<!--".
-fn read_comment(p: Parser&, parent: i64) {
+fn read_comment<P>(p: P&, parent: i64) {
     p.pos += 4;
     let at = p.d.text.len;
     loop {
@@ -542,7 +547,7 @@ fn read_comment(p: Parser&, parent: i64) {
 }
 
 // One character of the input to the text, a line end normalized.
-fn copy_char(p: Parser&) {
+fn copy_char<P>(p: P&) {
     let b = p.s[p.pos];
     if b == '\r' {
         p.d.text.push('\n');
@@ -557,7 +562,7 @@ fn copy_char(p: Parser&) {
 }
 
 // A processing instruction, at "<?".
-fn read_pi(p: Parser&, parent: i64) {
+fn read_pi<P>(p: P&, parent: i64) {
     p.pos += 2;
     let ns, ne = read_name(p);
     let target = p.s[ns..ne];
@@ -588,7 +593,7 @@ fn read_pi(p: Parser&, parent: i64) {
 }
 
 // A CDATA section, at "<![CDATA[".
-fn read_cdata(p: Parser&, parent: i64) {
+fn read_cdata<P>(p: P&, parent: i64) {
     p.pos += 9;
     let at = p.d.text.len;
     loop {
@@ -603,7 +608,7 @@ fn read_cdata(p: Parser&, parent: i64) {
 
 // Character data up to the next '<' or the end, into a text node of
 // parent; only white space where `text_ok` is false, and then dropped.
-fn read_text(p: Parser&, parent: i64, text_ok: bool) {
+fn read_text<P>(p: P&, parent: i64, text_ok: bool) {
     if !text_ok {
         while p.pos < p.s.len && p.s[p.pos] != '<' {
             if !is_space(p.s[p.pos]) { fail(p, ERR_SYNTAX, "text outside the root element"); }
@@ -633,7 +638,7 @@ fn is_id_name(o: const Options&, name: const u8[:]) -> bool {
 }
 
 // Adds a namespace binding, hiding the prefix's previous one.
-fn bind(p: Parser&, prefix: Span, uri: Span) {
+fn bind<P>(p: P&, prefix: Span, uri: Span) {
     let key = view(p.d, prefix);
     let prev = p.scope.get(key);
     let pv = if prev { prev } else { -1 };
@@ -642,7 +647,7 @@ fn bind(p: Parser&, prefix: Span, uri: Span) {
 }
 
 // Removes the bindings from `mark` up.
-fn unbind(p: Parser&, mark: i64) {
+fn unbind<P>(p: P&, mark: i64) {
     while p.bindings.len > mark {
         let b = p.bindings.pop();
         let key = view(p.d, b.prefix);
@@ -651,7 +656,7 @@ fn unbind(p: Parser&, mark: i64) {
 }
 
 // The URI bound to a prefix, and whether it is bound.
-fn resolve(p: Parser&, prefix: const u8[:]) -> Span, bool {
+fn resolve<P>(p: P&, prefix: const u8[:]) -> Span, bool {
     if prefix == "xml" { return p.d.xml_ns, true; }
     let b = p.scope.get(prefix);
     if b { return p.bindings[b].uri, true; }
@@ -660,7 +665,7 @@ fn resolve(p: Parser&, prefix: const u8[:]) -> Span, bool {
 
 // A start tag at '<': the element, its attributes and declarations; true
 // when it was empty (<a/>).
-fn read_start_tag(p: Parser&, parent: i64) -> i64, bool {
+fn read_start_tag<P>(p: P&, parent: i64) -> i64, bool {
     let tag_at = p.pos;
     p.pos++;
     let qs, qe = read_name(p);
@@ -777,7 +782,7 @@ fn read_start_tag(p: Parser&, parent: i64) -> i64, bool {
 }
 
 // Whether the end tag's name at the cursor is el's.
-fn end_tag_matches(p: Parser&, el: i64, name: const u8[:]) -> bool {
+fn end_tag_matches<P>(p: P&, el: i64, name: const u8[:]) -> bool {
     let pre = view(p.d, p.d.nodes[el].prefix);
     let loc = view(p.d, p.d.nodes[el].local);
     if pre.len == 0 { return name == loc; }
@@ -786,7 +791,7 @@ fn end_tag_matches(p: Parser&, el: i64, name: const u8[:]) -> bool {
 
 // Content into `top`: the whole document (fragment false: prolog, one
 // root element, epilogue) or a fragment's (any content, no DOCTYPE).
-fn read_content(p: Parser&, top: i64, fragment: bool) {
+fn read_content<P>(p: P&, top: i64, fragment: bool) {
     var cur = top;
     var depth = 0;
     var marks: i64[>..<] = [];
@@ -856,7 +861,7 @@ fn qname_of(d: const Doc&, n: i64) -> u8[>..] {
     return out;
 }
 
-fn parse_core(p: Parser&, fragment: bool, top: i64) -> Error {
+fn parse_core<P>(p: P&, fragment: bool, top: i64) -> Error {
     if p.s.len > p.o.max_size { fail_at(p.s, 0, ERR_LIMIT, "document too large"); }
     if !fragment {
         if p.s.len >= 2 && ((p.s[0] == 0xFE && p.s[1] == 0xFF) || (p.s[0] == 0xFF && p.s[1] == 0xFE)) {

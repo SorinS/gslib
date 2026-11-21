@@ -1,4 +1,4 @@
-// KMIP's XML and JSON encodings (kmip.xml, kmip.json, kmip.text): the
+// KMIP's XML and JSON encodings (kmip.xml_encoding, kmip.json_encoding, kmip.text): the
 // forms of KMIP Profiles 2.1 §5.4 and §5.5, each type's, read and written;
 // what is refused; and PyKMIP's 245 TTLV encodings (test/vectors) each
 // written as XML and as JSON and read back to the same bytes.
@@ -6,8 +6,8 @@
 import std;
 import gslib from "../..";
 import gslib.kmip;
-import gslib.kmip.xml;
-import gslib.kmip.json;
+import gslib.kmip.xml_encoding;
+import gslib.kmip.json_encoding;
 import gslib.kmip.text;
 
 let VECTORS = embed_file("vectors/pykmip.txt");

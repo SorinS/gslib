@@ -47,8 +47,8 @@ from, and any package of that name whose functions match the ones called
 takes this one's place:
 
 ```goose
-import tls from "SorinS/tlsgoose@v0.8.0";
-import entropy from "../fixed_entropy";   // instead of "SorinS/entropygoose@v0.8.0"
+import tls from "SorinS/tlsgoose@v0.9.1";
+import entropy from "../fixed_entropy";   // instead of "SorinS/entropygoose@v0.9.1"
 ```
 
 ```goose

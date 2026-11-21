@@ -7,7 +7,7 @@ SPNEGO (RFC 4178), HTTP Negotiate (RFC 4559) and Microsoft's PAC
 tickets, across realms and by referral; services accept AP-REQs, GSS-API
 and SPNEGO tokens with a keytab and read the PAC. Keytabs and credential
 caches are MIT's file formats, readable by MIT's and Heimdal's tools and
-reading theirs. Only `krb5.net`, the file functions and the tools do I/O.
+reading theirs. Only `krb5.transport`, the file functions and the tools do I/O.
 
 | Module | What |
 |---|---|
@@ -17,7 +17,7 @@ reading theirs. Only `krb5.net`, the file functions and the tools do I/O.
 | `krb5.keytab` | MIT keytabs (versions 1 and 2, holes, 32-bit key versions): `keytab_load`, `keytab_save_private`, `keytab_key`, `keytab_entries_from_password` (ktutil's addent) |
 | `krb5.ccache` | MIT FILE credential caches (versions 1 to 4, configuration entries): `ccache_load`, `ccache_save` (0600), `ccache_find`, `ccache_add`, `ccache_config`, `ccache_with_config`, `default_ccache_name` |
 | `krb5.config` | krb5.conf in MIT's profile syntax (sections, subsections, `include`, `includedir`, final markers): `config_load` (a `:`-separated list, as `$KRB5_CONFIG`; files that cannot be read are skipped, `ERR_FILE` when none can), `default_config` (empty when no file is there, as MIT's), the realms' KDCs, `domain_realm`, `capaths`, enctype lists, durations |
-| `krb5.net` | Sending to a realm's KDCs: UDP first below `udp_preference_limit`, TCP above it or on KRB_ERR_RESPONSE_TOO_BIG, each KDC in turn, as MIT does |
+| `krb5.transport` | Sending to a realm's KDCs: UDP first below `udp_preference_limit`, TCP above it or on KRB_ERR_RESPONSE_TOO_BIG, each KDC in turn, as MIT does |
 | `krb5.client` | AS exchanges (`get_tgt_password`, `get_tgt_keytab`, encrypted-timestamp pre-authentication from ETYPE-INFO2, enterprise names and client referrals; armored with FAST: `get_tgt_password_fast`, `get_tgt_keytab_fast`, with encrypted challenge; SPAKE when the KDC offers it, armored or not, its optimistic challenge taken; `disable_encrypted_timestamp` as MIT has it; PKINIT: `get_tgt_identity`, anonymous `get_tgt_anonymous`), TGS exchanges (`get_service_ticket`: cross-realm along `capaths` or the hierarchy, server referrals; armored by the TGT, as MIT's are), `renew`, `forward_tgt`, clock skew learned from the KDC; `kinit_password`, `kinit_keytab`, `kinit_password_fast`, `kinit_keytab_fast` (MIT's `kinit -T`), `kinit_identity` (`kinit -X`, armored or not), `kinit_anonymous` (`kinit -n`), `get_service_ticket_cached` keep a cache (with MIT's `fast_avail` entry when the KDC does FAST) |
 | `krb5.fast` | FAST (RFC 6113), the client's side: armor from a TGT (`fast_armor_as`) or a TGS request's own (`fast_armor_tgs`), `fast_wrap`, the reply's checks (`fast_reply`: nonce, finished part, the ticket's checksum), `fast_reply_key` (the strengthen key), `fast_error` (the error inside the armor, the cookie), encrypted challenge both ways |
 | `krb5.pkinit` | PKINIT (RFC 4556) with RFC 8636's KDFs (SHA-1, -256, -384, -512) and octetstring2key, freshness tokens (RFC 8070) and anonymous PKINIT (RFC 8062, PA-PKINIT-KX checked): Diffie-Hellman in MODP 2048 and 4096 and P-256, P-384, P-521 (`pkinit_dh_min_bits`; another group from the KDC's TD-DH-PARAMETERS); the AuthPack signed in CMS (`x509.cms`) by an RSA or ECDSA key; the KDC's certificate checked against `pkinit_anchors` (`pkinit_pool`, `pkinit_kdc_hostname`, `pkinit_eku_checking` as MIT reads them); identities `FILE:cert[,key]` and `PKCS12:file` (`pkinit_load_identity`) |

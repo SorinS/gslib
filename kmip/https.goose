@@ -26,8 +26,8 @@ import kmip.tables;
 import kmip.messages;
 import kmip.client;
 import kmip.server;
-import kmip.xml;
-import kmip.json;
+import kmip.xml_encoding;
+import kmip.json_encoding;
 
 // The message encodings.
 let MSG_TTLV: u8 = 1;

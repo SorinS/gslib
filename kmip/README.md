@@ -56,8 +56,8 @@ go in each request's Authentication when a server wants one.
 | `kmip/client_session.goose` | asynchronous items (`submit`, `poll`, `process_async`, `cancel`, `query_async`); tickets (`login`, `delegated_login` with Rights on objects or Object Groups: `add_right`, `add_right_groups`; `logout`); `log_message`, `ping`, `set_endpoint_role`, `reprovision`, `pkcs11`; `set_defaults`, `set_constraints`, `get_constraints`; the Query functions past 1.2's (`query_capabilities`, `query_profiles`, `query_enums`, `query_registration_methods`, `query_defaults`); `take_server_request` (a server's Notify or Put, answered) |
 | `kmip/https.goose` | KMIP over HTTPS: `HttpClient` (`https_dial`, `exchange`, `close`), `MSG_TTLV`, `MSG_XML`, `MSG_JSON`, `content_type`, `encoding_of`, `encode_as`, `decode_as`; the server's side: `HttpConn` (`http_conn`), `http_serve` |
 | `kmip/text.goose` | what the XML and JSON encodings share: `tag_by_name`, `tag_from_text`, `tag_text`, `type_from_text`, `enum_by_name`, `enum_from_text`, `enum_text`, `is_mask`, `mask_text`, `mask_from_text`, `names_tag`, `put_from_text`, `value_text`, `datetime_text`, `datetime_from_text` |
-| `kmip/xml.goose` | KMIP's XML encoding: `to_xml`, `ttlv_to_xml`, `from_xml`, `xml_element_to_ttlv` |
-| `kmip/json.goose` | KMIP's JSON encoding: `to_json`, `ttlv_to_json`, `from_json` |
+| `kmip/xml_encoding.goose` | KMIP's XML encoding: `to_xml`, `ttlv_to_xml`, `from_xml`, `xml_element_to_ttlv` |
+| `kmip/json_encoding.goose` | KMIP's JSON encoding: `to_json`, `ttlv_to_json`, `from_json` |
 | `kmip/server.goose` | `Server` (`server`; `now`, `max_objects`, `lease_time`, `vendor`, `ca_cert` and `ca_key` for Certify): `handle` (a request's bytes and the client's identity to the response's), `peer_identity` (a client certificate's commonName), `object_count`; the request's handling: batches (Stop, Continue, Undo), the ID Placeholder, Maximum Response Size, each version's Result Reasons (`reason_for`); the store: `add_object`, `add_object_with`, `set_state`, `settle` (the state an object's dates put it in) |
 | `kmip/server_manage.goose` | Discover Versions, Query, Create, Create Key Pair, Register, Get and Export, the attribute operations, Locate, Activate, Revoke, Destroy |
 | `kmip/server_crypto.goose` | Encrypt, Decrypt, Sign, Signature Verify, MAC, MAC Verify, Hash (each in parts too), RNG Retrieve, RNG Seed |
@@ -167,11 +167,11 @@ a reference, not a key manager to keep keys in.
 **The encodings.** KMIP's Profiles (2.1, §5.4 and §5.5) write a message
 as XML or JSON as well as TTLV: each item an element (or object) named
 by its tag, with its type and value, a Structure's children inside it.
-`kmip.xml` and `kmip.json` turn TTLV into either and back. The names are
-the Profiles' normalized ones (`UniqueIdentifier`, `SymmetricKey`, `DES3`
-for 3DES, `PKCS_1`, `OnLineStorage`); KMIP 1.x's Attribute Value takes
-its names from the Attribute Name beside it, and Attribute Reference's
-are tags'. Masks are their bits' names (`Encrypt Decrypt`,
+`kmip.xml_encoding` and `kmip.json_encoding` turn TTLV into either and
+back. The names are the Profiles' normalized ones (`UniqueIdentifier`,
+`SymmetricKey`, `DES3` for 3DES, `PKCS_1`, `OnLineStorage`); KMIP 1.x's
+Attribute Value takes its names from the Attribute Name beside it, and
+Attribute Reference's are tags'. Masks are their bits' names (`Encrypt Decrypt`,
 `Encrypt|Decrypt` in JSON). What is read takes every form the Profiles
 allow: hex for tags (`0x420094`, or `x540001` as an element), numbers,
 enumerations, masks, Booleans and Date-Times; the general `<TTLV tag=...>`

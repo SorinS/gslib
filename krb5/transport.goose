@@ -1,4 +1,4 @@
-// krb5.net: talking to a realm's KDCs (RFC 4120 §7.2). A request no
+// krb5.transport: talking to a realm's KDCs (RFC 4120 §7.2). A request no
 // longer than udp_preference_limit (1465 bytes by default, as MIT's) goes
 // over UDP first; a longer one, a KDC marked tcp/, or a
 // KRB_ERR_RESPONSE_TOO_BIG answer goes over TCP, where each message has a

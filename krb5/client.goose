@@ -32,7 +32,7 @@ import entropy;
 import krb5.crypto;
 import krb5.messages;
 import krb5.config;
-import krb5.net;
+import krb5.transport;
 import krb5.keytab;
 import krb5.ccache;
 import krb5.fast;

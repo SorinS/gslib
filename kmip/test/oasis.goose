@@ -36,8 +36,8 @@ import gslib.kmip;
 import gslib.kmip.tables;
 import gslib.kmip.messages;
 import gslib.kmip.text;
-import gslib.kmip.xml;
-import gslib.kmip.json;
+import gslib.kmip.xml_encoding;
+import gslib.kmip.json_encoding;
 import gslib.kmip.server;
 
 // --- Placeholders -----------------------------------------------------------------

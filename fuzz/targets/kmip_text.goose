@@ -8,8 +8,8 @@
 import std;
 import gslib from "../..";
 import gslib.kmip;
-import gslib.kmip.xml;
-import gslib.kmip.json;
+import gslib.kmip.xml_encoding;
+import gslib.kmip.json_encoding;
 
 fn check_ttlv(t: const u8[:]) {
     var doc: kmip::Node[>..] = [];

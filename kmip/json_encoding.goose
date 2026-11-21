@@ -1,5 +1,5 @@
-// kmip.json: KMIP's JSON encoding (KMIP Profiles 2.1 §5.5), to and from
-// TTLV. Each item is an object with its tag, type and value; a
+// kmip.json_encoding: KMIP's JSON encoding (KMIP Profiles 2.1 §5.5), to
+// and from TTLV. Each item is an object with its tag, type and value; a
 // Structure's value is the array of its children, and its type is left
 // out:
 //

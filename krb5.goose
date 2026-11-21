@@ -15,15 +15,15 @@
 //   krb5.ndr        NDR (MS-RPCE) decoding, for the PAC
 //   krb5.pac        the PAC: logon info, UPN/DNS info, signatures
 //   krb5.claims     the PAC's claims, and MS-XCA decompression
-//   krb5.net        talking to KDCs over UDP and TCP
+//   krb5.transport  talking to KDCs over UDP and TCP
 //   krb5.fast       FAST armor (RFC 6113)
 //   krb5.spake      SPAKE pre-authentication
 //   krb5.pkinit     PKINIT: certificates and anonymous (RFC 4556, 8062, 8636)
-//   krb5.ldap       SASL GSSAPI binds (RFC 4752) and SID lookups in AD
+//   krb5.directory  SASL GSSAPI binds (RFC 4752) and SID lookups in AD
 //
-// Nothing here does I/O but krb5.net, the file functions (keytabs,
-// caches, krb5.conf) and the tools; krb5.ldap writes and reads bytes for
-// the caller's connection.
+// Nothing here does I/O but krb5.transport, the file functions
+// (keytabs, caches, krb5.conf) and the tools; krb5.directory writes
+// and reads bytes for the caller's connection.
 
 namespace krb5;
 

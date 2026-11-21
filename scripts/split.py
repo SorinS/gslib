@@ -52,9 +52,10 @@ status and git diff in each repository.
                              [--delete-other] [--graph]
 
 --dest is the directory holding the repositories (gslib.git's parent by
-default); a repository marked new in the table is created there with
-`git init` when it is missing. --tag defaults to gslib's tag at HEAD, or,
-when HEAD has none, the latest tag before it (said so on stderr).
+default); a repository missing there, or a directory there that is not
+a git repository, is created with `git init`. --tag defaults to gslib's
+tag at HEAD, or, when HEAD has none, the latest tag before it (said so
+on stderr).
 --graph prints the dependency graph and the order to tag and push in.
 """
 
@@ -100,7 +101,6 @@ SWAPPABLE = {"entropy"}
 
 # The repositories, one row each:
 #   repo      the directory beside gslib.git, without .git, and the GitHub name
-#   new       created (git init) when missing
 #   subdirs   only these of <path>/ (net: its other subdirectories are http's and ldap's)
 #   exclude   gslib paths left out, with why in the comment
 #   sidecar   <name>.build at the top, when the package has native parts
@@ -110,7 +110,7 @@ SWAPPABLE = {"entropy"}
 #   note      a paragraph added to the README's end
 SPLITS = {
     "entropy": dict(
-        repo="entropygoose", new=True, subdirs=["scripts", "test", "README.md"],
+        repo="entropygoose", subdirs=["scripts", "test", "README.md"],
         gitignore=["__pycache__/"],
         fixups=[
             ("entropy.goose", "//   import entropy;        // from a program; `import entropy;` inside gslib",
@@ -118,7 +118,7 @@ SPLITS = {
         ],
     ),
     "net": dict(
-        repo="netgoose", new=True, subdirs=["src", "scripts", "test", "ip.goose", "idna.goose", "README.md"],
+        repo="netgoose", subdirs=["src", "scripts", "test", "ip.goose", "idna.goose", "README.md"],
         sidecar=(
             "// net's sidecar: the sockets of net.goose (src/net.c), compiled only\n"
             "// into programs that call them.\n"
@@ -166,7 +166,7 @@ SPLITS = {
     ),
     "yaml": dict(repo="yamlgoose"),
     "xml": dict(
-        repo="xmlgoose", new=True,
+        repo="xmlgoose",
         gitignore=["__pycache__/"],
         fixups=[
             ("README.md", "`make test-xml` (`python3 encoding/xml/scripts/run_tests.py`) runs each\n`encoding/xml/test/*.goose`",
@@ -191,7 +191,7 @@ SPLITS = {
     "tls": dict(repo="tlsgoose"),
     "ssh": dict(repo="sshgoose"),
     "ntlm": dict(
-        repo="ntlmgoose", new=True,
+        repo="ntlmgoose",
         exclude=[
             # goose-ntlm needs krb5, dns and http: krb5 and dns have no
             # repository, and http needs ntlm. interop.py drives
@@ -212,7 +212,7 @@ SPLITS = {
             "`examples/ntlm`).\n"),
     ),
     "quic": dict(
-        repo="quicgoose", new=True,
+        repo="quicgoose",
         gitignore=["__pycache__/"],
         fixups=[
             ("README.md", "make test-quic                             # or: cd quic && python3 scripts/run_tests.py",
@@ -223,7 +223,7 @@ SPLITS = {
         ],
     ),
     "websocket": dict(
-        repo="websocketgoose", new=True,
+        repo="websocketgoose",
         gitignore=["__pycache__/"],
         fixups=[
             ("README.md", "make test-websocket                        # or: cd websocket && python3 scripts/run_tests.py",
@@ -234,7 +234,7 @@ SPLITS = {
         ],
     ),
     "radius": dict(
-        repo="radiusgoose", new=True,
+        repo="radiusgoose",
         gitignore=["__pycache__/"],
         fixups=[
             ("README.md", "make test-radius                                  # or: cd radius && python3 scripts/run_tests.py",
@@ -244,15 +244,16 @@ SPLITS = {
         ],
     ),
     "krb5": dict(
-        repo="krb5goose", new=True,
+        repo="krb5goose",
         gitignore=["__pycache__/"],
         fixups=[
             ("README.md", "`make test-krb5` (`scripts/run_tests.py`, every", "`python3 scripts/run_tests.py` (every"),
             ("README.md", "`make interop-krb5` (`scripts/interop.py`, macOS", "`python3 scripts/interop.py` (macOS"),
+            ("examples/read_pac.goose", '"../../krb5/test/vectors/"', '"../test/vectors/"'),
         ],
     ),
     "smb": dict(
-        repo="smbgoose", new=True,
+        repo="smbgoose",
         gitignore=["__pycache__/"],
         fixups=[
             ("README.md", "make test-smb                                     # or: cd smb && python3 scripts/run_tests.py",
@@ -263,7 +264,7 @@ SPLITS = {
         ],
     ),
     "kmip": dict(
-        repo="kmipgoose", new=True,
+        repo="kmipgoose",
         gitignore=["__pycache__/", "test/oasis-cache/"],
         fixups=[
             ("README.md", "make test-kmip                                    # or: cd kmip && python3 scripts/run_tests.py",
@@ -273,7 +274,7 @@ SPLITS = {
         ],
     ),
     "service": dict(
-        repo="servicegoose", new=True,
+        repo="servicegoose",
         sidecar=(
             "// service's sidecar: src/service.c, the service managers' side (the\n"
             "// Windows service control manager, POSIX signals, systemctl and\n"
@@ -290,7 +291,7 @@ SPLITS = {
         ],
     ),
     "sys": dict(
-        repo="osgoose", new=True,
+        repo="osgoose",
         sidecar=(
             "// sys's sidecar: src/, the system calls (posix.c, unix.c and spawn.c on POSIX,\n"
             "// win.c, winreg.c, winmgmt.c and winspawn.c on Windows, and the stubs for what a\n"
@@ -318,7 +319,7 @@ SPLITS = {
         ],
     ),
     "sspi": dict(
-        repo="sspigoose", new=True,
+        repo="sspigoose",
         sidecar=(
             "// sspi's sidecar. sspi has no C: its extern blocks bind Windows'\n"
             "// DLLs, which other platforms do not have, and \"-\" leaves them\n"
@@ -457,6 +458,25 @@ def library_deps(lib):
             if other and other != lib.name:
                 deps.setdefault(other, f"{p}: import {mod};")
     return deps
+
+
+def module_clashes(lib, declared):
+    """Library modules the split would make unreachable, each with why.
+
+    A module's import becomes its bare name in the split (krb5.net: net),
+    which goose refuses when a package of that name is declared too, and
+    which shadows a module outside gslib (std's json) that the library's
+    own modules import by that name."""
+    names = {lib.files[p][:-len(".goose")]: p for p in lib.lib_files if p != lib.path + ".goose"}
+    out = []
+    for n, p in sorted(names.items()):
+        if n in declared:
+            out.append(f"{p} would be the module {n}, the name of a package it needs")
+    for q in sorted(lib.lib_files):
+        for mod, src in module_imports(lib.gslib_text(q)):
+            if src is None and mod in names and lib_of(mod) is None:
+                out.append(f"{names[mod]} would be the module {mod}, which {q} imports from outside gslib")
+    return out
 
 
 def root_gslib_libs(lib, p, seen=None):
@@ -785,12 +805,11 @@ def managed(path, name):
 def sync(ctx, lib, args):
     repo_dir = os.path.join(ctx.dest, lib.repo + ".git")
     report = {"added": [], "changed": [], "deleted": [], "kept": [], "created": False}
-    if not os.path.isdir(repo_dir):
-        if not lib.spec.get("new"):
-            die(f"{repo_dir} is missing")
+    # A missing repository, or a directory that is not one yet, is made one.
+    if not os.path.isdir(os.path.join(repo_dir, ".git")):
         report["created"] = True
         if not args.dry_run:
-            os.makedirs(repo_dir)
+            os.makedirs(repo_dir, exist_ok=True)
             git(["init", "-q", "-b", "main"], repo_dir)
     tracked = set(git(["ls-files"], repo_dir).splitlines()) if os.path.isdir(os.path.join(repo_dir, ".git")) else set()
     want = produce(ctx, lib)
@@ -890,6 +909,10 @@ def main():
         if missing:
             die(f"{n}'s tests, tools or examples need {', '.join(sorted(missing))}, which have no repository")
         root_deps[n] = closure(rd, lib_deps) - closure({n}, lib_deps)
+    clashes = [f"{n}: {c}" for n, lib in libs.items()
+               for c in module_clashes(lib, closure(lib_deps[n], lib_deps) | root_deps[n])]
+    if clashes:
+        die("rename these modules first:\n  " + "\n  ".join(clashes))
     # Libraries first: a cycle there cannot be published at all.
     topo(set(SPLITS), lib_deps)
     edges = {n: lib_deps[n] | root_deps[n] for n in SPLITS}

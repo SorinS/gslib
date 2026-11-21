@@ -1,4 +1,4 @@
-// krb5.ldap: Kerberos for LDAP (gslib's net/ldap): the SASL GSSAPI bind
+// krb5.directory: Kerberos for LDAP (gslib's net/ldap): the SASL GSSAPI bind
 // (RFC 4752) with its security layer, and the Active Directory lookups a
 // service makes with what a PAC tells it: SIDs to names, a user's groups
 // (tokenGroups), the domain's naming context.

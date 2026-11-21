@@ -1,6 +1,6 @@
-// kmip.xml: KMIP's XML encoding (KMIP Profiles 2.1 §5.4), to and from
-// TTLV. Each item is an element named by its tag, with its type and value
-// in attributes; a Structure's children are its elements:
+// kmip.xml_encoding: KMIP's XML encoding (KMIP Profiles 2.1 §5.4), to
+// and from TTLV. Each item is an element named by its tag, with its type
+// and value in attributes; a Structure's children are its elements:
 //
 //   <RequestHeader>
 //     <ProtocolVersion>

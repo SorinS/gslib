@@ -17,7 +17,7 @@ import gslib.krb5.messages;
 import gslib.krb5.keytab;
 import gslib.krb5.pac;
 import gslib.krb5.claims;
-import gslib.krb5.ldap;
+import gslib.krb5.directory;
 
 // A vector by name from a "name|hex" file of krb5/test/vectors.
 fn vector(file: const u8[:], name: const u8[:]) -> u8[>..] {
