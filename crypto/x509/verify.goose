@@ -35,15 +35,27 @@ fn eku_surviving(c: const Cert&, wanted: u32) -> u32 {
 // path (RFC 5280 §4.2.1.9), for the extended key usages that survive the
 // path below it.
 fn check_issuer(c: const Cert&, now: i64, below: i64, wanted: u32) -> i64 {
-    let e = check_common(c, now);
-    if e != OK { return e; }
+    return check_link(link_of(c, -1), now, below, wanted);
+}
+
+// The same on a certificate's link.
+fn check_link(c: Link, now: i64, below: i64, wanted: u32) -> i64 {
+    if c.unknown_critical { return ERR_UNKNOWN_CRITICAL_EXTENSION; }
+    if now < c.not_before { return ERR_NOT_YET_VALID; }
+    if now > c.not_after { return ERR_EXPIRED; }
     if !c.has_basic_constraints || !c.is_ca { return ERR_NOT_CA; }
     if c.path_len >= 0 && below > c.path_len { return ERR_PATH_LENGTH; }
     if c.has_key_usage && c.key_usage & KU_KEY_CERT_SIGN == 0 { return ERR_KEY_USAGE; }
     // A CA restricted by extended key usage must allow a usage wanted that
     // the path below allows too (as Go, Chrome and Firefox require).
-    if eku_surviving(c, wanted) == 0 { return ERR_EXTENDED_KEY_USAGE; }
+    if eku_surviving_link(c, wanted) == 0 { return ERR_EXTENDED_KEY_USAGE; }
     return OK;
+}
+
+// eku_surviving on a certificate's link.
+fn eku_surviving_link(c: Link, wanted: u32) -> u32 {
+    if wanted & EKU_ANY != 0 { return wanted; }
+    return wanted & c.eku_allowed;
 }
 
 // The certificate at `off` in a concatenation, and the offset after it.
@@ -62,13 +74,27 @@ let MAX_DEPTH: i64 = 8;
 // buy unbounded work.
 let MAX_SIGNATURE_CHECKS: i64 = 100;
 
+// Intermediates of one name a path search considers, and candidates it
+// may look at in all (each issuer tried, rejected before its signature
+// or not, and each root): past either it gives up with
+// ERR_TOO_MANY_CANDIDATES. Real chains have a few of each; a peer that
+// sends many CAs of one name (all signed by one key, say, so that each
+// issues every other) must not buy work beyond the signature checks.
+let MAX_ISSUERS_PER_NAME: i64 = 32;
+let MAX_CANDIDATE_VISITS: i64 = 1000;
+
 // Whether two certificates are one as far as a path goes: subject, key
 // and subjectAltName (Go's alreadyInChain). Coming back to either only
 // makes a loop, or the permutations of copies of one CA.
 fn same_identity(a: const Cert&, b: const Cert&) -> bool {
-    a.der[a.subject.start..a.subject.end] == b.der[b.subject.start..b.subject.end]
-        && a.der[a.spki.start..a.spki.end] == b.der[b.spki.start..b.spki.end]
-        && a.has_san == b.has_san && a.der[a.san.start..a.san.end] == b.der[b.san.start..b.san.end]
+    same_identity_links(a.der[..], link_of(a, -1), b.der[..], link_of(b, -1))
+}
+
+// The same on two certificates' DER and links.
+fn same_identity_links(ad: const u8[:], a: Link, bd: const u8[:], b: Link) -> bool {
+    ad[a.subject.start..a.subject.end] == bd[b.subject.start..b.subject.end]
+        && ad[a.spki.start..a.spki.end] == bd[b.spki.start..b.spki.end]
+        && a.has_san == b.has_san && ad[a.san.start..a.san.end] == bd[b.san.start..b.san.end]
 }
 
 // The error to report of two met in a path search, each with how close
@@ -191,7 +217,10 @@ fn verify_client_with_system_roots(leaf_der: const u8[:], intermediates: const u
 // path whose signatures verified, and at its top a failed check on the
 // whole path before an issuer that is not a CA (or is expired, and so
 // on), and that before a bad signature, likely just another CA of the
-// same name.
+// same name. A search that would cost more than MAX_SIGNATURE_CHECKS
+// signatures, MAX_CANDIDATE_VISITS candidates looked at, or more than
+// MAX_ISSUERS_PER_NAME intermediates of one name gives up with
+// ERR_TOO_MANY_SIGNATURES or ERR_TOO_MANY_CANDIDATES.
 fn verify_pools(leaf_der: const u8[:], intermediates: const CertPool&, roots: const CertPool&,
                 crls: const u8[:], now: i64, host: const u8[:], opts: const Options&) -> i64 {
     let leaf, e = parse(leaf_der);
@@ -208,47 +237,60 @@ fn verify_pools(leaf_der: const u8[:], intermediates: const CertPool&, roots: co
     if pool_contains(roots, leaf_der) { return OK; }
     // Depth-first search. path[i] is the index in `intermediates` of the
     // i-th certificate above the leaf; tried[i] is how many of the
-    // candidates for the next one up have been tried.
+    // candidates for the next one up have been tried. Each pool's
+    // certificates are parsed once, into links, as the search meets them;
+    // only a signature check parses again.
+    let leaf_link = link_of(leaf, -1);
+    var inter = pool_links(intermediates);
+    var root_links = pool_links(roots);
     var path:  i64[>..<] = [];
     var tried: i64[>..<] = [0];
     var best = ERR_UNKNOWN_ISSUER;
     var best_rank = -1;
     var sigs = 0;
+    var visits = 0;
     loop {
         let depth = path.len;
-        // The certificate at the top of the path so far.
+        // The certificate at the top of the path so far, parsed when a
+        // signature on it is checked.
+        let top_d = if depth == 0 { leaf_der } else { pool_der_at(intermediates, inter[path[depth - 1]].at) };
+        let top_l = if depth == 0 { leaf_link } else { inter[path[depth - 1]] };
         var top = empty_cert();
-        if depth == 0 { top = copy(leaf); } else { top = pool_cert(intermediates, path[depth - 1]); }
+        var top_parsed = false;
         // The usages wanted that the path so far allows, and its
         // intermediates that count against a path length constraint: not
         // the self-issued ones (a CA's key rollover, say).
         var usages = leaf_usages;
         var below = 0;
         for p in path {
-            let pc = pool_cert(intermediates, p);
-            usages = eku_surviving(pc, usages);
-            if !self_issued(pc) { below++; }
+            usages = eku_surviving_link(inter[p], usages);
+            if !inter[p].self_issued { below++; }
         }
         // A root that issued it ends the search, if the whole path holds;
         // tried once per certificate on the path.
         if tried[depth] == 0 {
-            for ri in pool_issuers(roots, top) {
-                let root = pool_cert(roots, ri);
-                let ce = check_issuer(root, now, below, usages);
+            let ris, okr = issuers_of(roots, root_links, top_d, top_l, -1);
+            for ri in ris {
+                if visits == MAX_CANDIDATE_VISITS { return ERR_TOO_MANY_CANDIDATES; }
+                visits++;
+                let rl = root_links[ri];
+                let ce = check_link(rl, now, below, usages);
                 // A root without basicConstraints is accepted if it is
                 // self-issued (a v1 root); otherwise roots are held to the
                 // same rules as any CA.
-                let ok_root = ce == OK || (ce == ERR_NOT_CA && !root.has_basic_constraints && self_issued(root));
+                let ok_root = ce == OK || (ce == ERR_NOT_CA && !rl.has_basic_constraints && rl.self_issued);
                 if !ok_root { best, best_rank = closer(best, best_rank, ce, 3 * depth + 1); continue; }
                 if sigs == MAX_SIGNATURE_CHECKS { return ERR_TOO_MANY_SIGNATURES; }
                 sigs++;
+                if !top_parsed { top = top_cert(leaf, top_d, depth); top_parsed = true; }
+                let root = parsed(pool_der_at(roots, rl.at));
                 let se = check_signature(top, root);
                 if se != OK { best, best_rank = closer(best, best_rank, se, 3 * depth); continue; }
                 var chain: u8[>..] = [];
                 var k = depth;
                 while k > 0 {
                     k--;
-                    chain.append(pool_der(intermediates, path[k]));
+                    chain.append(pool_der_at(intermediates, inter[path[k]].at));
                 }
                 chain.append(leaf_der);
                 let pe = check_path(root, chain, depth + 1, crls, now, opts);
@@ -259,25 +301,29 @@ fn verify_pools(leaf_der: const u8[:], intermediates: const CertPool&, roots: co
         // Otherwise an intermediate that issued it, not already on the path.
         var found = false;
         if depth < MAX_DEPTH {
-            let cands = pool_issuers(intermediates, top);
+            let cands, okc = issuers_of(intermediates, inter, top_d, top_l, MAX_ISSUERS_PER_NAME);
+            if !okc { return ERR_TOO_MANY_CANDIDATES; }
             var ci = tried[depth];
             while ci < cands.len {
                 let here = cands[ci];
                 ci++;
-                let cand = pool_cert(intermediates, here);
-                var on_path = same_identity(cand, leaf);
+                if visits == MAX_CANDIDATE_VISITS { return ERR_TOO_MANY_CANDIDATES; }
+                visits++;
+                let cd = pool_der_at(intermediates, inter[here].at);
+                var on_path = same_identity_links(cd, inter[here], leaf_der, leaf_link);
                 for p in path {
                     if on_path { break; }
                     if p == here { on_path = true; continue; }
-                    let pc = pool_cert(intermediates, p);
-                    on_path = same_identity(cand, pc);
+                    on_path = same_identity_links(cd, inter[here], pool_der_at(intermediates, inter[p].at), inter[p]);
                 }
                 if on_path { continue; }
-                let ce = check_issuer(cand, now, below, usages);
+                let ce = check_link(inter[here], now, below, usages);
                 if ce != OK { best, best_rank = closer(best, best_rank, ce, 3 * depth + 1); continue; }
                 if sigs == MAX_SIGNATURE_CHECKS { return ERR_TOO_MANY_SIGNATURES; }
                 sigs++;
-                let se = check_signature(top, cand);
+                if !top_parsed { top = top_cert(leaf, top_d, depth); top_parsed = true; }
+                let issuer = parsed(cd);
+                let se = check_signature(top, issuer);
                 if se != OK { best, best_rank = closer(best, best_rank, se, 3 * depth); continue; }
                 path.push(here);
                 tried.push(0);
@@ -294,4 +340,18 @@ fn verify_pools(leaf_der: const u8[:], intermediates: const CertPool&, roots: co
         let dropped = path.pop();
         let t = tried.pop();
     }
+}
+
+// The certificate at the top of a path `depth` long, whose DER this is:
+// the leaf, already parsed, or an intermediate.
+fn top_cert(leaf: const Cert&, d: const u8[:], depth: i64) -> Cert {
+    if depth == 0 { return copy(leaf); }
+    return parsed(d);
+}
+
+// A certificate already read once (into a link), parsed again.
+fn parsed(der: const u8[:]) -> Cert {
+    let c, e = parse(der);
+    assert(e == OK);
+    return c;
 }

@@ -84,8 +84,8 @@ fn path_search_bounded(root: const u8[:]) {
     for i in 11 { copies.append(ca_cert("CN=Goose Copied CA", i + 2, ck)); }
     let leaf = leaf_under(first, ck);
     check("copies of one CA: unknown issuer", x509::verify_chain(leaf, copies, root, NOW, "") == x509::ERR_UNKNOWN_ISSUER);
-    // 120 CAs of the leaf's issuer name, none its signer: the search gives
-    // up after Go's 100 signature checks.
+    // 120 CAs of the leaf's issuer name, none its signer: more of one name
+    // than the search considers (test/path_search_dos.goose has more).
     let signer = x509::generate_key(x509::KEY_ED25519);
     let lone = ca_cert("CN=Goose Busy CA", 1, signer);
     var many: u8[>..] = [];
@@ -94,8 +94,8 @@ fn path_search_bounded(root: const u8[:]) {
         many.append(ca_cert("CN=Goose Busy CA", i + 2, k));
     }
     let busy = leaf_under(lone, signer);
-    check("120 candidates: signature checks capped",
-          x509::verify_chain(busy, many, root, NOW, "") == x509::ERR_TOO_MANY_SIGNATURES);
+    check("120 candidates: capped",
+          x509::verify_chain(busy, many, root, NOW, "") == x509::ERR_TOO_MANY_CANDIDATES);
     // Under the cap a real issuer is still found among decoys.
     var some: u8[>..] = [];
     for i in 20 {

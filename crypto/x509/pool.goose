@@ -195,29 +195,121 @@ fn pool_add_dir(p: CertPool&, dir: const u8[:]) -> i64 {
     return added;
 }
 
-// The possible issuers of c in the pool: those whose subject is c's issuer,
-// those whose key identifier matches c's authority key identifier first
-// (as Go orders them).
-fn pool_issuers(p: const CertPool&, c: const Cert&) -> i64[>..] {
-    var out: i64[>..] = [];
-    let d = c.der[..];
-    let name = d[c.issuer.start..c.issuer.end];
-    let h = pool_hash(name);
-    let has_aki = c.aki.end > c.aki.start;
-    let aki = d[c.aki.off..c.aki.end];
-    let hk = if has_aki { pool_hash(aki) } else { 0 };
-    for pass in 2 {
-        var off = 0;
-        for i in p.n {
-            let at = off;
-            off = pool_next(p, off);
-            if pool_u32(p, at + PH_SUBJECT) != h { continue; }
-            let cand, e = parse(pool_der_at(p, at));
-            if e != OK || cand.der[cand.subject.start..cand.subject.end] != name { continue; }
-            let key_match = has_aki && pool_u32(p, at + PH_KEY_ID) == hk && cand.der[cand.ski.off..cand.ski.end] == aki;
-            if (pass == 0) == key_match { out.push(i); }
-        }
+// --- Path building's view of a pool -------------------------------------------
+
+// What path building needs of a certificate, read from it once: where its
+// DER is, the parts it is compared by (offsets into that DER), and what
+// an issuer is checked for. A Cert carries its DER and so cannot be an
+// array element; a Link is fixed in size, and a pool's links are an array
+// beside it, each filled when path building first meets its certificate
+// (verify_pools would otherwise parse every candidate at every step).
+struct Link {
+    at:                    i64,       // its header's offset in the pool; -1 outside one
+    state:                 i64,       // LINK_UNREAD, LINK_OK or LINK_BAD
+    issuer:                asn1::Tlv,
+    subject:               asn1::Tlv,
+    spki:                  asn1::Tlv,
+    has_san:               bool,
+    san:                   asn1::Tlv,
+    ski:                   asn1::Tlv,
+    aki:                   asn1::Tlv,
+    self_issued:           bool,
+    unknown_critical:      bool,
+    not_before:            i64,
+    not_after:             i64,
+    has_basic_constraints: bool,
+    is_ca:                 bool,
+    path_len:              i64,
+    has_key_usage:         bool,
+    key_usage:             u32,
+    eku_allowed:           u32,       // EKU_* masks; all of them without an extendedKeyUsage
+}
+
+let LINK_UNREAD: i64 = 0;
+let LINK_OK:     i64 = 1;
+let LINK_BAD:    i64 = 2;           // does not parse
+
+fn link_of(c: const Cert&, at: i64) -> Link {
+    Link {
+        at:                    at,
+        state:                 LINK_OK,
+        issuer:                c.issuer,
+        subject:               c.subject,
+        spki:                  c.spki,
+        has_san:               c.has_san,
+        san:                   c.san,
+        ski:                   c.ski,
+        aki:                   c.aki,
+        self_issued:           self_issued(c),
+        unknown_critical:      c.unknown_critical,
+        not_before:            c.not_before,
+        not_after:             c.not_after,
+        has_basic_constraints: c.has_basic_constraints,
+        is_ca:                 c.is_ca,
+        path_len:              c.path_len,
+        has_key_usage:         c.has_key_usage,
+        key_usage:             c.key_usage,
+        eku_allowed:           if !c.has_ext_key_usage || c.ext_key_usage & EKU_ANY != 0 { 0xffffffff } else { c.ext_key_usage },
     }
+}
+
+// A pool's links, none read yet: one walk over its headers.
+fn pool_links(p: const CertPool&) -> Link[>..] {
+    var out: Link[>..] = [];
+    let none = empty_cert();
+    var u = link_of(none, 0);
+    u.state = LINK_UNREAD;
+    var off = 0;
+    for i in p.n {
+        u.at = off;
+        out.push(u);
+        off = pool_next(p, off);
+    }
+    return out;
+}
+
+// Fills the i-th link from its certificate, if it was not yet.
+fn read_link(p: const CertPool&, links: Link[>..]&, i: i64) {
+    if links[i].state != LINK_UNREAD { return; }
+    let at = links[i].at;
+    let c, e = parse(pool_der_at(p, at));
+    if e != OK { links[i].state = LINK_BAD; return; }
+    links[i] = link_of(c, at);
+}
+
+// The possible issuers in a pool of the certificate whose DER and link
+// these are: the indexes of those whose subject is its issuer, those whose
+// key identifier matches its authority key identifier first (as Go orders
+// them). Over all the calls with one array of links, each certificate is
+// parsed at most once. False if more than `cap` share the name (no cap if
+// it is negative).
+fn issuers_of(p: const CertPool&, links: Link[>..]&, d: const u8[:], l: Link, cap: i64) -> i64[>..], bool {
+    var first: i64[>..] = [];
+    var rest:  i64[>..] = [];
+    let name = d[l.issuer.start..l.issuer.end];
+    let h = pool_hash(name);
+    let has_aki = l.aki.end > l.aki.start;
+    let aki = d[l.aki.off..l.aki.end];
+    let hk = if has_aki { pool_hash(aki) } else { 0 };
+    for i in p.n {
+        let at = links[i].at;
+        if pool_u32(p, at + PH_SUBJECT) != h { continue; }
+        read_link(p, links, i);
+        if links[i].state != LINK_OK { continue; }
+        let cd = pool_der_at(p, at);
+        if cd[links[i].subject.start..links[i].subject.end] != name { continue; }
+        if cap >= 0 && first.len + rest.len == cap { return first, false; }
+        let ski = links[i].ski;
+        if has_aki && pool_u32(p, at + PH_KEY_ID) == hk && cd[ski.off..ski.end] == aki { first.push(i); } else { rest.push(i); }
+    }
+    first.append(rest);
+    return first, true;
+}
+
+// The possible issuers of c in the pool, as issuers_of orders them.
+fn pool_issuers(p: const CertPool&, c: const Cert&) -> i64[>..] {
+    var links = pool_links(p);
+    let out, ok = issuers_of(p, links, c.der[..], link_of(c, -1), -1);
     return out;
 }
 

@@ -44,6 +44,7 @@ let ERR_SIGNING: i64 = 18;
 let ERR_TOO_MANY_SIGNATURES: i64 = 19;
 let ERR_CMS_NOT_RECIPIENT: i64 = 20;     // no RecipientInfo names the certificate (x509.cms_env)
 let ERR_CMS_DECRYPT: i64 = 21;           // the key or the content does not decrypt (x509.cms_env)
+let ERR_TOO_MANY_CANDIDATES: i64 = 22;   // path building: too many issuers of one name, or tried (x509.verify)
 
 fn error_text(e: i64) -> const u8[:] {
     if e == OK { return "ok"; }
@@ -68,6 +69,7 @@ fn error_text(e: i64) -> const u8[:] {
     if e == ERR_TOO_MANY_SIGNATURES { return "too many signature checks building the chain"; }
     if e == ERR_CMS_NOT_RECIPIENT { return "not a recipient of the message"; }
     if e == ERR_CMS_DECRYPT { return "does not decrypt"; }
+    if e == ERR_TOO_MANY_CANDIDATES { return "too many candidate issuers building the chain"; }
     return "unknown error";
 }
 
@@ -459,21 +461,34 @@ fn name_constraints_ok(der: const u8[:], t: asn1::Tlv) -> bool {
     return true;
 }
 
-// certificatePolicies: PolicyInformation ::= SEQUENCE { policyIdentifier, qualifiers OPTIONAL },
-// each policy once.
-fn policies_ok(der: const u8[:], t: asn1::Tlv) -> bool {
-    let ps, ok = asn1::children_of(der, t, asn1::SEQUENCE);
-    if !ok || ps.len == 0 { return false; }
-    for i in ps.len {
-        let pi, okp = asn1::children_of(der, ps[i], asn1::SEQUENCE);
-        if !okp || pi.len < 1 || pi.len > 2 || pi[0].tag != asn1::OID { return false; }
-        if pi.len == 2 && pi[1].tag != asn1::SEQUENCE { return false; }
-        for j in i {
-            let pj, okj = asn1::children(der, ps[j]);
-            if der[pj[0].off..pj[0].end] == der[pi[0].off..pi[0].end] { return false; }
-        }
+// Whether no two of these TLVs (OIDs, say) have the same content: sorted,
+// then neighbours compared, so n log n however many a certificate holds.
+fn distinct_contents(der: const u8[:], ts: asn1::Tlv[>..]&) -> bool {
+    sort(ts) { a, b => compare(der[a.off..a.end], der[b.off..b.end]) < 0 };
+    for i in 1..ts.len {
+        if der[ts[i - 1].off..ts[i - 1].end] == der[ts[i].off..ts[i].end] { return false; }
     }
     return true;
+}
+
+// Policies one certificate may name. Real ones carry a handful; a peer's
+// certificate must not buy unbounded work, here or in the path's policy
+// tree, before any signature on it is checked.
+let MAX_POLICIES: i64 = 64;
+
+// certificatePolicies: PolicyInformation ::= SEQUENCE { policyIdentifier, qualifiers OPTIONAL },
+// each policy once, at most MAX_POLICIES of them.
+fn policies_ok(der: const u8[:], t: asn1::Tlv) -> bool {
+    let ps, ok = asn1::children_of(der, t, asn1::SEQUENCE);
+    if !ok || ps.len == 0 || ps.len > MAX_POLICIES { return false; }
+    var ids: asn1::Tlv[>..] = [];
+    for p in ps {
+        let pi, okp = asn1::children_of(der, p, asn1::SEQUENCE);
+        if !okp || pi.len < 1 || pi.len > 2 || pi[0].tag != asn1::OID { return false; }
+        if pi.len == 2 && pi[1].tag != asn1::SEQUENCE { return false; }
+        ids.push(pi[0]);
+    }
+    return distinct_contents(der, ids);
 }
 
 // PolicyMappings: pairs of issuer and subject policies, neither anyPolicy.
@@ -519,16 +534,11 @@ fn parse_extensions(c: Cert&, der: const u8[:], t: asn1::Tlv) -> bool {
     let wrap, okw = asn1::explicit(der, t);
     let exts, ok = asn1::children_of(der, wrap, asn1::SEQUENCE);
     if !okw || !ok || exts.len == 0 { return false; }
-    var seen: u8[][>..] = [];
+    var ids: asn1::Tlv[>..] = [];
     for e in exts {
         let f, okf = asn1::children_of(der, e, asn1::SEQUENCE);
         if !okf || f.len < 2 || f.len > 3 || f[0].tag != asn1::OID { return false; }
-        // Each extension at most once.
-        let id = der[f[0].off..f[0].end];
-        for s in seen { if s == id { return false; } }
-        var idc: u8[>..] = [];
-        idc.append(id);
-        seen.push(copy(idc));
+        ids.push(f[0]);
         var critical = false;
         if f.len == 3 {
             let v, okb = asn1::read_bool(der, f[1]);
@@ -632,7 +642,8 @@ fn parse_extensions(c: Cert&, der: const u8[:], t: asn1::Tlv) -> bool {
             c.unknown_critical = true;
         }
     }
-    return true;
+    // Each extension at most once.
+    return distinct_contents(der, ids);
 }
 
 // Parses a DER certificate; OK or ERR_MALFORMED. Unsupported algorithms
