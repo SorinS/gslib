@@ -54,8 +54,10 @@ Every module is in namespace `compress`, so names carry their format:
 * **Whole buffers**: `compress::X_decode(data, out, limit)` and
   `compress::X_encode(data, out, ...)` for when everything is in memory;
   `limit` caps the bytes the call appends to `out`, not counting what
-  `out` had before (`ERR_LIMIT`), < 0 for none (`lzw_decode` too, whose
-  default is none).
+  `out` had before (`ERR_LIMIT`), < 0 for none. Left out, it is
+  `compress::DECODE_LIMIT` (256 MiB), so a bomb fed to a call that names
+  no limit stops there; each step's room is cut to the bytes left, so
+  decoding stops at the limit and not a 64 KiB step past it.
 * **Memory** is bounded by the state's size (plus, for xz, a dictionary
   capped by a limit the caller can set); output is bounded by the room the
   caller gives, so a decompression bomb costs only what the caller lets it.

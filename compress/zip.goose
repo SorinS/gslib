@@ -863,14 +863,14 @@ fn zip_file_read_mem(f: ZipFile&, archive: const u8[:], r: const ZipReader&, out
 }
 
 // Appends a file's data to out: 0, or the error (ERR_LIMIT past `limit`
-// bytes appended, < 0 for none).
-fn zip_extract(r: const ZipReader&, archive: const u8[:], e: const ZipEntry&, out: u8[>..]&, limit: i64 = -1) -> i64 {
+// bytes appended: DECODE_LIMIT if not given, < 0 for none).
+fn zip_extract(r: const ZipReader&, archive: const u8[:], e: const ZipEntry&, out: u8[>..]&, limit: i64 = DECODE_LIMIT) -> i64 {
     var f = zip_file_open(r, archive, e);
     if f.err != 0 { return f.err; }
     let base = out.len;
     loop {
         let start = out.len;
-        out.resize(start + 65536, 0);
+        out.resize(start + decode_room(limit, start - base), 0);
         let made, st = zip_file_read_mem(f, archive, r, out[start..]);
         out.resize(start + made);
         if limit >= 0 && out.len - base > limit { return ERR_LIMIT; }

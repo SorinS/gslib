@@ -11,6 +11,9 @@
 //     var r = pgp::Opened { .. };                     // a root struct: a local
 //     let rc2 = pgp::open(received, kr, "", r);       // every layer, decrypted and verified
 //     // r.entity is the MIME entity inside, r.signer the signing key's index
+//     var ro = openpgp::ReadOptions { .. };           // or with the passphrase, max_size, ...
+//     ro.max_size = 4 << 20;                          // decompressed data per OpenPGP message
+//     let rc3 = pgp::open(received, kr, ro, r);
 //
 // Each of sign, encrypt and sign_encrypt takes a mail::Msg, which it
 // writes, or a message already written (RFC 5322, CRLF or LF lines). The
@@ -454,7 +457,8 @@ fn content_type(h: const u8[:]) -> u8[>..], u8[>..], u8[>..] {
 }
 
 // The entity of one layer read: its next entity into next.
-fn open_layer(ent: const u8[:], kr: const openpgp::Keyring&, pass: const u8[:], r: Opened&, next: u8[>..]&) -> bool, i64 {
+fn open_layer(ent: const u8[:], kr: const openpgp::Keyring&, o: openpgp::ReadOptions, r: Opened&,
+              next: u8[>..]&) -> bool, i64 {
     let hend, bstart = split_entity(ent);
     let h = ent[..hend];
     let body = ent[bstart..];
@@ -466,7 +470,7 @@ fn open_layer(ent: const u8[:], kr: const openpgp::Keyring&, pass: const u8[:], 
         let sigpart = body[spans[2]..spans[3]];
         let sh, sb = split_entity(sigpart);
         var m = openpgp::Message { .. };
-        let e = openpgp::verify_detached(kr, signed, sigpart[sb..], m);
+        let e = openpgp::verify_detached(kr, signed, sigpart[sb..], m, o.now);
         r.pgp_error = e;
         if e != openpgp::OK { return false, mail_error(e, true); }
         for s in m.sigs {
@@ -492,8 +496,6 @@ fn open_layer(ent: const u8[:], kr: const openpgp::Keyring&, pass: const u8[:], 
         let cpart = body[spans[2]..spans[3]];
         let ch, cb = split_entity(cpart);
         var m = openpgp::Message { .. };
-        var o = openpgp::ReadOptions { .. };
-        o.passphrase.append(pass[.. ::min(pass.len, 256)]);
         let e = openpgp::read_message(kr, cpart[cb..], m, o);
         r.pgp_error = e;
         if e != openpgp::OK { return false, mail_error(e, false); }
@@ -524,6 +526,16 @@ fn open_layer(ent: const u8[:], kr: const openpgp::Keyring&, pass: const u8[:], 
 // until an entity that is neither. ERR_FORMAT if the message is not
 // PGP/MIME at all.
 fn open(msg: const u8[:], kr: const openpgp::Keyring&, pass: const u8[:], r: Opened&) -> i64 {
+    var o = openpgp::ReadOptions { .. };
+    o.passphrase.append(pass[.. ::min(pass.len, 256)]);
+    return open(msg, kr, o, r);
+}
+
+// open with the options each OpenPGP message is read with: the
+// passphrase, max_size (decompressed data, 32 MiB unless set; past it
+// ERR_FORMAT, with r.pgp_error openpgp::ERR_LIMIT), the time keys must be
+// valid at.
+fn open(msg: const u8[:], kr: const openpgp::Keyring&, o: openpgp::ReadOptions, r: Opened&) -> i64 {
     // r as a fresh Opened has it: nothing of a message opened before.
     r.entity.clear();
     r.message.clear();
@@ -542,7 +554,7 @@ fn open(msg: const u8[:], kr: const openpgp::Keyring&, pass: const u8[:], r: Ope
     var layers = 0;
     loop {
         next.clear();
-        let more, rc = open_layer(cur, kr, pass, r, next);
+        let more, rc = open_layer(cur, kr, o, r, next);
         if rc != mail::OK { return rc; }
         if !more { break; }
         layers++;
@@ -559,7 +571,11 @@ fn open(msg: const u8[:], kr: const openpgp::Keyring&, pass: const u8[:], r: Ope
 
 // open, failing with ERR_SIGNATURE unless the message was signed.
 fn verify(msg: const u8[:], kr: const openpgp::Keyring&, r: Opened&) -> i64 {
-    let rc = open(msg, kr, "", r);
+    return verify(msg, kr, openpgp::ReadOptions { .. }, r);
+}
+
+fn verify(msg: const u8[:], kr: const openpgp::Keyring&, o: openpgp::ReadOptions, r: Opened&) -> i64 {
+    let rc = open(msg, kr, o, r);
     if rc != mail::OK { return rc; }
     return if r.signed { mail::OK } else { mail::ERR_SIGNATURE };
 }
@@ -567,6 +583,12 @@ fn verify(msg: const u8[:], kr: const openpgp::Keyring&, r: Opened&) -> i64 {
 // open, failing with ERR_DECRYPT unless the message was encrypted.
 fn decrypt(msg: const u8[:], kr: const openpgp::Keyring&, pass: const u8[:], r: Opened&) -> i64 {
     let rc = open(msg, kr, pass, r);
+    if rc != mail::OK { return rc; }
+    return if r.encrypted { mail::OK } else { mail::ERR_DECRYPT };
+}
+
+fn decrypt(msg: const u8[:], kr: const openpgp::Keyring&, o: openpgp::ReadOptions, r: Opened&) -> i64 {
+    let rc = open(msg, kr, o, r);
     if rc != mail::OK { return rc; }
     return if r.encrypted { mail::OK } else { mail::ERR_DECRYPT };
 }

@@ -2,9 +2,9 @@
 // scripts/interop.py drives it against gpg.
 //
 //   goose-pgp sign [-k KEYS]... [-u WHO] [--detach | --clear] [--text] [--binary] [-z ALGO] [--hash H] IN OUT
-//   goose-pgp verify [-k KEYS]... IN [SIG]          IN is a message, a cleartext message, or data SIG signs
+//   goose-pgp verify [-k KEYS]... [--max-size N] IN [SIG]   IN is a message, a cleartext message, or data SIG signs
 //   goose-pgp encrypt [-k KEYS]... [-r WHO]... [--symmetric] [--sign [-u WHO]] [--binary] [-z ALGO] [--cipher C] IN OUT
-//   goose-pgp decrypt [-k KEYS]... [--allow-unprotected] IN OUT
+//   goose-pgp decrypt [-k KEYS]... [--allow-unprotected] [--max-size N] IN OUT
 //   goose-pgp list-packets IN
 //   goose-pgp list-keys KEYS...
 //   goose-pgp export [--secret] [-k KEYS]... WHO OUT
@@ -26,7 +26,9 @@
 // (or, with --symmetric, makes) a passphrase-encrypted message; it is read
 // from a file so that it never shows in a process list. OUT "-" is
 // standard output. Exit status 0 on success, 1 with a message on standard
-// error otherwise; verify prints one line per signature.
+// error otherwise; verify prints one line per signature. --max-size N
+// lets a message decompress to N bytes (ReadOptions.max_size; 32 MiB
+// unless given, -1 for no limit).
 import std;
 import os;
 import gslib from "../../..";
@@ -92,6 +94,7 @@ root struct Opts {
     do_sign:           bool                  = false,
     secret:            bool                  = false,
     allow_unprotected: bool                  = false,
+    max_size:          i64                   = openpgp::MAX_SIZE,
     key_type:          u8[>..]               = [],
     w:                 openpgp::WriteOptions = openpgp::WriteOptions { .. },
     rest:              i64[>..]              = [], // the indices of the arguments that are not options
@@ -151,6 +154,10 @@ fn parse_opts(a, o: Opts&) {
             } else if f == "--name" {
                 o.w.filename.clear();
                 o.w.filename.append(v[.. ::min(v.len, 255)]);
+            } else if f == "--max-size" {
+                let n, ok = parse_int(v);
+                if !ok { usage(); }
+                o.max_size = n;
             } else if f == "--time" {
                 let t, ok = parse_int(v);
                 if !ok { usage(); }
@@ -243,6 +250,7 @@ fn main() {
             } else {
                 var ro = openpgp::ReadOptions { .. };
                 ro.passphrase.append(o.pass[.. ::min(o.pass.len, 256)]);
+                ro.max_size = o.max_size;
                 e = openpgp::verify(kr, input, m, ro);
             }
         }
@@ -267,6 +275,7 @@ fn main() {
         var ro = openpgp::ReadOptions { .. };
         ro.passphrase.append(o.pass[.. ::min(o.pass.len, 256)]);
         ro.allow_unprotected = o.allow_unprotected;
+        ro.max_size = o.max_size;
         let e = openpgp::read_message(kr, slurp(a[o.rest[0]]), m, ro);
         if e != openpgp::OK { fail("decrypt", e); }
         if m.sigs.len > 0 {

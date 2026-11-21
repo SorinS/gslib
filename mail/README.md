@@ -228,6 +228,8 @@ var rc = pgp::sign(m, kr, signer, o, out);  // signer, recipients: openpgp::find
 rc = pgp::sign_encrypt(m, kr, signer, [bob], o, out);
 var r = pgp::Opened { .. };
 rc = pgp::open(received, kr, "", r);        // r.entity, r.signed, r.encrypted, r.signer
+var ro = openpgp::ReadOptions { .. };       // or: the passphrase, max_size, the time
+rc = pgp::open(received, kr, ro, r);        // verify and decrypt take ReadOptions too
 ```
 
 As with S/MIME, the fields that are not Content-* stay outside, and the
@@ -238,7 +240,10 @@ Whether the signing key belongs to From is the caller's to decide. The
 OpenPGP underneath is crypto/openpgp (its README has the formats).
 `open`, `verify` and `decrypt` start by emptying the `Opened` they are
 given, so one can be used again; a multipart delimiter is a whole line
-(the boundary, `--` for the last, then only white space).
+(the boundary, `--` for the last, then only white space). Each OpenPGP
+message is decompressed up to `ReadOptions.max_size` (openpgp's
+default, 32 MiB, when given a passphrase rather than options); past it
+the result is `ERR_FORMAT` with `r.pgp_error` `openpgp::ERR_LIMIT`.
 
 Post-quantum recipients need nothing new: a recipient whose encryption
 key is gpg 2.5's Kyber subkey (LibrePGP's ML-KEM-768+X25519,

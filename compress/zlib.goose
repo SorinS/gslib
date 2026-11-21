@@ -125,14 +125,15 @@ fn zlib_finish(r: const ZlibReader&) -> i64 {
 fn zlib_done(r: const ZlibReader&) -> bool { r.state == ZL_END }
 
 // Decodes a whole zlib stream and appends it to out: 0 or an error
-// (ERR_LIMIT past `limit` bytes appended, < 0 for none). Bytes after the
-// stream are ignored, as Go's reader ignores them.
-fn zlib_decode(data: const u8[:], out: u8[>..]&, limit: i64 = -1) -> i64 {
+// (ERR_LIMIT past `limit` bytes appended: DECODE_LIMIT if not given, < 0
+// for none). Bytes after the stream are ignored, as Go's reader ignores
+// them.
+fn zlib_decode(data: const u8[:], out: u8[>..]&, limit: i64 = DECODE_LIMIT) -> i64 {
     var r = zlib_reader();
     return zlib_decode_with(r, data, out, limit);
 }
 
-fn zlib_decode_dict(data: const u8[:], dict: const u8[:], out: u8[>..]&, limit: i64 = -1) -> i64 {
+fn zlib_decode_dict(data: const u8[:], dict: const u8[:], out: u8[>..]&, limit: i64 = DECODE_LIMIT) -> i64 {
     var r = zlib_reader_dict(dict);
     return zlib_decode_with(r, data, out, limit);
 }
@@ -142,7 +143,7 @@ fn zlib_decode_with(r: ZlibReader&, data: const u8[:], out: u8[>..]&, limit: i64
     let base = out.len;
     loop {
         let start = out.len;
-        out.resize(start + 65536, 0);
+        out.resize(start + decode_room(limit, start - base), 0);
         let used, made, st = zlib_read(r, data[p..], out[start..]);
         out.resize(start + made);
         p += used;

@@ -43,6 +43,19 @@ let ERR_INSECURE_PATH: i64 = -10;   // an archive entry's name is not a local pa
 let ERR_FORMAT: i64 = -11;      // an archive's structure is not valid
 let ERR_TOO_LARGE: i64 = -12;   // a value too large for the format (a writer's input)
 
+// The output limit of the whole-buffer decoders (inflate_decode,
+// gzip_decode, zlib_decode, bzip2_decode, lzw_decode, zip_extract) when
+// the caller gives none: 256 MiB, as xz's default memory limit. A limit
+// < 0 is none.
+let DECODE_LIMIT: i64 = 1 << 28;
+
+// The room a whole-buffer decoder gives its next step, `made` bytes in:
+// 64 KiB, but no more than one byte past the limit, so that a bomb is
+// stopped there and not decoded a step further.
+fn decode_room(limit: i64, made: i64) -> i64 {
+    return if limit >= 0 && limit - made < 65536 { limit - made + 1 } else { 65536 };
+}
+
 // A short description of a result code.
 fn error_text(code: i64) -> const u8[:] {
     match code {

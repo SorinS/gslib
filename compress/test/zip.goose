@@ -548,6 +548,24 @@ fn bad_local_header() {
     if compress::zip_extract(r2, whole, r2.entries[0], pre, 10) != 0 || pre[..] != "0123456789some bytes" { fail("zip_extract limit"); }
 }
 
+// A file of 1 MiB of zeros against a limit of 1000 bytes: zip_extract
+// stops one byte past the limit, not a 64 KiB step past it.
+fn bomb_limit() {
+    var a: u8[>..] = [];
+    var w = compress::zip_writer();
+    if compress::zip_create(w, "zeros", a) != 0 { fail("bomb: create"); }
+    var zeros: u8[>..] = [];
+    zeros.resize(1 << 20, 0);
+    compress::zip_write(w, zeros, a);
+    compress::zip_close(w, a);
+    let r = compress::zip_open(a);
+    if r.err != 0 || r.entries.len != 1 { fail("bomb: open"); return; }
+    var out: u8[>..] = [];
+    out.append("0123456789");
+    let st = compress::zip_extract(r, a, r.entries[0], out, 1000);
+    if st != compress::ERR_LIMIT || out.len != 10 + 1001 || out[..10] != "0123456789" { fail("bomb: zip_extract limit"); }
+}
+
 // A reader that failed to open, or a buffer other than its own: the
 // comment and the names are "", not a fault.
 fn failed_reader() {
@@ -584,6 +602,7 @@ fn main() {
     zip64_sizes();
     tail_and_stream();
     bad_local_header();
+    bomb_limit();
     if failures > 0 { print(failures, " failures"); exit(1); }
     print("zip: all passed");
 }

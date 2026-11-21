@@ -136,6 +136,26 @@ fn go_testdata() {
     if compress::bzip2_decode(read_vector("e.txt.bz2"), lim, 100002) != compress::ERR_LIMIT { print("FAIL limit"); failures++; }
 }
 
+// A bomb, 1000 MiB of zeros in 753 bytes: a limit stops it with what out
+// had kept and no byte past the limit, and a call that names none stops at
+// DECODE_LIMIT.
+fn bomb() {
+    let bz = read_vector("zeros-1000m.bz2");
+    var out: u8[>..] = [];
+    out.append("0123456789");
+    let e = compress::bzip2_decode(bz, out, 1 << 20);
+    if e != compress::ERR_LIMIT || out.len != 10 + (1 << 20) || out[..10] != "0123456789" {
+        print("FAIL bomb with a limit: err ", e, " size ", out.len);
+        failures++;
+    }
+    var all: u8[>..] = [];
+    let e2 = compress::bzip2_decode(bz, all);
+    if e2 != compress::ERR_LIMIT || all.len != compress::DECODE_LIMIT {
+        print("FAIL bomb with the default limit: err ", e2, " size ", all.len);
+        failures++;
+    }
+}
+
 fn malformed() {
     let hello = unhex(HELLO);
     // TestZeroRead: no room, no input: nothing, no error.
@@ -261,6 +281,7 @@ fn main() {
     go_reader_vectors();
     go_testdata();
     malformed();
+    bomb();
     if failures > 0 { print(failures, " failures"); exit(1); }
     print("bzip2: all passed");
 }

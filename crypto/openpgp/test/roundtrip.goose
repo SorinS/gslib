@@ -4,9 +4,13 @@
 // without, armored and binary, signed and not. Then tampering: a changed
 // literal fails its signature, a changed ciphertext its MDC, a changed
 // key its self-signature; the wrong key, a locked key and unprotected
-// data are refused. And a key made by keygen, exported and read back.
+// data are refused. And a key made by keygen, exported and read back,
+// and decompression bombs refused.
 import std;
+import os;
 import gslib from "../../..";
+import gslib.compress;
+import gslib.compress.deflate;
 import gslib.crypto.openpgp;
 import gslib.crypto.openpgp.armor;
 import gslib.crypto.openpgp.packet;
@@ -412,6 +416,58 @@ fn review() {
     tv::check("cleartext CR text", ecs == openpgp::OK && mc.data[..] == "a\rb\nc\n\n");
 }
 
+// A Compressed Data packet of the given algorithm around inner.
+fn compressed(algo: i64, inner: const u8[:]) -> u8[>..] {
+    var body: u8[>..] = [];
+    body.push(algo as! u8);
+    if algo == openpgp::COMP_NONE { body.append(inner); } else { compress::deflate_encode(inner, body); }
+    var out: u8[>..] = [];
+    openpgp::put_packet(out, openpgp::TAG_COMPRESSED, body);
+    return out;
+}
+
+// Decompression bombs (scripts/gen_bombs.py): 1000 MiB of zeros in two
+// ZIP layers and in one BZip2 layer stop at ReadOptions.max_size's
+// default with ERR_LIMIT and nothing read. The limit is one for all the
+// layers together; a literal not compressed is not held to it.
+fn bombs() {
+    var kr = openpgp::Keyring { .. };
+    let t0 = clock_ns();
+    var m = openpgp::Message { .. };
+    tv::check_int("zip bomb", openpgp::read_message(kr, vec("bomb_zip.gpg"), m, openpgp::ReadOptions { .. }), openpgp::ERR_LIMIT);
+    tv::check_int("zip bomb data", m.data.len, 0);
+    var mb = openpgp::Message { .. };
+    tv::check_int("bzip2 bomb", openpgp::read_message(kr, vec("bomb_bzip2.gpg"), mb, openpgp::ReadOptions { .. }), openpgp::ERR_LIMIT);
+    // 32 MiB of each, not 1000: well under a second built, a few with --debug.
+    tv::check("bombs stop early", clock_ns() - t0 < 30 * 1000000000);
+
+    // A literal of 400 KiB inside two Compressed Data packets that only
+    // store (algorithm 0) inside one that deflates: each layer is under
+    // 1 MiB, the three together over it.
+    var zeros: u8[>..] = [];
+    zeros.resize(400 << 10, 0);
+    var lit: u8[>..] = [];
+    lit.push('b');                   // binary, no name, date 0
+    for i in 5 { lit.push(0); }
+    lit.append(zeros);
+    var msg: u8[>..] = [];
+    openpgp::put_packet(msg, openpgp::TAG_LITERAL, lit);
+    let nested = compressed(openpgp::COMP_ZIP, compressed(openpgp::COMP_NONE, compressed(openpgp::COMP_NONE, msg)));
+    var o = openpgp::ReadOptions { .. };
+    o.max_size = 1 << 20;
+    var m1 = openpgp::Message { .. };
+    tv::check_int("one budget for the layers", openpgp::read_message(kr, nested, m1, o), openpgp::ERR_LIMIT);
+    o.max_size = 2 << 20;
+    var m2 = openpgp::Message { .. };
+    tv::check_int("layers within the budget", openpgp::read_message(kr, nested, m2, o), openpgp::OK);
+    tv::check("layers within the budget data", m2.data[..] == zeros[..]);
+    // The literal alone, over the limit but not compressed.
+    o.max_size = 100 << 10;
+    var m3 = openpgp::Message { .. };
+    tv::check_int("literal over max_size", openpgp::read_message(kr, msg, m3, o), openpgp::OK);
+    tv::check_int("literal over max_size data", m3.data.len, zeros.len);
+}
+
 fn main() {
     var kr = openpgp::Keyring { .. };
     let e1 = openpgp::add_keys(kr, vec("ed.sec"));
@@ -424,5 +480,6 @@ fn main() {
     encryption(kr, ed, rsa);
     generated();
     review();
+    bombs();
     tv::done("roundtrip");
 }

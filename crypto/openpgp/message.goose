@@ -55,6 +55,7 @@ let INTEGRITY_AEAD: i64 = 2;
 
 let MAX_DEPTH:   i64 = 8;            // layers of encryption and compression
 let MAX_PACKETS: i64 = 4096;         // packets in one layer
+let MAX_SIZE:    i64 = 32 << 20;     // ReadOptions.max_size's default: 32 MiB decompressed
 
 // One signature of a message and how it checked out.
 struct SigResult {
@@ -85,10 +86,10 @@ root struct Message {
 
 struct ReadOptions {
     passphrase:        u8[..256] = [],
-    allow_unprotected: bool      = false,   // decrypt packet 9 (no MDC), as gpg does only when told to
-    max_size:          i64       = 1 << 30, // of decompressed data
-    now:               i64       = 0,       // the time keys must be valid at; 0 is each signature's time
-                                            // (a signature's own expiry: at now, 0 the clock)
+    allow_unprotected: bool      = false,    // decrypt packet 9 (no MDC), as gpg does only when told to
+    max_size:          i64       = MAX_SIZE, // decompressed data, all layers together (< 0: none)
+    now:               i64       = 0,        // the time keys must be valid at; 0 is each signature's time
+                                             // (a signature's own expiry: at now, 0 the clock)
 }
 
 struct WriteOptions {
@@ -417,7 +418,7 @@ fn open_seipd2(s: const Session&, body: const u8[:], out: u8[>..]&) -> i64 {
 
 fn decompress(algo: i64, data: const u8[:], out: u8[>..]&, limit: i64) -> i64 {
     var rc: i64 = 0;
-    if algo == COMP_NONE { if data.len > limit { return ERR_LIMIT; } out.append(data); return OK; }
+    if algo == COMP_NONE { if limit >= 0 && data.len > limit { return ERR_LIMIT; } out.append(data); return OK; }
     if algo == COMP_ZIP { rc = compress::inflate_decode(data, out, limit); }
     else if algo == COMP_ZLIB { rc = compress::zlib_decode(data, out, limit); }
     else if algo == COMP_BZIP2 { rc = compress::bzip2_decode(data, out, limit); }
@@ -497,9 +498,10 @@ fn open_encrypted(kr: const Keyring&, cur: const u8[:], esks: const i64[:], t: i
 
 // One layer of packets: what it holds goes into m, and the next layer (the
 // plaintext of encrypted data, or decompressed data) into next. Whether
-// there is a next layer.
+// there is a next layer. budget: the decompressed bytes still allowed,
+// less what this layer decompresses.
 fn read_layer(kr: const Keyring&, cur: const u8[:], m: Message&, opt: ReadOptions, next: u8[>..]&,
-              outer: bool) -> bool, i64 {
+              outer: bool, budget: i64&) -> bool, i64 {
     var esks: i64[>..] = [];         // the session key packets: tag, start, end
     var saw_literal = false;
     var at = 0;
@@ -524,8 +526,9 @@ fn read_layer(kr: const Keyring&, cur: const u8[:], m: Message&, opt: ReadOption
             m.encrypted = true;
             if t == TAG_SED && !opt.allow_unprotected { return false, ERR_UNPROTECTED; }
             if esks.len == 0 { return false, ERR_MALFORMED; }
-            var body: u8[>..] = [];
-            packet_body(cur, p, body);
+            var joined: u8[>..] = [];
+            if p.partial { packet_body(cur, p, joined); }
+            let body = if p.partial { joined[..] } else { cur[p.body..p.body_end] };
             if body.len < 1 { return false, ERR_MALFORMED; }
             let e = open_encrypted(kr, cur, esks, t, body, m, opt, next);
             if e != OK { next.clear(); return false, e; }
@@ -539,13 +542,17 @@ fn read_layer(kr: const Keyring&, cur: const u8[:], m: Message&, opt: ReadOption
         }
         if t == TAG_COMPRESSED {
             if saw_literal { return false, ERR_MALFORMED; }
-            var body: u8[>..] = [];
-            packet_body(cur, p, body);
+            // Only partial chunks need joining; a whole body is read in place.
+            var joined: u8[>..] = [];
+            if p.partial { packet_body(cur, p, joined); }
+            let body = if p.partial { joined[..] } else { cur[p.body..p.body_end] };
             if body.len < 1 { return false, ERR_MALFORMED; }
             m.compression = body[0];
             next.clear();
-            let e = decompress(body[0], body[1..], next, opt.max_size);
-            if e != OK { return false, e; }
+            // What every layer decompresses comes out of one budget.
+            let e = decompress(body[0], body[1..], next, budget);
+            if e != OK { next.clear(); return false, e; }
+            if budget >= 0 { budget -= next.len; }
             return true, OK;
         }
         if t == TAG_ONE_PASS { continue; }
@@ -556,8 +563,9 @@ fn read_layer(kr: const Keyring&, cur: const u8[:], m: Message&, opt: ReadOption
         if t == TAG_LITERAL {
             if saw_literal { return false, ERR_MALFORMED; }
             saw_literal = true;
-            var body: u8[>..] = [];
-            packet_body(cur, p, body);
+            var joined: u8[>..] = [];
+            if p.partial { packet_body(cur, p, joined); }
+            let body = if p.partial { joined[..] } else { cur[p.body..p.body_end] };
             if body.len < 6 { return false, ERR_MALFORMED; }
             m.format = body[0];
             let nl: i64 = body[1];
@@ -565,7 +573,8 @@ fn read_layer(kr: const Keyring&, cur: const u8[:], m: Message&, opt: ReadOption
             m.filename.clear();
             m.filename.append(body[2..2 + nl]);
             m.mtime = be32(body, 2 + nl);
-            if body.len - 6 - nl > opt.max_size { return false, ERR_LIMIT; }
+            // No limit of its own: the literal is no larger than the input
+            // or than what was decompressed, which the budget limited.
             m.data.append(body[6 + nl..]);
             continue;
         }
@@ -583,20 +592,28 @@ fn read_layer(kr: const Keyring&, cur: const u8[:], m: Message&, opt: ReadOption
 // error is for the message itself: malformed, not decryptable, changed.
 fn read_message(kr: const Keyring&, input: const u8[:], m: Message&, opt: ReadOptions) -> i64 {
     reset(m);
-    var cur: u8[>..] = [];
-    let e0 = decode_input(input, cur);
+    var a: u8[>..] = [];
+    let e0 = decode_input(input, a);
     if e0 != OK { return e0; }
-    var next: u8[>..] = [];
+    // The layers take turns in a and b, each read from one into the
+    // other, so none is copied.
+    var b: u8[>..] = [];
+    var budget = opt.max_size;
     for depth in MAX_DEPTH {
-        let more, err = read_layer(kr, cur, m, opt, next, depth == 0);
+        var more = false;
+        var err = OK;
+        if depth % 2 == 0 {
+            b.clear();
+            more, err = read_layer(kr, a, m, opt, b, depth == 0, budget);
+        } else {
+            a.clear();
+            more, err = read_layer(kr, b, m, opt, a, false, budget);
+        }
         if err != OK { return err; }
         if !more {
             check_signatures(kr, m, opt.now, true);
             return OK;
         }
-        cur.clear();
-        cur.append(next);
-        next.clear();
     }
     return ERR_LIMIT;
 }

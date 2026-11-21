@@ -259,6 +259,32 @@ fn appended_limits() {
     }
 }
 
+// A bomb, 1 MiB of zeros, against a limit of 1000 bytes: each decoder
+// (and zip_extract, in test/zip.goose) stops one byte past the limit, not
+// a 64 KiB step past it.
+fn bomb_limits() {
+    var zeros: u8[>..] = [];
+    zeros.resize(1 << 20, 0);
+    var raw: u8[>..] = [];
+    var z: u8[>..] = [];
+    var g: u8[>..] = [];
+    compress::deflate_encode(zeros, raw);
+    compress::zlib_encode(zeros, z);
+    compress::gzip_encode(zeros, g);
+    for which in 3 {
+        let enc = if which == 0 { raw[..] } else if which == 1 { z[..] } else { g[..] };
+        var out: u8[>..] = [];
+        out.append("0123456789");
+        let st = if which == 0 { compress::inflate_decode(enc, out, 1000) }
+                 else if which == 1 { compress::zlib_decode(enc, out, 1000) }
+                 else { compress::gzip_decode(enc, out, 1000) };
+        if st != compress::ERR_LIMIT || out.len != 10 + 1001 || out[..10] != "0123456789" {
+            print("FAIL bomb limit, decoder ", which, ": ", st, ", ", out.len, " bytes");
+            failures++;
+        }
+    }
+}
+
 // Windows smaller than 32 KiB (deflate_set_window_bits): a block of 300
 // random bytes repeated finds no match 300 bytes back in a 256-byte
 // window, and does in a 512-byte one; every size reads back.
@@ -311,6 +337,7 @@ fn main() {
     headers();
     errors();
     appended_limits();
+    bomb_limits();
     windows();
     continued();
     if failures > 0 { print(failures, " failures"); exit(1); }

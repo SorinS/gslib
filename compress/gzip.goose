@@ -264,9 +264,9 @@ fn gzip_latin1_to_utf8(s: const u8[:], out: u8[>..]&) {
 }
 
 // Decodes a whole gzip file (every member) and appends it to out: 0, or
-// an error; ERR_LIMIT if what it appends would pass `limit` bytes (< 0:
-// no limit).
-fn gzip_decode(data: const u8[:], out: u8[>..]&, limit: i64 = -1) -> i64 {
+// an error; ERR_LIMIT if what it appends would pass `limit` bytes
+// (DECODE_LIMIT if not given, < 0: no limit).
+fn gzip_decode(data: const u8[:], out: u8[>..]&, limit: i64 = DECODE_LIMIT) -> i64 {
     var r = gzip_reader();
     return gzip_decode_with(r, data, out, limit);
 }
@@ -276,7 +276,7 @@ fn gzip_decode_with(r: GzipReader&, data: const u8[:], out: u8[>..]&, limit: i64
     let base = out.len;
     loop {
         let start = out.len;
-        out.resize(start + 65536, 0);
+        out.resize(start + decode_room(limit, start - base), 0);
         let used, made, st = gzip_read(r, data[p..], out[start..]);
         out.resize(start + made);
         p += used;

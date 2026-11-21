@@ -566,14 +566,15 @@ fn bz_output(d: Bzip2Reader&, out: u8[:]) -> i64 {
 
 // Decodes a whole bzip2 input (one or more streams) and appends it to out:
 // 0, or an error (ERR_TRUNCATED for input that ends inside a stream,
-// ERR_LIMIT when the output would pass `limit` bytes; limit < 0: none).
-fn bzip2_decode(data: const u8[:], out: u8[>..]&, limit: i64 = -1) -> i64 {
+// ERR_LIMIT when the output would pass `limit` bytes: DECODE_LIMIT if not
+// given, < 0 for none).
+fn bzip2_decode(data: const u8[:], out: u8[>..]&, limit: i64 = DECODE_LIMIT) -> i64 {
     var d = bzip2_reader();
     var buf: u8[65536] = [0; 65536];
     var at: i64 = 0;
     var total: i64 = 0;
     loop {
-        let used, made, st = bzip2_read(d, data[at..], buf);
+        let used, made, st = bzip2_read(d, data[at..], buf[..decode_room(limit, total)]);
         at += used;
         total += made;
         if limit >= 0 && total > limit { return ERR_LIMIT; }

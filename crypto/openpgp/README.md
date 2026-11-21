@@ -203,9 +203,13 @@ then decrypts:
 
 A wrong passphrase is told from changed data by the two repeated octets
 of the prefix, as gpg does; with a public-key session key, whose own
-checksum held, a mismatch there is changed data. Decompressed data and
-literals are limited to `ReadOptions.max_size` (1 GiB); eight layers of
-encryption and compression at most.
+checksum held, a mismatch there is changed data. What is decompressed,
+all compression layers together, is limited to `ReadOptions.max_size`
+(32 MiB unless set; < 0 for none), checked as it comes out, so a bomb
+stops there with `ERR_LIMIT` before anything else is checked; a literal
+that is not compressed is no larger than the input and is not held to
+it. Each layer is read from one buffer into another in turn, not copied.
+Eight layers of encryption and compression at most.
 
 RSA decryption uses bignum's PKCS #1 v1.5 decoding, which is constant
 time, but a failure is still reported: a server that decrypts messages

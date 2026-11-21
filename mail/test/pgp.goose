@@ -16,10 +16,17 @@
 //     2.5's kind (Ed25519 with a v5 ML-KEM-768+X25519 Kyber subkey) and an
 //     RFC 9980 one (ML-DSA-65+Ed25519 with ML-KEM-768+X25519), made here,
 //     encrypted to (alone and with Bob), signed by Alice or by the RFC
-//     9980 key itself, opened by each recipient.
+//     9980 key itself, opened by each recipient;
+//   - a decompression bomb in multipart/encrypted stopped at openpgp's
+//     default max_size, and the ReadOptions forms of open, verify and
+//     decrypt with a max_size of their own.
 import std;
 import gslib from "../..";
+import gslib.compress;
+import gslib.compress.deflate;
 import gslib.crypto.openpgp;
+import gslib.crypto.openpgp.armor;
+import gslib.crypto.openpgp.packet;
 import gslib.crypto.openpgp.key;
 import gslib.crypto.openpgp.keyring;
 import gslib.crypto.openpgp.message;
@@ -275,6 +282,60 @@ fn review(kr: const openpgp::Keyring&, alice: i64, bob: i64) {
     check("close delimiter whole", !pgp::parts_of("--b\r\none\r\n--b--x\r\n", "b", sp2));
 }
 
+// Decompressed data is limited per OpenPGP message: 32 MiB unless the
+// ReadOptions say otherwise.
+fn limits(kr: const openpgp::Keyring&, alice: i64, bob: i64) {
+    // 40 MiB of zeros in a literal, deflated (183 KB), as part 2 of a
+    // multipart/encrypted: not encrypted, but read before that is known.
+    var lit: u8[>..] = [];
+    lit.push('b');
+    for i in 5 { lit.push(0); }
+    lit.resize(lit.len + (40 << 20), 0);
+    var inner: u8[>..] = [];
+    openpgp::put_packet(inner, openpgp::TAG_LITERAL, lit);
+    var body: u8[>..] = [];
+    body.push(openpgp::COMP_ZIP as! u8);
+    compress::deflate_encode(inner, body, 1);
+    var pkt: u8[>..] = [];
+    openpgp::put_packet(pkt, openpgp::TAG_COMPRESSED, body);
+    var msg: u8[>..] = [];
+    msg.append("Content-Type: multipart/encrypted; protocol=\"application/pgp-encrypted\"; boundary=\"b\"\r\n\r\n");
+    msg.append("--b\r\nContent-Type: application/pgp-encrypted\r\n\r\nVersion: 1\r\n\r\n");
+    msg.append("--b\r\nContent-Type: application/octet-stream\r\n\r\n");
+    openpgp::armor(msg, openpgp::ARMOR_MESSAGE, pkt, "");
+    msg.append("\r\n--b--\r\n");
+    var r = pgp::Opened { .. };
+    check_rc("bomb", pgp::open(msg, kr, "", r), mail::ERR_FORMAT);
+    check("bomb: the limit", r.pgp_error == openpgp::ERR_LIMIT && r.entity.len == 0);
+    // Let through with a larger max_size, it is refused as not encrypted.
+    var big = openpgp::ReadOptions { .. };
+    big.max_size = 64 << 20;
+    var r1 = pgp::Opened { .. };
+    check_rc("bomb, 64 MiB allowed", pgp::open(msg, kr, big, r1), mail::ERR_FORMAT);
+    check("bomb, 64 MiB allowed: read", r1.pgp_error == openpgp::OK);
+
+    // A message signed, encrypted and compressed: read with a max_size
+    // too small for it, then with the passphrase-free options.
+    var m = mail::Msg { .. };
+    message(m);
+    var o = opts();
+    o.compression = openpgp::COMP_ZIP;
+    var out: u8[>..] = [];
+    check_rc("compressed: sign_encrypt", pgp::sign_encrypt(m, kr, alice, [bob], o, out), mail::OK);
+    var small = openpgp::ReadOptions { .. };
+    small.max_size = 100;
+    var r2 = pgp::Opened { .. };
+    check_rc("compressed: max_size 100", pgp::open(out, kr, small, r2), mail::ERR_FORMAT);
+    check("compressed: max_size 100: the limit", r2.pgp_error == openpgp::ERR_LIMIT);
+    var r3 = pgp::Opened { .. };
+    check_rc("compressed: decrypt", pgp::decrypt(out, kr, openpgp::ReadOptions { .. }, r3), mail::OK);
+    check("compressed: decrypt entity", r3.encrypted && r3.signed && contains(r3.entity, "Hello Bob,"));
+    var r4 = pgp::Opened { .. };
+    check_rc("compressed: verify", pgp::verify(out, kr, openpgp::ReadOptions { .. }, r4), mail::OK);
+    var r5 = pgp::Opened { .. };
+    check_rc("compressed: verify, max_size 100", pgp::verify(out, kr, small, r5), mail::ERR_FORMAT);
+}
+
 fn main() {
     var kr = openpgp::Keyring { .. };
     check_rc("keys", openpgp::add_keys(kr, KEYS_SEC), openpgp::OK);
@@ -286,6 +347,7 @@ fn main() {
     from_gpg(kr, alice);
     pqc(kr, alice, bob);
     review(kr, alice, bob);
+    limits(kr, alice, bob);
     print("pgp: ", checks - failures, "/", checks, " checks passed");
     if failures > 0 { exit(1); }
 }
