@@ -93,6 +93,10 @@ fn dpop() {
     c.now = 1562262616;
     let pb, eb = oauth::verify_dpop_proof(c, bad, "POST", "https://server.example.com/token");
     check("a tampered proof", eb == oauth::ERR_SIGNATURE);
+    // A proof in the JSON serialization, refused before it is parsed.
+    let pj, ej = oauth::verify_dpop_proof(c, "{\"payload\":\"\",\"signatures\":[]}", "POST",
+                                          "https://server.example.com/token");
+    check("a JSON proof", ej == oauth::ERR_DPOP);
 
     // Our own: made, then checked as a server would.
     let key = jwk::generate_ec(jwa::CRV_P256);
@@ -656,6 +660,15 @@ fn id_tokens() {
     let events = "\"events\":{\"http://schemas.openid.net/event/backchannel-logout\":{}}";
     check("a token with logout events is not an ID token", fn_err(c, hc, sign(payload(aud, events), rsa, jwa::RS256, "rsa-1"), "") == oauth::ERR_TYP);
     check("not a JWS", fn_err(c, hc, "not.a-token", nonce) == oauth::ERR_MALFORMED);
+    // The JSON serialization, refused before it is parsed: a good
+    // signature, and a token of many signatures (jws::parse alone would
+    // refuse those only past its limit).
+    var js: jws::Signer[1] = [jws::Signer { key: rsa, .. }];
+    js[0].header.alg = jwa::RS256;
+    js[0].header.kid.append("rsa-1");
+    let flat, eflat = jws::sign_json(payload(aud, ""), js, true);
+    check("a JSON ID token refused", eflat == jwx::OK && fn_err(c, hc, flat, nonce) == oauth::ERR_MALFORMED);
+    check("a JSON ID token refused, with spaces", fn_err(c, hc, str("  ", flat), nonce) == oauth::ERR_MALFORMED);
 
     // at_hash and c_hash, for the OIDC examples' values.
     let ath = oauth::token_hash(jwa::RS256, "jHkWEdUXMU1BwAsC4vtUsZwnNvTIxEl0z9K3vx5KF0Y");

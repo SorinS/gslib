@@ -166,12 +166,13 @@ ML-DSA they are.
   without braces). `sign_json(payload, signers, flattened = false)`: one
   signature per `jws::Signer` (key, protected header, the protected header's own
   members in `extra`, as ACME's nonce and url, unprotected members).
-- `verify(message, alg, key)`: the payload of a compact or JSON message
-  that alg with key verifies (any one signature of several will do).
-  `verify_detached(message, payload, alg, key)`. `verify_set(message,
-  keys, infer = false)`: by `kid`, with each key's `alg`, or the header's
+- `verify(message, alg, key, max_signatures = 8)`: the payload of a
+  compact or JSON message that alg with key verifies (any one signature
+  of several will do). `verify_detached(message, payload, alg, key,
+  max_signatures = 8)`. `verify_set(message, keys, infer = false,
+  max_signatures = 8)`: by `kid`, with each key's `alg`, or the header's
   when `infer` and the key fits it (jwx's `WithInferAlgorithmFromKey`).
-- `parse(m&, message)` into a `jws::Message` (payload, signatures with
+- `parse(m&, message, max_signatures = 8)` into a `jws::Message` (payload, signatures with
   their headers), `verify_signature(m, i, alg, key)`,
   `header_string(m, i, name)`, `header_int(m, i, name)`.
 - `sign_bytes(input, alg, key)`, `verify_bytes(input, sig, alg, key)`:
@@ -268,7 +269,10 @@ and `decrypt_set` tries at most `keys.len + max_recipients` keys in all,
 so a message costs at most about one PBES2 run at `max_p2c` and a
 bounded number of RSA or ECDH operations (`ERR_LIMIT` past those);
 a set of several passwords tried against one PBES2 recipient thus needs
-`max_p2c` raised to their sum. Encrypting uses OWASP 2023's counts for PBKDF2, as v4
+`max_p2c` raised to their sum. Of this package's own, a JSON JWS may have at most 8 signatures
+(`max_signatures`, `ERR_LIMIT` past it), each of which verifying may try
+over the whole payload; a signature of the wrong length for its algorithm
+is refused before anything is hashed. Encrypting uses OWASP 2023's counts for PBKDF2, as v4
 does, unless told otherwise: 600000 for PBES2-HS256+A128KW, 210000 for
 PBES2-HS384+A192KW and PBES2-HS512+A256KW (`jwe::default_p2c(alg)`). At
 those counts a password costs a fraction of a second to a few seconds per
@@ -297,7 +301,7 @@ at -O0, -O2 and `--debug`:
 |---|---|
 | base64url | RFC 4648's vectors, every length, strict refusals; every jwa name |
 | jwk | RFC 7517's keys, RFC 7638 §3.1's and RFC 8037 A.3's thumbprints, inconsistent keys refused, generated keys round-tripped, sets |
-| jws | RFC 7520 §4 (the JOSE cookbook, test/vectors/cookbook) in every serialization, signatures remade byte for byte where deterministic (HMAC, PKCS #1 v1.5, Ed25519), RFC 7797, RFC 8037; every algorithm round-tripped; alg confusion, `none`, `crit` |
+| jws | RFC 7520 §4 (the JOSE cookbook, test/vectors/cookbook) in every serialization, signatures remade byte for byte where deterministic (HMAC, PKCS #1 v1.5, Ed25519), RFC 7797, RFC 8037; every algorithm round-tripped; alg confusion, `none`, `crit`; the signature limit, and signatures of the wrong length |
 | jwe | RFC 7520 §5 in every serialization, decrypted, and remade byte for byte: 10 ciphertexts, and 8 encrypted keys (A*KW, A*GCMKW, PBES2, ECDH-ES from the example's ephemeral key); every key management algorithm with every content algorithm; three recipients; PBES2 and inflate limits; invalid-curve points |
 | ecdh | RFC 7518 Appendix C: Z from both sides, the Concat KDF with apu and apv, the message; apu or apv changed in an unprotected header refused |
 | jwt | RFC 7519 §3.1's token; exp, nbf, iat, iss, sub, aud, jti, max_age and required claims at their edges and with skew; nested and encrypted tokens |

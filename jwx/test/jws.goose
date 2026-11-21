@@ -336,6 +336,110 @@ fn refusals() {
     }
 }
 
+// A general JSON JWS of n signatures, each {"alg":"HS256"} over a
+// payload of payload_len bytes, and each one byte long, so wrong.
+fn many_signatures(n: i64, payload_len: i64) -> u8[>..] {
+    var payload: u8[>..] = [];
+    payload.resize(payload_len, 'A');
+    var t: u8[>..] = [];
+    t.append("{\"payload\":\"");
+    t.append(jwx::b64_encode(payload));
+    t.append("\",\"signatures\":[");
+    for i in n {
+        if i > 0 { t.push(','); }
+        t.append("{\"protected\":\"eyJhbGciOiJIUzI1NiJ9\",\"signature\":\"AA\"}");
+    }
+    t.append("]}");
+    return t;
+}
+
+// The work an attacker's message can ask for: signatures capped (each
+// would be parsed, and verified over the whole payload), and a signature
+// of the wrong length refused before the input is hashed.
+fn costs() {
+    let key = jwk::generate_oct(32);
+    var hk = key;
+    hk.alg = jwa::HS256;
+    let set: jwk::Key[1] = [hk];
+    let nine = many_signatures(jws::MAX_SIGNATURES + 1, 16);
+    var m = jws::Message { .. };
+    tv::check("9 signatures not parsed", jws::parse(m, nine) == jwx::ERR_LIMIT && m.sigs.len == 0);
+    let p9, e9 = jws::verify(nine, jwa::HS256, key);
+    tv::check_int("9 signatures refused", e9, jwx::ERR_LIMIT);
+    let s9, es9 = jws::verify_set(nine, set);
+    tv::check_int("9 signatures refused by set", es9, jwx::ERR_LIMIT);
+    let r9, er9 = jws::verify(nine, jwa::HS256, key, 9);
+    tv::check_int("9 signatures under a raised limit", er9, jwx::ERR_BAD_SIGNATURE);
+
+    // Exactly the limit verifies, by the last signature; one more does
+    // only under a raised limit. Detached likewise.
+    var signers: jws::Signer[>..] = [];
+    for i in jws::MAX_SIGNATURES + 1 {
+        signers.push(jws::Signer { key: jwk::generate_oct(32), .. });
+        signers[i].header.alg = jwa::HS256;
+    }
+    let last = copy(signers[jws::MAX_SIGNATURES - 1].key);
+    let t8, e8 = jws::sign_json("x", signers[..jws::MAX_SIGNATURES]);
+    let g8, ev8 = jws::verify(t8, jwa::HS256, last);
+    tv::check("8 signatures verified by the last", e8 == jwx::OK && ev8 == jwx::OK && g8 == "x");
+    let t9, et9 = jws::sign_json("x", signers);
+    let g9, ev9 = jws::verify(t9, jwa::HS256, signers[8].key);
+    tv::check("9 signers refused", et9 == jwx::OK && ev9 == jwx::ERR_LIMIT && g9.len == 0);
+    let g9r, ev9r = jws::verify(t9, jwa::HS256, signers[8].key, 9);
+    tv::check("9 signers under a raised limit", ev9r == jwx::OK && g9r == "x");
+    let member = "\"payload\":\"eA\",";
+    let pat = find(t9, member);
+    tv::check("9 signers payload found", pat >= 0);
+    var dt9: u8[>..] = [];
+    dt9.append(t9[..pat]);
+    dt9.append(t9[pat + member.len..]);
+    tv::check_int("9 signers detached refused", jws::verify_detached(dt9, "x", jwa::HS256, signers[8].key),
+                  jwx::ERR_LIMIT);
+    tv::check_int("9 signers detached under a raised limit",
+                  jws::verify_detached(dt9, "x", jwa::HS256, signers[8].key, 9), jwx::OK);
+
+    // The reviewer's tokens: 2000 signatures over 400 KB (about 5 s of
+    // HMAC natively before the limit), and 20000 small ones (some 300 MB
+    // of Signatures). Both are refused, and quickly.
+    let t0 = clock_ns();
+    let big = many_signatures(2000, 400000);
+    let gb, eb = jws::verify(big, jwa::HS256, key);
+    tv::check_int("2000 signatures over 400 KB refused", eb, jwx::ERR_LIMIT);
+    var small: u8[>..] = [];
+    small.append("{\"payload\":\"\",\"signatures\":[");
+    for i in 20000 {
+        if i > 0 { small.push(','); }
+        small.append("{\"header\":{\"alg\":\"HS256\"},\"signature\":\"\"}");
+    }
+    small.append("]}");
+    var ms = jws::Message { .. };
+    tv::check("20000 small signatures not parsed", jws::parse(ms, small) == jwx::ERR_LIMIT && ms.sigs.len == 0);
+    tv::check("many signatures refused quickly", clock_ns() - t0 < 10000000000);
+
+    // Signatures of the wrong length: refused as bad, without hashing.
+    let th, eth = jws::sign("x", jwa::HS256, key);
+    var short: u8[>..] = [];
+    short.append(th[..rfind(th, ".") + 1]);
+    short.append("AA");
+    let gh, eh = jws::verify(short, jwa::HS256, key);
+    tv::check("HS256 short signature refused", eth == jwx::OK && eh == jwx::ERR_BAD_SIGNATURE);
+    let rsa = jwk::generate_rsa(2048);
+    let pub = jwk::public_key(rsa);
+    for alg in [jwa::RS256, jwa::PS256] {
+        let tr, etr = jws::sign("x", alg, rsa);
+        let gr, er = jws::verify(tr, alg, pub);
+        tv::check(str(jwa::name(alg), " verified"), etr == jwx::OK && er == jwx::OK);
+        // 342 base64url characters: 336 are 252 bytes, with no stray bits.
+        var cut: u8[>..] = [];
+        cut.append(tr[..tr.len - 6]);
+        let gc, ec = jws::verify(cut, alg, pub);
+        tv::check_int(str(jwa::name(alg), " short signature refused"), ec, jwx::ERR_BAD_SIGNATURE);
+        cut.append("AAAAAAAAAAAA");
+        let gl, el = jws::verify(cut, alg, pub);
+        tv::check_int(str(jwa::name(alg), " long signature refused"), el, jwx::ERR_BAD_SIGNATURE);
+    }
+}
+
 fn main() {
     for f in ["jws/4_1.rsa_v15_signature.json", "jws/4_2.rsa-pss_signature.json", "jws/4_3.ecdsa_signature.json",
               "jws/4_4.hmac-sha2_integrity_protection.json", "jws/4_5.signature_with_detached_content.json",
@@ -347,5 +451,6 @@ fn main() {
     rfc7797();
     round_trips();
     refusals();
+    costs();
     tv::done("jws");
 }

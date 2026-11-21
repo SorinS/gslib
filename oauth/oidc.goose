@@ -196,6 +196,8 @@ fn try_keys(c: const Client&, m: const jws::Message&, alg: i64, kid: const u8[:]
 // again for a kid it does not hold (rate-limited). An HMAC alg, when
 // allowed, is verified with the client secret (OIDC Core §10.1).
 fn verify_signed(c: Client&, hc: http::Client&, m: jws::Message&, token: const u8[:]) -> i64 {
+    // The JSON serialization is refused before it is parsed.
+    if !jwt::compact(token) { return ERR_MALFORMED; }
     let e = jws::parse(m, token);
     if e == jwx::ERR_UNSUPPORTED { return ERR_ALG; }
     if e != jwx::OK || !m.compact || m.sigs.len != 1 { return ERR_MALFORMED; }
@@ -443,6 +445,7 @@ fn check_dpop_binding(cnf_jkt: const u8[:], p: const DpopProof&) -> i64 {
 fn verify_dpop_proof(c: const Client&, proof: const u8[:], htm: const u8[:], htu: const u8[:],
                      access_token: const u8[:] = "", nonce: const u8[:] = "", max_age_s: i64 = 300) -> DpopProof, i64 {
     var p = DpopProof { .. };
+    if !jwt::compact(proof) { return p, ERR_DPOP; }
     var m = jws::Message { .. };
     let e = jws::parse(m, proof);
     if e == jwx::ERR_UNSUPPORTED { return p, ERR_ALG; }

@@ -47,6 +47,11 @@ struct Header {
     crit: u8[..256] = [],       // the names in "crit", each followed by a NUL
 }
 
+// The most signatures a JSON JWS may have when parsing: each costs a
+// header parse and a Signature of some 15 KB, and verifying may try each
+// one over the whole payload.
+let MAX_SIGNATURES: i64 = 8;
+
 // One signature of a parsed message: its header (protected and
 // unprotected together), where the protected header's base64url text and
 // the unprotected header's JSON are in the message's `text`, and the
@@ -350,15 +355,17 @@ fn verify_bytes(input: const u8[:], sig: const u8[:], alg: i64, key: const jwk::
     if !jwk::fits(key, alg) { return jwx::ERR_KEY; }
     let h = jwa::hash_of(alg);
     var good = false;
+    // A signature of the wrong length is refused before input is hashed.
     if jwa::is_hmac(alg) {
+        if sig.len != bignum::hash_len(h) { return jwx::ERR_BAD_SIGNATURE; }
         let mac = bignum::hmac(h, key.k, input);
-        good = sig.len == mac.len && bignum::ct_eq_bytes(mac, sig) == 1;
+        good = bignum::ct_eq_bytes(mac, sig) == 1;
     } else if jwa::is_rsa_pkcs1(alg) {
         let pub = jwk::rsa_public(key);
-        good = bignum::rsa_verify_pkcs1(pub, input, sig, h);
+        good = sig.len == bignum::rsa_size(pub) && bignum::rsa_verify_pkcs1(pub, input, sig, h);
     } else if jwa::is_rsa_pss(alg) {
         let pub = jwk::rsa_public(key);
-        good = bignum::rsa_verify_pss(pub, input, sig, bignum::hash_len(h), h);
+        good = sig.len == bignum::rsa_size(pub) && bignum::rsa_verify_pss(pub, input, sig, bignum::hash_len(h), h);
     } else if jwa::is_ecdsa(alg) {
         let c = jwk::curve(key.crv);
         good = sig.len == 2 * jwa::crv_len(key.crv) && bignum::ecdsa_verify(c, jwk::ec_point(key), input, sig);
@@ -625,7 +632,7 @@ recursive fn write_node(out: u8[>..]&, n: json::Node&) {
     }
 }
 
-fn parse_json(m: Message&, token: const u8[:]) -> i64 {
+fn parse_json(m: Message&, token: const u8[:], max_signatures: i64) -> i64 {
     var doc: json::Node[>..] = [];
     var decoded: u8[>..] = [];
     let root, msg = json::parse(token, doc, decoded);
@@ -646,6 +653,9 @@ fn parse_json(m: Message&, token: const u8[:]) -> i64 {
             Arr => {},
             _ => { return jwx::ERR_MALFORMED; },
         }
+        var count = 0;
+        json::each(list) { s => count++; };
+        if count > max_signatures { return jwx::ERR_LIMIT; }
         var err = jwx::OK;
         json::each(list) { s => if err == jwx::OK { err = parse_json_signature(m, s, token); } };
         if err != jwx::OK { return err; }
@@ -662,10 +672,11 @@ fn parse_json(m: Message&, token: const u8[:]) -> i64 {
     return set_payload(m, payload, b64);
 }
 
-// Parses a JWS, compact or JSON, into m (a fresh Message).
-fn parse(m: Message&, token: const u8[:]) -> i64 {
+// Parses a JWS, compact or JSON, into m (a fresh Message). ERR_LIMIT for
+// more than max_signatures signatures.
+fn parse(m: Message&, token: const u8[:], max_signatures: i64 = MAX_SIGNATURES) -> i64 {
     let t = trim(token);
-    if t.len > 0 && t[0] == '{' { return parse_json(m, t); }
+    if t.len > 0 && t[0] == '{' { return parse_json(m, t, max_signatures); }
     return parse_compact(m, t);
 }
 
@@ -675,21 +686,38 @@ fn protected_text(m: const Message&, i: i64) -> const u8[:] {
     return m.text[s.protected_at..s.protected_at + s.protected_len];
 }
 
+// The part of m's signing inputs after the protected header: '.' and the
+// payload as signed. `payload` stands in for a detached payload; empty,
+// the message's own is used. Every signature agrees on b64, so one tail
+// serves them all.
+fn signing_tail(m: const Message&, payload: const u8[:]) -> u8[>..] {
+    var tail: u8[>..] = [];
+    tail.push('.');
+    if payload.len > 0 || m.detached {
+        if m.sigs[0].header.b64 { jwx::b64_append(tail, payload); } else { tail.append(payload); }
+    } else {
+        tail.append(m.text[m.payload_at..m.payload_at + m.payload_len]);
+    }
+    return tail;
+}
+
 // Verifies signature i of m by alg with key. `payload` stands in for a
 // detached payload; empty, the message's own is used.
 fn verify_signature(m: const Message&, i: i64, alg: i64, key: const jwk::Key&, payload: const u8[:] = "") -> i64 {
+    if m.sigs[i].header.alg != alg { return jwx::ERR_ALG_MISMATCH; }
+    return verify_with_tail(m, i, alg, key, signing_tail(m, payload));
+}
+
+// verify_signature with the signing input's tail made once for all of a
+// message's signatures.
+fn verify_with_tail(m: const Message&, i: i64, alg: i64, key: const jwk::Key&, tail: const u8[:]) -> i64 {
     let s = m.sigs[i];
     if s.header.alg != alg { return jwx::ERR_ALG_MISMATCH; }
     let ec = check_crit(s.header);
     if ec != jwx::OK { return ec; }
     var input: u8[>..] = [];
     input.append(protected_text(m, i));
-    input.push('.');
-    if payload.len > 0 || m.detached {
-        if s.header.b64 { jwx::b64_append(input, payload); } else { input.append(payload); }
-    } else {
-        input.append(m.text[m.payload_at..m.payload_at + m.payload_len]);
-    }
+    input.append(tail);
     return verify_bytes(input, s.sig, alg, key);
 }
 
@@ -702,15 +730,19 @@ fn worse(a: i64, b: i64) -> i64 {
 
 // The payload of a JWS that alg with key verifies: any one signature of a
 // JSON message will do. "none" is refused unless alg is jwa::NONE.
-fn verify(token: const u8[:], alg: i64, key: const jwk::Key&) -> u8[>..], i64 {
+// ERR_LIMIT for more than max_signatures signatures, here and in
+// verify_detached and verify_set.
+fn verify(token: const u8[:], alg: i64, key: const jwk::Key&, max_signatures: i64 = MAX_SIGNATURES)
+        -> u8[>..], i64 {
     var m = Message { .. };
     var out: u8[>..] = [];
-    let e = parse(m, token);
+    let e = parse(m, token, max_signatures);
     if e != jwx::OK { return out, e; }
+    let tail = signing_tail(m, "");
     var err = jwx::ERR_ALG_MISMATCH;
     for i in m.sigs.len {
         if m.sigs[i].header.alg == jwa::NONE && alg != jwa::NONE { err = worse(err, jwx::ERR_NONE); continue; }
-        let r = verify_signature(m, i, alg, key);
+        let r = verify_with_tail(m, i, alg, key, tail);
         if r == jwx::OK {
             out.append(m.payload);
             return out, jwx::OK;
@@ -721,14 +753,16 @@ fn verify(token: const u8[:], alg: i64, key: const jwk::Key&) -> u8[>..], i64 {
 }
 
 // Verifies a JWS whose payload was detached, against `payload`.
-fn verify_detached(token: const u8[:], payload: const u8[:], alg: i64, key: const jwk::Key&) -> i64 {
+fn verify_detached(token: const u8[:], payload: const u8[:], alg: i64, key: const jwk::Key&,
+                   max_signatures: i64 = MAX_SIGNATURES) -> i64 {
     var m = Message { .. };
-    let e = parse(m, token);
+    let e = parse(m, token, max_signatures);
     if e != jwx::OK { return e; }
     if !m.detached { return jwx::ERR_MALFORMED; }
+    let tail = signing_tail(m, payload);
     var err = jwx::ERR_ALG_MISMATCH;
     for i in m.sigs.len {
-        let r = verify_signature(m, i, alg, key, payload);
+        let r = verify_with_tail(m, i, alg, key, tail);
         if r == jwx::OK { return jwx::OK; }
         err = if err == jwx::ERR_ALG_MISMATCH { r } else { worse(err, r) };
     }
@@ -739,11 +773,13 @@ fn verify_detached(token: const u8[:], payload: const u8[:], alg: i64, key: cons
 // the header's, or every key when the header has none. The algorithm is the
 // key's "alg"; a key without one is used only when `infer` is true, with
 // the header's alg if the key fits it (jwx's InferAlgorithmFromKey).
-fn verify_set(token: const u8[:], keys: const jwk::Key[:], infer: bool = false) -> u8[>..], i64 {
+fn verify_set(token: const u8[:], keys: const jwk::Key[:], infer: bool = false,
+              max_signatures: i64 = MAX_SIGNATURES) -> u8[>..], i64 {
     var m = Message { .. };
     var out: u8[>..] = [];
-    let e = parse(m, token);
+    let e = parse(m, token, max_signatures);
     if e != jwx::OK { return out, e; }
+    let tail = signing_tail(m, "");
     var err = jwx::ERR_NO_KEY;
     for i in m.sigs.len {
         let h = m.sigs[i].header;
@@ -758,7 +794,7 @@ fn verify_set(token: const u8[:], keys: const jwk::Key[:], infer: bool = false) 
             // token is never accepted through a set.
             if alg == jwa::NONE { continue; }
             if k.key_use == jwk::USE_ENC { continue; }
-            let r = verify_signature(m, i, alg, k);
+            let r = verify_with_tail(m, i, alg, k, tail);
             if r == jwx::OK {
                 out.append(m.payload);
                 return out, jwx::OK;
