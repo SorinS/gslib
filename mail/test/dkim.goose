@@ -1,7 +1,7 @@
 // mail.dkim against RFC 6376's canonicalization examples (§3.4.5) and
 // empty-body hashes (§3.4.3, §3.4.4), RFC 8463 Appendix A's signed message
-// (Ed25519 and RSA) with its published keys, tag-lists, round trips, and a
-// message changed on the way.
+// (Ed25519 and RSA) with its published keys, tag-lists, round trips, a
+// message changed on the way, h= matching (§5.4.2) and the size limits.
 import std;
 import base64;
 import gslib from "../..";
@@ -610,8 +610,135 @@ fn two_froms() {
     check("two From: fails", r.status == mail::ERR_FORMAT && r.reason == "not exactly one From field");
 }
 
+// --- h= matching and the limits -----------------------------------------------------------
+
+// signed_headers' fields for h= names over msg, simple canonicalization.
+fn taken(msg: const u8[:], h: const u8[:], skip: i64) -> u8[>..] {
+    var fields: dkim::Field[>..] = [];
+    dkim::split_message(msg, fields);
+    var names: dkim::Span[>..] = [];
+    dkim::split_names(h, names);
+    var out: u8[>..] = [];
+    dkim::signed_headers(out, msg, fields, h, names, skip, dkim::SIMPLE);
+    return out;
+}
+
+// A DKIM-Signature with the right bh= for MSG's body and a junk b=, its h=
+// from and n names x, then extra fields "y:" and MSG: the reviewer's message.
+fn junk_signed(n: i64, extra: i64) -> u8[>..] {
+    var body: u8[>..] = [];
+    var fields: dkim::Field[>..] = [];
+    let at = dkim::split_message(MSG, fields);
+    dkim::canon_body(body, MSG[at..], dkim::RELAXED);
+    var m: u8[>..] = [];
+    m.append("DKIM-Signature: v=1; a=ed25519-sha256; c=relaxed/relaxed; d=example.com; s=sel; bh=");
+    m.append(b64(bignum::sha256(body)));
+    m.append("; b=AAAA; h=from");
+    for i in n { m.append(":x"); }
+    m.append("\r\n");
+    for i in extra { m.append("y:\r\n"); }
+    m.append(MSG);
+    return m;
+}
+
+fn h_matching() {
+    // §5.4.2: each name takes the lowest instance not yet taken, without
+    // case; one with none left, or none at all, adds nothing.
+    let msg = "A: 1\r\nB: 1\r\na: 2\r\nc: 1\r\nA: 3\r\n\r\n";
+    check("h=: bottom-up, repeated, missing", taken(msg, "a:b:A:a:a:x:C", -1) == "A: 3\r\nB: 1\r\na: 2\r\nA: 1\r\nc: 1\r\n");
+    check("h=: the signature's own field skipped", taken(msg, "a:a:a", 4) == "a: 2\r\nA: 1\r\n");
+    check("h=: a name of no field", taken(msg, "x:y", -1) == "");
+    check("h=: WSP before the colon", taken("Subject : hi\r\n\r\n", "subject", -1) == "Subject : hi\r\n");
+
+    let ed = key_ed();
+    let erec = record_of(ed);
+    var o = opts(dkim::RELAXED, dkim::RELAXED);
+    o.headers.append("FROM:subject:Subject:SUBJECT:to:x-none");
+    let two = replace(MSG, "Subject: The  plans\r\n", "Subject: The  plans\r\nSubject: Again\r\n");
+    let s = signed(two, ed, o);
+    check("h=: names in any case", status(s, erec) == mail::OK);
+    check("h=: a third Subject added", status(str("Subject: More\r\n", s), erec) == mail::ERR_SIGNATURE);
+    check("h=: a Subject removed", status(replace(s, "Subject: Again\r\n", ""), erec) == mail::ERR_SIGNATURE);
+    let swapped = replace(replace(replace(s, "Subject: Again", "Subject: T"), "Subject: The  plans", "Subject: Again"),
+                          "Subject: T\r\n", "Subject: The  plans\r\n");
+    check("h=: two Subjects swapped", swapped.len == s.len && status(swapped, erec) == mail::ERR_SIGNATURE);
+
+    // A second signature that signs DKIM-Signature twice: the first one,
+    // and nothing for the second name, its own field not being a candidate.
+    var o2 = opts(dkim::RELAXED, dkim::RELAXED);
+    o2.headers.append("from:dkim-signature:dkim-signature");
+    let s2 = signed(signed(MSG, ed, opts(dkim::RELAXED, dkim::RELAXED)), ed, o2);
+    var res: dkim::Result[>..] = [];
+    dkim::verify_record(s2, erec, res, dkim::VerifyOptions { now: 1711929600, .. });
+    check("h=: DKIM-Signature signed", res.len == 2 && res[0].status == mail::OK && res[1].status == mail::OK);
+}
+
+fn limits() {
+    let ed = key_ed();
+    let erec = record_of(ed);
+
+    // Tags: MAX_TAGS, then one more.
+    var t: u8[>..] = [];
+    for i in dkim::MAX_TAGS { format(t, "t", i, "=1;"); }
+    check("tags: MAX_TAGS", tags_ok(t) == dkim::MAX_TAGS);
+    t.append("u=1");
+    check("tags: one more", tags_ok(t) == -1);
+    // The reviewer's: 8 signatures of 4000 tags each.
+    var many: u8[>..] = [];
+    for k in 8 {
+        many.append("DKIM-Signature: v=1");
+        for i in 4000 { format(many, "; t", i, "=1"); }
+        many.append("\r\n");
+    }
+    many.append(MSG);
+    var res: dkim::Result[>..] = [];
+    dkim::verify_record(many, erec, res);
+    var all = res.len == 8;
+    for r in res { if r.status != mail::ERR_FORMAT || r.reason != "malformed tag-list" { all = false; } }
+    check("tags: 8 signatures of 4000", all);
+
+    // h=: MAX_H_NAMES signs and verifies; one more is refused both ways.
+    var o = opts(dkim::RELAXED, dkim::RELAXED);
+    o.headers.append("from");
+    for i in dkim::MAX_H_NAMES - 1 { o.headers.append(":x"); }
+    check("h=: MAX_H_NAMES names", status(signed(MSG, ed, o), erec) == mail::OK);
+    o.headers.append(":x");
+    var out: u8[>..] = [];
+    check("h=: sign refuses one more", dkim::sign(MSG, ed, o, out) == mail::ERR_ARG && out.len == 0);
+    let r1 = first_result(junk_signed(dkim::MAX_H_NAMES, 0), erec);
+    check(str("h=: verify refuses one more: ", r1.reason), r1.status == mail::ERR_FORMAT && r1.reason == "h= has more than 256 names");
+    let r2 = first_result(junk_signed(50000, 900), erec);
+    check("h=: 50000 names", r2.status == mail::ERR_FORMAT && r2.reason == "h= has more than 256 names");
+    let r3 = first_result(junk_signed(255, 990), erec);
+    check(str("h=: 256 names, 999 fields, junk b=: ", r3.reason), r3.status == mail::ERR_SIGNATURE && !r3.body_mismatch);
+
+    // Fields: MSG has 6, its signature makes 7.
+    var relays: u8[>..] = [];
+    for i in dkim::MAX_FIELDS - 7 { format(relays, "Received: from relay", i, "\r\n"); }
+    let s = signed(str(relays, MSG), ed, opts(dkim::RELAXED, dkim::RELAXED));
+    check("fields: MAX_FIELDS", status(s, erec) == mail::OK);
+    let r4 = first_result(str("Received: from one more\r\n", s), erec);
+    check("fields: one more", r4.status == mail::ERR_FORMAT && r4.reason == "more than 1000 header fields");
+    out.clear();
+    check("fields: sign refuses", dkim::sign(str("X: 1\r\nX: 2\r\n", relays, MSG), ed, opts(dkim::RELAXED, dkim::RELAXED), out) ==
+                                  mail::ERR_HEADER && out.len == 0);
+    // The reviewer's: 50000 names against 50000 fields, 8 times.
+    let one = junk_signed(50000, 50000);
+    var big: u8[>..] = [];
+    let sig_end = one.len - 50000 * 4 - MSG.len;
+    for k in 8 { big.append(one[..sig_end]); }
+    big.append(one[sig_end..]);
+    res.clear();
+    dkim::verify_record(big, erec, res);
+    all = res.len == 8;
+    for r in res { if r.status != mail::ERR_FORMAT || r.reason != "more than 1000 header fields" { all = false; } }
+    check("fields: 8 signatures, 50000 names and fields", all);
+}
+
 fn main() {
     two_froms();
+    h_matching();
+    limits();
     canonicalization();
     rfc8463();
     tag_lists();

@@ -27,7 +27,9 @@
 // h s), the i= and d= alignment, x= against the time, then the key record
 // (v=DKIM1, k=, h=, s=, t=s, p= empty for a revoked key), the body hash
 // with l=, and the signature. Header fields are taken bottom-up for each
-// name in h=, a name with no instance left adding nothing. Each Result has
+// name in h=, a name with no instance left adding nothing. A message of
+// more than MAX_FIELDS header fields, an h= of more than MAX_H_NAMES names
+// or a tag-list of more than MAX_TAGS tags is ERR_FORMAT. Each Result has
 // a status:
 //
 //   mail::OK               pass
@@ -78,6 +80,13 @@ let REC_ED25519: i64 = 2;
 let BODY_ALL: i64 = -2;
 
 let MAX_LINE: i64 = 78;            // where the signature header folds
+
+// What a verifier takes on, far above real mail (a dozen h= names, some
+// over-signed; fifty Received fields is a mail loop): beyond these a
+// signature is ERR_FORMAT, and a signer refuses to write one.
+let MAX_FIELDS:  i64 = 1000;       // header fields in the message
+let MAX_H_NAMES: i64 = 256;        // names in h=
+let MAX_TAGS:    i64 = 64;         // tags in a tag-list (§3.2 defines 14 for a signature)
 
 // The fields signed by default, when the message has them (with From, which
 // it must have).
@@ -326,23 +335,47 @@ fn split_names(text: const u8[:], names: Span[>..]&) -> bool {
 
 // The header fields that h= names, appended to out canonicalized, each with
 // its CRLF: for each name, the last instance not yet taken (§5.4.2), none
-// when they are all taken. skip is the signature's own field.
+// when they are all taken. skip is the signature's own field. The fields
+// are indexed once, by lower-case name, so this is linear in names and
+// fields: first maps a name to its first field j, lowest[j] is that name's
+// lowest instance not yet taken (-1 when none is left), and above[k] the
+// instance above field k.
 fn signed_headers(out: u8[>..]&, msg: const u8[:], fields: const Field[:], htext: const u8[:], names: const Span[:],
                   skip: i64, canon: i64) {
-    var used: bool[>..] = [];
-    used.resize(fields.len, false);
+    var low:  u8[>..]  = [];              // every field's name in lower case, end to end
+    var ends: i64[>..] = [];              // where each one ends in low
+    for f in fields {
+        for c in field_name(msg, f) { low.push(lower(c)); }
+        ends.push(low.len);
+    }
+    var lowest: i64[>..] = [];
+    var above:  i64[>..] = [];
+    lowest.resize(fields.len, -1);
+    above.resize(fields.len, -1);
+    var first = dictionary<u8[:], i64> {};
+    for k in fields.len {
+        let start = if k == 0 { 0 } else { ends[k - 1] };
+        if k == skip || start == ends[k] { continue; }
+        let name = low[start..ends[k]];
+        var j = k;
+        let g = first.get(name);
+        if g { j = g; }
+        if j == k { first.insert(name, k); }
+        above[k] = lowest[j];
+        lowest[j] = k;
+    }
+    var want: u8[>..] = [];
     for n in names {
-        let want = htext[n.pos..n.end];
-        var k = fields.len - 1;
-        while k >= 0 {
-            if !used[k] && k != skip && mail::eq_fold(field_name(msg, fields[k]), want) {
-                used[k] = true;
-                canon_header(out, field_text(msg, fields[k]), canon);
-                out.append("\r\n");
-                break;
-            }
-            k--;
-        }
+        want.clear();
+        for c in htext[n.pos..n.end] { want.push(lower(c)); }
+        let g = first.get(want[..]);
+        if !g { continue; }
+        let j: i64 = g;
+        let k = lowest[j];
+        if k < 0 { continue; }
+        lowest[j] = above[k];
+        canon_header(out, field_text(msg, fields[k]), canon);
+        out.append("\r\n");
     }
 }
 
@@ -354,8 +387,8 @@ struct Tag { name: Span = Span { .. }, value: Span = Span { .. }, eq: i64 = 0, s
 
 // The tags of a tag-list into tags. ERR_FORMAT for a spec without '=', a
 // name that is not ALPHA *(ALPHA / DIGIT / "_"), a control character in a
-// value, or a name twice. Empty specs (";;", a ';' at the end) are passed
-// over.
+// value, a name twice, or more than MAX_TAGS tags (which bounds the
+// duplicate check). Empty specs (";;", a ';' at the end) are passed over.
 fn parse_tags(text: const u8[:], tags: Tag[>..]&) -> i64 {
     tags.clear();
     var i = 0;
@@ -367,7 +400,7 @@ fn parse_tags(text: const u8[:], tags: Tag[>..]&) -> i64 {
         if t.pos < t.end {
             var eq = -1;
             for k in t.pos..t.end { if spec[k] == '=' { eq = k; break; } }
-            if eq < 0 { return mail::ERR_FORMAT; }
+            if eq < 0 || tags.len >= MAX_TAGS { return mail::ERR_FORMAT; }
             let ns = trim_fws(spec[..eq]);
             let vs = trim_fws(spec[eq + 1..]);
             let name = spec[ns.pos..ns.end];
@@ -636,8 +669,10 @@ fn sign_check(o: const SignOptions&) -> i64 {
 // The DKIM-Signature field for msg, appended to out with its CRLF, to go
 // before msg's first line. ERR_ARG for options that cannot be written (a
 // domain or selector with other than letters, digits, '-', '_' and '.', an
-// i= outside d=, x= not after t=, l= past the body, h= without From),
-// ERR_HEADER when the message has no From, ERR_KEY for a key that is not
+// i= outside d=, x= not after t=, l= past the body, h= without From or
+// with more than MAX_H_NAMES names), ERR_HEADER when the message has no
+// From, more than MAX_FIELDS header fields, or so many of the default
+// fields that h= would pass MAX_H_NAMES, ERR_KEY for a key that is not
 // RSA of 1024 bits or more, or Ed25519.
 fn signature(msg_in: const u8[:], key: const x509::PrivateKey&, o: SignOptions, out: u8[>..]&) -> i64 {
     var norm: u8[>..] = [];
@@ -655,9 +690,13 @@ fn sign_crlf(msg: const u8[:], key: const x509::PrivateKey&, o: const SignOption
 
     var fields: Field[>..] = [];
     let body_at = split_message(msg, fields);
+    if fields.len > MAX_FIELDS { return mail::ERR_HEADER; }
     var hlist: u8[>..] = [];
     rc = header_list(msg, fields, o, hlist);
     if rc != mail::OK { return rc; }
+    var names: Span[>..] = [];
+    split_names(hlist, names);
+    if names.len > MAX_H_NAMES { return if o.headers.len > 0 { mail::ERR_ARG } else { mail::ERR_HEADER }; }
 
     // The body hash.
     var body: u8[>..] = [];
@@ -683,8 +722,6 @@ fn sign_crlf(msg: const u8[:], key: const x509::PrivateKey&, o: const SignOption
     if blen >= 0 { put(out, f, str("l=", blen, ";"), true); }
     if o.timestamp >= 0 { put(out, f, str("t=", o.timestamp, ";"), true); }
     if o.expire >= 0 { put(out, f, str("x=", o.expire, ";"), true); }
-    var names: Span[>..] = [];
-    split_names(hlist, names);
     for k in names.len {
         let n = hlist[names[k].pos..names[k].end];
         let last = k == names.len - 1;
@@ -769,6 +806,7 @@ fn check_sig(msg: const u8[:], fields: const Field[:], fi: i64, o: VerifyOptions
     sp.field = fi;
     sp.vpos = f.colon + 1;
     let text = field_text(msg, f)[f.colon + 1 - f.pos..];
+    if fields.len > MAX_FIELDS { set_reason(r, "more than 1000 header fields"); return mail::ERR_FORMAT; }
     var tags: Tag[>..] = [];
     if parse_tags(text, tags) != mail::OK { set_reason(r, "malformed tag-list"); return mail::ERR_FORMAT; }
     let d, hasd = tag_value(text, tags, "d");
@@ -817,6 +855,7 @@ fn check_sig(msg: const u8[:], fields: const Field[:], fi: i64, o: VerifyOptions
     let h = text[tags[hk].value.pos..tags[hk].value.end];
     var names: Span[>..] = [];
     if !split_names(h, names) { set_reason(r, "h= has an empty name"); return mail::ERR_FORMAT; }
+    if names.len > MAX_H_NAMES { set_reason(r, "h= has more than 256 names"); return mail::ERR_FORMAT; }
     var from = false;
     for n in names { if mail::eq_fold(h[n.pos..n.end], "from") { from = true; } }
     if !from { set_reason(r, "h= does not sign From"); return mail::ERR_FORMAT; }

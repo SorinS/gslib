@@ -161,7 +161,11 @@ parse, does not sign From, or i= is outside d=), `ERR_UNSUPPORTED` (an
 algorithm not done; rsa-sha1 unless `allow_sha1`), with `reason` in words.
 A message with more than one From field (or none) fails every signature
 with `ERR_FORMAT` (RFC 6376 §8.15): the From a reader is shown may be the
-unsigned one.
+unsigned one. So is a message of more than 1000 header fields
+(`dkim::MAX_FIELDS`), and a signature whose h= has more than 256 names
+(`MAX_H_NAMES`) or whose tag-list has more than 64 tags (`MAX_TAGS`);
+`sign` refuses to write such a signature. h= is matched against the
+header fields in one pass, so verifying costs time linear in the message.
 `dkim::result_text` writes RFC 8601's form. `verify` returns `mail::OK`
 when any signature passes.
 
