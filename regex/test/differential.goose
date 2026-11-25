@@ -1,7 +1,10 @@
-// regex against the Rust regex crate: 605 cases kept from the differential
-// test (regex/scripts/differential.py), random patterns that mix `^ $ \A \z
-// \b \B` into alternations, repetitions, groups and scoped flags, on random
-// texts over "ab \n_x.A". differential_cases.txt holds them, a pattern and
+// regex against the Rust regex crate: 736 cases kept from the differential
+// test (regex/scripts/differential.py): 605 random patterns that mix `^ $ \A
+// \z \b \B` into alternations, repetitions, groups and scoped flags, on
+// random texts over "ab \n_x.A"; 11 for the literal searches (a repeated set
+// before a literal, among them `xing.ing|ing`, whose first `ing` is not
+// where the leftmost match ends); and 120 of the --long run, literal shapes
+// on texts of 200 to 800 bytes. differential_cases.txt holds them, a pattern and
 // a text in hex per line; expected/differential.txt is what the crate
 // (regex 1.13.2, regex::bytes, Unicode off) gives for them, printed as
 // regex.goose's show() prints: each match's groups as start,end, joined

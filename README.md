@@ -1093,6 +1093,14 @@ same while the patch was made, apart from 51 whose patterns are too
 large for the module's complete DFAs. `make differential-regex` runs more,
 and 605 of them are kept as fixed cases beside goose's own test.
 
+gslib's copy also searches for literals faster than std's, in plain Goose.
+It finds a literal sequence (`the`, `\bthe\b`, `(?i)sherlock`, a date) by
+the runtime's two-byte `find_pair` and checks each candidate without
+running the DFAs. It starts `[a-z]+ing` back from each `ing`, exactly, and
+scans for a rare byte such as an email's `@` with a loop clang and GCC
+vectorize. `make bench-regex` compares it with Rust's regex, Go's regexp,
+PCRE2 and POSIX regex.h.
+
 ## Post-quantum cryptography
 
 The NIST post-quantum standards are in crypto/bignum, and the protocols

@@ -220,6 +220,8 @@ def cmd_run(args):
         results["corpora"][c] = describe(path)
         if c == "sherlock": results["corpora"][c]["url"] = GUTENBERG
         for e, argv in eng.items():
+            if args.engines and not any(e == x or (x == "goose" and e.startswith("goose")) for x in args.engines.split(",")):
+                continue
             print("running %s on %s" % (e, c), file=sys.stderr)
             r = run_engine(argv, patterns, path, c, 60 if c.startswith("patho") else 1800, args.lock)
             results["results"].setdefault(c, {})[e] = r
@@ -373,6 +375,7 @@ def main():
     r.add_argument("--go", default="go")
     r.add_argument("--pcre2", help="PCRE2's install prefix (else pcre2-config on PATH)")
     r.add_argument("--lock")
+    r.add_argument("--engines", help="only these engines, comma-separated (goose matches every Goose build)")
     p = sub.add_parser("report")
     p.add_argument("results", nargs="+")
     args = ap.parse_args()

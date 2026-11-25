@@ -63,6 +63,29 @@ prefix-byte skip still applies, and the capture backtracker checks
 assertions against the whole text. Patterns without assertions build the
 same DFAs and take the same loops as std's.
 
+On top of std's module, gslib's searches for literals faster (std's has
+none of this; the matches are the same):
+
+- A pattern that is one sequence of byte sets and assertions (`the`,
+  `(?i)sherlock`, `\bthe\b`, `\d{4}-\d{2}-\d{2}`, groups and `{n}` of
+  such) is searched for without the DFAs. The runtime's `find_pair` finds
+  where its two rarest bytes fit, and each candidate is checked in place.
+- A repeated set before such a sequence (`[a-z]+ing`) finds where a match
+  can start from the sequence's next occurrence, walking back over the set,
+  and runs the DFA from there only. This is exact for leftmost-first
+  matching: a match starting earlier would have to end at that occurrence
+  or later, and then the set's bytes before the occurrence reach back to
+  it.
+- A rare inner byte (an email pattern's `@`) and a one-byte rare literal
+  are scanned for by `scan_rare`, a Goose loop over 128-byte blocks that
+  clang and GCC vectorize (16 bytes an instruction, 32 in the AVX2 version
+  `simd` asks for under clang on x86-64). Under TinyCC it runs a byte at a
+  time.
+
+`bench/` (`make bench-regex`) compares the module with Rust's regex, Go's
+regexp, PCRE2 and POSIX regex.h; the results are in ~/Dev/Goose/benchmarks'
+regex_1.md and regex_2.md.
+
 ## Tests
 
 ```bash
@@ -78,10 +101,18 @@ make differential-regex  # scripts/differential.py: random cases against the Rus
   newline, `\b` beside non-word bytes and at the text's ends, and captures
   that need the backtracker. Its expected lines were checked against the
   crate.
-- `test/differential.goose` replays 605 cases kept from the differential
-  (`test/differential_cases.txt`), against the crate's output for them.
-  With a file argument it runs any cases, which is how the differential
-  uses it.
+- `test/differential.goose` replays 736 cases kept from the differential
+  (`test/differential_cases.txt`), against the crate's output for them:
+  605 short, 11 for the literal searches (`xing.ing|ing` on `xingqing`
+  among them, where the first `ing` is not the leftmost match's end) and
+  120 from `--long`. With a file argument it runs any cases, which is how
+  the differential uses it.
+- `test/literal.goose` checks the literal searches against a naive search:
+  needles of 1 to 65 bytes in texts of 0 to 1000 bytes, around the scans'
+  16-, 64- and 128-byte blocks, at the start, the end and overlapping,
+  among filler of the needle's own bytes; with `(?i)`, with `\b` at both
+  ends, and a repeated set before a literal. 1,842 cases; it prints how
+  many took each route.
 - `scripts/differential.py` makes random patterns that mix the six
   assertions into alternations, greedy and lazy repetitions, groups and
   scoped `(?m:)`, `(?-m:)` and `(?i:)` flags, some under a leading `(?m)`.
@@ -91,7 +122,11 @@ make differential-regex  # scripts/differential.py: random cases against the Rus
   `regex::bytes`, Unicode off; `scripts/oracle`). Patterns too large for
   the module's DFAs, which the crate's lazy DFA runs, are counted apart.
   Developing the patch, 156,000 such cases (about 52,000 patterns) came
-  out the same but for 51 of those too-large ones.
+  out the same but for 51 of those too-large ones. With `--long` the texts
+  are 200 to 800 bytes, long enough for the literal scans' blocks, and two
+  thirds of the patterns are literal sequences or a repeated set before a
+  literal: 45,000 such cases came out the same (over the versions of the
+  literal searches, 4,500 on the last).
 
 Tested on macOS arm64.
 

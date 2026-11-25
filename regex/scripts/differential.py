@@ -14,7 +14,13 @@ difference fails. The generator leaves out `{0}` and does not aim at the
 module's documented known difference (a repeating prefix shared by every
 branch of an alternation).
 
-    python3 scripts/differential.py [-n PATTERNS] [--seed N] [--goose PATH]
+With --long the texts are 200 to 800 bytes, long enough for the literal
+scans' 64- and 128-byte blocks, and a third of the patterns are literal
+sequences (letters, sets, (?i), assertions, counted repeats) and a third
+a repeated set before a literal, the shapes regex searches for without
+running its DFAs over every byte.
+
+    python3 scripts/differential.py [-n PATTERNS] [--seed N] [--long] [--goose PATH]
 
 Needs cargo (the crate is fetched once). The compiler is --goose, else
 $GOOSE, else `goose` on PATH, else ../goose.git/build/goose beside gslib.git.
@@ -34,6 +40,10 @@ ATOMS = ["a", "b", " ", "\\n", "_", ".", "[ab]", "[^a]", "[a ]", "\\w", "\\W", "
 LONG_ATOMS = ["xa", "bx_", "Ax", "x\\n"]
 LOOKS = ["^", "$", "\\A", "\\z", "\\b", "\\B"]
 TEXT = "ab \n_x.A"
+LONG_TEXT = "ab \n_x.AMqzing"
+LIT_ITEMS = ["a", "b", "x", "_", "\\n", "A", "M", "q", "z", "i", "ng", "[ab]", "[a-z]", "(?i:a)", "(?i:mq)",
+             "\\b", "\\B", "^", "$", "(?m:^)", "(?m:$)", "(?:ab){2}", "(x)", "[^a]"]
+RUNS = ["[a-z]+", "[a-z]*", "[a-z]{1,3}", "\\w+", "[ab x]+", "[a-z]+?"]
 
 
 def patterns(rng, atoms):
@@ -64,6 +74,14 @@ def patterns(rng, atoms):
     return "(?m)" + p if rng.random() < 0.4 else p
 
 
+def literal_pattern(rng):
+    return "".join(rng.choice(LIT_ITEMS) for _ in range(rng.randint(1, 10)))
+
+
+def suffix_pattern(rng):
+    return rng.choice(RUNS) + "".join(rng.choice(["a", "b", "x", "M", "q", "ing", "z", "_"]) for _ in range(rng.randint(1, 3)))
+
+
 def find_goose(arg):
     for cand in [arg, os.environ.get("GOOSE"), shutil.which("goose"),
                  os.path.join(ROOT, "..", "..", "goose.git", "build", "goose")]:
@@ -76,6 +94,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("-n", type=int, default=2000, help="patterns (each on three texts)")
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--long", action="store_true", help="texts of 200 to 800 bytes, and literal shapes")
     ap.add_argument("--goose")
     args = ap.parse_args()
     goose = find_goose(args.goose)
@@ -86,9 +105,16 @@ def main():
     lines = []
     for i in range(args.n):
         long = i % 2 == 1
-        p = patterns(rng, ATOMS + LONG_ATOMS if long else ATOMS)
+        if args.long:
+            k = i % 3
+            p = literal_pattern(rng) if k == 0 else suffix_pattern(rng) if k == 1 else patterns(rng, ATOMS + LONG_ATOMS)
+        else:
+            p = patterns(rng, ATOMS + LONG_ATOMS if long else ATOMS)
         for _ in range(3):
-            t = "".join(rng.choice(TEXT) for _ in range(rng.randint(0, 60 if long else 12)))
+            if args.long:
+                t = "".join(rng.choice(LONG_TEXT) for _ in range(rng.randint(200, 800)))
+            else:
+                t = "".join(rng.choice(TEXT) for _ in range(rng.randint(0, 60 if long else 12)))
             lines.append(p.encode().hex() + " " + t.encode().hex())
     with tempfile.TemporaryDirectory() as tmp:
         cases = os.path.join(tmp, "cases.txt")

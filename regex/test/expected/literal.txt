@@ -1,0 +1,2 @@
+1842 cases, 0 failures
+by the DFAs 80, literal by a rare byte 60, by a pair 1302, by a byte 180, suffix 220

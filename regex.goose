@@ -1,10 +1,30 @@
 // regex: std's regex (goose's stdlib/regex.goose, docs/stdlib.md) with
-// anchors and word boundaries added: `^ $ \A \z \b \B` and the `m` flag.
-// It has std's namespace and API, so a program switches by changing its
-// import (`import regex;` to `import gslib.regex;`), and is kept in step
-// with std's until goose ships the same (a patch for it is proposed
-// upstream). A program imports one or the other, not both: they share the
+// anchors and word boundaries added: `^ $ \A \z \b \B` and the `m` flag
+// (a patch proposed upstream), and, gslib's own on top of those, faster
+// searches for literals (below). It has std's namespace and API, so a
+// program switches by changing its import (`import regex;` to `import
+// gslib.regex;`), and its matching is kept the same as std's with the
+// patch. A program imports one or the other, not both: they share the
 // namespace `regex`.
+//
+// The literal searches, which std's module does not have:
+//
+// * A pattern every match of which is one sequence of byte sets and
+//   assertions (`the`, `(?i)sherlock`, `\bthe\b`, `\d{4}-\d{2}-\d{2}`,
+//   groups and counted repeats of such) is searched for without the DFAs:
+//   candidates where its two rarest bytes fit, by the runtime's find_pair,
+//   each checked in place; every match is as long, so its start is its end
+//   less that.
+// * A pattern that is a repeated set before such a sequence
+//   (`[a-z]+ing`) finds where a match can start back from the sequence's
+//   next occurrence (Skip.Suffix), and the forward DFA runs from there.
+// * A rare inner byte (the `@` of an email pattern), and a literal of one
+//   rare byte, are looked for by scan_rare, a loop over 128-byte blocks
+//   that clang and GCC vectorize, and that simd builds again for AVX2.
+//
+// All are plain Goose: the runtime's find_any and find_pair, which std
+// already has, and loops the C compiler vectorizes. Under TinyCC they run
+// a byte at a time.
 //
 //   import gslib.regex;          // from a program; `import regex;` inside gslib
 //
@@ -71,6 +91,7 @@ let MAX_WORK = 50000000;    // per DFA: its states' threads times its columns
 let MAX_INSTS = 10000;      // per program
 let MAX_PREFIX = 8;         // leading byte positions the prefix test considers
 let MAX_REPEAT = 1000;      // the largest count a {n,m} may give
+let MAX_LITERAL = 256;      // the longest literal sequence searched for as one
 
 // --- the syntax tree ---------------------------------------------------------
 
@@ -166,13 +187,49 @@ struct Dfa { start: i32, match_end: i32, special: i32, eoi: i32, starts: i32[4],
 
 // How a search gets past text where no match can start, whenever the
 // forward DFA is in its start state: by the prefix test, by the inner byte,
-// to the next line start where every match starts at one, or not at all.
-enum Skip { Scan, Prefix, Inner, Line }
+// to the next line start where every match starts at one, back from the
+// next occurrence of the sequence a repeated set ends with (Suffix), or not
+// at all.
+enum Skip { Scan, Prefix, Inner, Line, Suffix }
 
 // The prefix test: every match is at least `len` bytes long, and its bytes
 // at offsets `at1` and `at2` lie in `set1` and `set2`, so a match can only
 // start where both hold. at1 <= at2.
 struct Prefilter { len: i64, at1: i64, at2: i64, set1: ByteSet, set2: ByteSet }
+
+// A set of bytes scan_rare tests: the bytes x with x | m equal to c, which
+// is one byte (m = 0) or a letter in either case (m = 0x20). A byte's
+// distance, (x | m) ^ c, is 0 for the set's bytes alone, so a block holds
+// one where the least distance in it is 0: a min over the block, which the
+// C compiler turns into vector instructions. (A range as well, by
+// max((x | m) - lo, w) - w, made clang widen the lanes of that loop where
+// the probe is not a constant, and ran at a quarter of the speed.)
+struct Probe { m: u8, c: u8 }
+
+// How a literal search finds the places a sequence can start: by scan_rare
+// for a rare byte, by find_pair over two bytes d apart, or by find_any.
+enum Hunt { Rare, Pair, Any }
+
+// A literal sequence: `len` byte sets with assertions between them, where
+// every match of a pattern is one (the pattern is a literal, or a
+// concatenation of single byte sets), or the end of every match of a
+// pattern that is a repeated set before such a sequence (Skip.Suffix). A
+// candidate is where the sequence's byte at offset o1 (and at o1 + d)
+// fits; the sets are then checked, Regex.lit_sets and lit_looks.
+struct Lit {
+    len:  i64,              // 0: there is none
+    hunt: Hunt,
+    o1:   i64,
+    d:    i64,
+    probe: Probe,           // Rare's
+    set1: ByteSet,          // Pair's and Any's
+    set2: ByteSet,
+    // Suffix's repeated set, and the least and the most repetitions (-1:
+    // no most).
+    run_set: i32,
+    run_min: i64,
+    run_max: i64,
+}
 
 // Where a capture group lies in every match, if that is fixed: its start
 // `start` bytes after the start of the match, or before its end with
@@ -182,7 +239,9 @@ struct Place { start: i64, start_back: bool, end: i64, end_back: bool }
 struct Regex {
     groups:   i64,          // capture groups, group 0 being the whole match
     nullable: bool,         // whether the empty string matches, assertions aside
-    looks:    bool,         // whether the pattern has assertions
+    // Whether the searches take another way than the plain DFAs': the
+    // pattern has assertions, or every match is a literal sequence.
+    routed:   bool,
     placed:   bool,         // whether every group has a fixed place
     entry:    i32,          // where the program starts an anchored match
     classes:  u8[256],      // byte -> its column in the DFAs
@@ -193,12 +252,18 @@ struct Regex {
     // that part, `before`, run back from such a byte, matches. For the
     // line skip, the newline.
     inner:  ByteSet,
+    inner_probe: Probe,     // the inner byte as a probe, where inner_fast
+    inner_fast:  bool,
+    lit:    Lit,
     fwd:    Dfa,            // unanchored and leftmost-first: finds match ends
     rev:    Dfa,            // the reversed pattern, anchored: finds match starts
     before: Dfa,
     places: Place[],
     prog:   Inst[],
     sets:   (bool[256])[],
+    lit_sets:    i32[],     // the literal sequence's set at each offset
+    lit_look_at: i64[],     // its assertions' offsets
+    lit_looks:   Look[],
 }
 
 // --- byte sets -----------------------------------------------------------------
@@ -265,15 +330,23 @@ fn compile(pattern: u8[:]) -> Regex {
 // matches nothing.
 fn compile(pattern: u8[:], err: u8[>..]&) -> Regex { build(pattern, err, false) }
 
+fn no_lit() -> Lit {
+    let none: ByteSet = byte_set([false; 256]);
+    return Lit { len: 0, hunt: Hunt.Any, o1: 0, d: 0, probe: Probe { m: 0, c: 0 }, set1: none, set2: none,
+                 run_set: 0, run_min: 0, run_max: 0 };
+}
+
 // A regex that matches nothing, as compile gives for a malformed pattern:
 // its forward DFA starts in the dead state.
 fn nothing() -> Regex {
     let dead = Dfa { start: 0, match_end: 1, special: 1, eoi: 0, starts: [0; 4], trans: [0] };
     let none: ByteSet = byte_set([false; 256]);
     return Regex {
-        groups: 1, nullable: false, looks: false, placed: false, entry: 0, classes: [0; 256], skip: Skip.Scan,
+        groups: 1, nullable: false, routed: false, placed: false, entry: 0, classes: [0; 256], skip: Skip.Scan,
         filter: Prefilter { len: 0, at1: 0, at2: 0, set1: none, set2: none }, inner: none,
+        inner_probe: Probe { m: 0, c: 0 }, inner_fast: false, lit: no_lit(),
         fwd:    dead, rev: dead, before: dead, places: [], prog: [Inst.Match], sets: [],
+        lit_sets: [], lit_look_at: [], lit_looks: [],
     };
 }
 
@@ -730,6 +803,41 @@ fn build(pattern: u8[:], err: u8[>..]&, aborts: bool) -> Regex {
         }
     }
 
+    // Appends node n to a literal sequence: the set at each offset, and the
+    // assertions with their offsets. False where its matches are not all
+    // the same sequence (an alternation, a repetition of varying count) or
+    // where it is longer than MAX_LITERAL.
+    recursive fn sequence(n: i32, seq: i32[>..]&, look_at: i64[>..]&, looks_of: Look[>..]&) -> bool {
+        match nodes[n] {
+            Empty => { return true; },
+            Bytes b => {
+                seq.push(b.set);
+                return seq.len <= MAX_LITERAL;
+            },
+            Look l => {
+                look_at.push(seq.len);
+                looks_of.push(l.look);
+                return true;
+            },
+            Cat c => { return sequence(c.first, seq, look_at, looks_of) && sequence(c.second, seq, look_at, looks_of); },
+            Group g => { return sequence(g.sub, seq, look_at, looks_of); },
+            Repeat r => {
+                if r.min != r.max { return false; }
+                for k in r.min { if !sequence(r.sub, seq, look_at, looks_of) { return false; } }
+                return true;
+            },
+            Alt => { return false; },
+        }
+    }
+
+    // Node n without the groups around it.
+    recursive fn bare(n: i32) -> i32 {
+        match nodes[n] {
+            Group g => bare(g.sub),
+            _ => n,
+        }
+    }
+
     let root = parse_alt();
     if more() { fail("unmatched )"); }
 
@@ -795,6 +903,56 @@ fn build(pattern: u8[:], err: u8[>..]&, aborts: bool) -> Regex {
         skip = Skip.Prefix;
     }
 
+    // A literal sequence: the whole pattern, which then needs no DFA, or the
+    // end of a pattern that is a repeated set before it, which skip_suffix
+    // looks for where nothing above did. Either pays where under a tenth of
+    // the positions are candidates.
+    var lit = no_lit();
+    var lit_sets: i32[>..] = [];
+    var lit_look_at: i64[>..] = [];
+    var lit_looks: Look[>..] = [];
+    if sequence(root, lit_sets, lit_look_at, lit_looks) && lit_sets.len > 0 {
+        let l, share = choose_hunt(sets, lit_sets);
+        if share < 0.1 { lit = l; }
+    } else if !looks && skip == Skip.Scan && items.len >= 2 {
+        let head_item = bare(items[0]);
+        match nodes[head_item] {
+            Repeat r => {
+                let sub = bare(r.sub);
+                match nodes[sub] {
+                    Bytes b => {
+                        lit_sets.clear();
+                        lit_look_at.clear();
+                        lit_looks.clear();
+                        var tail = true;
+                        for k in 1..items.len {
+                            if !sequence(items[k], lit_sets, lit_look_at, lit_looks) { tail = false; break; }
+                        }
+                        if tail && lit_sets.len > 0 && lit_looks.len == 0 {
+                            let l, share = choose_hunt(sets, lit_sets);
+                            if share < 0.1 {
+                                lit = l;
+                                lit.run_set = b.set;
+                                lit.run_min = r.min;
+                                lit.run_max = r.max;
+                                skip = Skip.Suffix;
+                            }
+                        }
+                    },
+                    _ => {},
+                }
+            },
+            _ => {},
+        }
+    }
+    if lit.len == 0 {
+        lit_sets.clear();
+        lit_look_at.clear();
+        lit_looks.clear();
+    }
+    let literal = lit.len > 0 && skip != Skip.Suffix;
+    let inner_probe, inner_fast = probe_of(inner);
+
     var places: Place[>..] = [];
     places.resize(groups, Place { start: -1, start_back: false, end: -1, end_back: false });
     place(top, 0, 0, places);
@@ -816,19 +974,25 @@ fn build(pattern: u8[:], err: u8[>..]&, aborts: bool) -> Regex {
     let re = Regex {
         groups:   groups,
         nullable: prefix.len == 0,
-        looks:    looks,
+        routed:   looks || literal,
         placed:   placed,
         entry:    entry,
         classes:  classes,
         skip:     skip,
         filter:   filter,
         inner:    byte_set(inner),
+        inner_probe: inner_probe,
+        inner_fast:  inner_fast && skip == Skip.Inner && inner_share <= 0.02,
+        lit:      lit,
         fwd:      build_dfa(prog, sets, classes, head, true, scans, looks, too_big),
         rev:      build_dfa(rprog, sets, classes, rentry, false, false, looks, too_big),
         before:   build_dfa(bprog, sets, classes, bentry, false, false, looks, too_big),
         places:   copy(places),
         prog:     copy(prog),
         sets:     copy(sets),
+        lit_sets:    copy(lit_sets),
+        lit_look_at: copy(lit_look_at),
+        lit_looks:   copy(lit_looks),
     };
     if too_big { stop(str("regex: the pattern's DFA would be too large: ", pattern)); }
     return re;
@@ -929,6 +1093,64 @@ fn choose_filter(prefix: (bool[256])[:]) -> Prefilter, f64 {
     }
     return Prefilter { len: prefix.len, at1: at1, at2: at2, set1: byte_set(prefix[at1]),
                        set2: byte_set(prefix[at2]) }, best;
+}
+
+// The probe for a set, and whether there is one: the bytes x with
+// (x | m) - lo at most w, for m 0 or 0x20, are the set.
+fn probe_of(set: bool[256]) -> Probe, bool {
+    var members: i64[>..] = [];
+    for x in 256 { if set[x] { members.push(x); } }
+    if members.len == 1 { return Probe { m: 0, c: members[0] as u8 }, true; }
+    if members.len == 2 && members[0] ^ members[1] == 0x20 { return Probe { m: 0x20, c: members[1] as u8 }, true; }
+    return Probe { m: 0, c: 0 }, false;
+}
+
+// The share of positions, by `frequency`, that hold a byte of the set.
+fn share_of(set: bool[256]) -> f64 {
+    var f = 0.0;
+    for b in 256 { if set[b] { f += frequency(b as u8); } }
+    return f / 100.0;
+}
+
+// How a literal search over the sequence of these sets hunts for it, and
+// the share of positions it lets through: the two rarest offsets by
+// find_pair, preferring the farther pair of two alike, whose bytes are less
+// often found together by chance; for a sequence of one byte, scan_rare
+// where it is rare (2% or less) and has a probe, else find_any. A single
+// byte, for a longer sequence, lets through more than the table says
+// (capitals and `c` are commoner in text than the bytes `frequency` ranks
+// with them), and each candidate costs a call: the pair's runtime search
+// takes dense candidates better.
+fn choose_hunt(sets: (bool[256])[:], seq: i32[:]) -> Lit, f64 {
+    var lit = no_lit();
+    lit.len = seq.len;
+    var rarest = 0;
+    for k in seq.len { if share_of(sets[seq[k]]) < share_of(sets[seq[rarest]]) { rarest = k; } }
+    let p, fits = probe_of(sets[seq[rarest]]);
+    let rare = share_of(sets[seq[rarest]]);
+    if seq.len == 1 && fits && rare <= 0.02 {
+        lit.hunt = Hunt.Rare;
+        lit.o1 = rarest;
+        lit.probe = p;
+        return lit, rare;
+    }
+    var best = rare;
+    lit.hunt = Hunt.Any;
+    lit.o1 = rarest;
+    for j in seq.len {
+        for k in j + 1..seq.len {
+            let pair = share_of(sets[seq[j]]) * share_of(sets[seq[k]]);
+            if pair < best || (pair == best && lit.hunt == Hunt.Pair && k - j > lit.d) {
+                best = pair;
+                lit.hunt = Hunt.Pair;
+                lit.o1 = j;
+                lit.d = k - j;
+            }
+        }
+    }
+    lit.set1 = byte_set(sets[seq[lit.o1]]);
+    lit.set2 = byte_set(sets[seq[lit.o1 + lit.d]]);
+    return lit, best;
 }
 
 // The byte classes of a program's sets: two bytes share a class when every
@@ -1210,6 +1432,99 @@ fn build_dfa(prog: Inst[:], sets: (bool[256])[:], classes: u8[256], start_pc: i3
 
 // --- searching ----------------------------------------------------------------------
 
+inline fn dist(p: Probe, x: u8) -> u8 { (x | p.m) ^ p.c }
+
+// The first i >= from with s[i] in the probe's set, -1 if none: for a rare
+// byte, 128 bytes at a time, each block tested by the least distance in it,
+// then the block 16 bytes at a time the same way, then the 16 bytes one by
+// one. The blocks' loops are what clang and GCC vectorize (16 or, in the
+// AVX2 version simd asks for, 32 bytes an instruction); TinyCC runs them a
+// byte at a time.
+simd fn scan_rare(s: u8[:], from: i64, p: Probe) -> i64 {
+    var i = from;
+    while i + 128 <= s.len {
+        let x = s[i..i + 128];
+        var m: u8 = 255;
+        for v in x { m = min(m, dist(p, v)); }
+        if m == 0 {
+            loop {
+                let y = s[i..i + 16];
+                var my: u8 = 255;
+                for v in y { my = min(my, dist(p, v)); }
+                if my == 0 { break; }
+                i += 16;
+            }
+            break;
+        }
+        i += 128;
+    }
+    while i < s.len {
+        if dist(p, s[i]) == 0 { return i; }
+        i++;
+    }
+    return -1;
+}
+
+// Whether the literal sequence matches at `start`, where it fits.
+fn lit_at(re: Regex&, text: u8[:], start: i64) -> bool {
+    let sets = re.sets;
+    for c, k in re.lit_sets { if !sets[c][text[start + k]] { return false; } }
+    for l, k in re.lit_looks {
+        let at = start + re.lit_look_at[k];
+        if !holds(l, kind_before(text, at), kind_at(text, at)) { return false; }
+    }
+    return true;
+}
+
+// Where the literal sequence first matches at or after `from`; -1 if it
+// does not.
+// (It reads re.lit in place: a copy of it, with its two byte sets, cost
+// each search a sixth on a date's.)
+fn lit_find(re: Regex&, text: u8[:], from: i64) -> i64 {
+    let len = re.lit.len;
+    let o1 = re.lit.o1;
+    var p = from;
+    while p + len <= text.len {
+        let q = p + o1;
+        let k = match re.lit.hunt {
+            Rare => scan_rare(text, q, re.lit.probe),
+            Pair => find_pair(text[q..], re.lit.set1, re.lit.d, re.lit.set2),
+            Any => find_any(text[q..], re.lit.set1),
+        };
+        if k < 0 { return -1; }
+        let found = if re.lit.hunt == Hunt.Rare { k } else { q + k };
+        let start = found - o1;
+        if start + len > text.len { return -1; }
+        if lit_at(re, text, start) { return start; }
+        p = start + 1;
+    }
+    return -1;
+}
+
+// The first position at or after i where a match of a repeated set before
+// the literal sequence can start: back from the first occurrence of the
+// sequence with at least run_min bytes of the set before it (and after i),
+// as many as there are up to run_max. No match starts before: one would
+// end at that occurrence or at a later one, and then the bytes of the set
+// before the occurrence would reach back to it. A simd function stays out
+// of line, as this one must: inlined into find_end, through resume, it
+// made clang's code for the DFA loop there a fifth slower on an
+// alternation the prefix test takes.
+simd fn skip_suffix(re: Regex&, text: u8[:], i: i64) -> i64 {
+    let set = re.lit.run_set;
+    let least = re.lit.run_min;
+    let most = re.lit.run_max;
+    var from = i + least;
+    loop {
+        let q = lit_find(re, text, from);
+        if q < 0 { return text.len; }
+        var r = 0;
+        while (most < 0 || r < most) && q - r - 1 >= i && re.sets[set][text[q - r - 1]] { r++; }
+        if r >= least { return q - r; }
+        from = q + 1;
+    }
+}
+
 // The prefix test's next position at or after i where a match can start;
 // text.len if there is none.
 inline fn skip_prefix(f: Prefilter&, text: u8[:], i: i64) -> i64 {
@@ -1230,9 +1545,15 @@ fn skip_inner(re: Regex&, text: u8[:], i: i64) -> i64 {
     var lo = i;
     var q = i;
     while q < text.len {
-        let k = find_any(text[q..], re.inner);
-        if k < 0 { break; }
-        q += k;
+        // a rare byte with a probe by scan_rare, any other by find_any
+        if re.inner_fast {
+            q = scan_rare(text, q, re.inner_probe);
+            if q < 0 { break; }
+        } else {
+            let k = find_any(text[q..], re.inner);
+            if k < 0 { break; }
+            q += k;
+        }
         let s = scan_back(re, re.before, text, lo, q);
         if s >= 0 { return s; }
         q++;
@@ -1243,10 +1564,14 @@ fn skip_inner(re: Regex&, text: u8[:], i: i64) -> i64 {
 
 // Where the search goes on when the forward DFA is in its start state at
 // i, which no match starts before: the first position a match can start at.
-fn resume(re: Regex&, text: u8[:], i: i64) -> i64 {
+// Inlined into find_end, its one caller, as it was before Suffix made it
+// too big for that: a call in find_end's loop costs every pattern the DFAs
+// search, a tenth on `\w+`.
+inline fn resume(re: Regex&, text: u8[:], i: i64) -> i64 {
     match re.skip {
         Prefix => skip_prefix(re.filter, text, i),
         Inner => skip_inner(re, text, i),
+        Suffix => skip_suffix(re, text, i),
         Scan => i,
         Line => i,      // find_end_looks takes the line skip itself
     }
@@ -1262,7 +1587,7 @@ fn skip_line(re: Regex&, text: u8[:], i: i64) -> i64 {
 
 // The end of the leftmost-first match that starts at or after `at`, or -1.
 fn find_end(re: Regex&, text: u8[:], at: i64) -> i64 {
-    if re.looks { return find_end_looks(re, text, at); }
+    if re.routed { return find_end_routed(re, text, at); }
     let trans = re.fwd.trans;
     let start = re.fwd.start;
     let special = re.fwd.special;
@@ -1285,6 +1610,14 @@ fn find_end(re: Regex&, text: u8[:], at: i64) -> i64 {
         }
     }
     return last;
+}
+
+// find_end for a routed pattern: a literal sequence, where every match is
+// as long, or a pattern with assertions.
+fn find_end_routed(re: Regex&, text: u8[:], at: i64) -> i64 {
+    guard re.lit.len > 0 else { return find_end_looks(re, text, at); }
+    let start = lit_find(re, text, at);
+    return if start < 0 { -1 } else { start + re.lit.len };
 }
 
 // find_end for a pattern with assertions, whose DFA reports a match on the
@@ -1330,7 +1663,11 @@ fn find_end_looks(re: Regex&, text: u8[:], at: i64) -> i64 {
 // matches: the leftmost start of a match of its pattern that ends at
 // `end`; -1 if there is none.
 fn scan_back(re: Regex&, d: Dfa&, text: u8[:], lo: i64, end: i64) -> i64 {
-    if re.looks { return scan_back_looks(re, d, text, lo, end); }
+    if re.routed {
+        // a literal sequence's start: only find_start comes here for one
+        if re.lit.len > 0 { return end - re.lit.len; }
+        return scan_back_looks(re, d, text, lo, end);
+    }
     let trans = d.trans;
     let match_end = d.match_end;
     var s = d.start;
