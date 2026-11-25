@@ -1,0 +1,17 @@
+# name	kind	pattern (Rust/Goose/Go/PCRE2 syntax)	POSIX ERE spelling (- when ERE cannot say it)	POSIX flags
+literal_rare	count	Moriarty	Moriarty	-
+literal_common	count	the	the	-
+alternation	count	Sherlock|Holmes|Watson	Sherlock|Holmes|Watson	-
+literal_icase	count	(?i)sherlock	sherlock	icase
+words	count	\w+	[[:alnum:]_]+	-
+suffix_ing	count	[a-z]+ing	[a-z]+ing	-
+email	count	[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}	[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}	-
+date	count	\d{4}-\d{2}-\d{2}	[0-9]{4}-[0-9]{2}-[0-9]{2}	-
+no_match	count	[A-Z]{3}[0-9]{7}x	[A-Z]{3}[0-9]{7}x	-
+word_the	count	\bthe\b	-	-
+line_start	count	(?m)^\w+	^[[:alnum:]_]+	newline
+line_end	count	(?m)\w+$	[[:alnum:]_]+$	newline
+text_start	count	\A\w+	^[[:alnum:]_]+	-
+caps_words	caps	(\w+)\s+(\w+)	([[:alnum:]_]+)[[:space:]]+([[:alnum:]_]+)	-
+caps_date	caps	(\d{4})-(\d{2})-(\d{2})	([0-9]{4})-([0-9]{2})-([0-9]{2})	-
+caps_line	caps	(?m)^(\w+)\b	-	-

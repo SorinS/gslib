@@ -1,0 +1,2 @@
+# name	kind	pattern	POSIX	flags
+patho	count	(a|aa)+$	(a|aa)+$	-

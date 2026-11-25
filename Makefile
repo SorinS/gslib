@@ -407,6 +407,14 @@ differential-regex: ## regex against the Rust regex crate on random patterns wit
 	$(call echo,"regex against the regex crate")
 	cd $(ROOT)/regex && $(PYTHON) scripts/differential.py -n 2000
 
+# BENCH_ARGS: more for bench.py run (--goose-cc CC=LABEL, --pcre2 PREFIX, --cc, --go, --lock).
+REGEX_WORK ?= /tmp/gslib-regex-bench
+.PHONY: bench-regex
+bench-regex: ## regex against Rust's regex, Go's regexp, PCRE2 (JIT and not) and POSIX regex.h: builds each, runs the corpora, checks they agree, prints Markdown (needs cargo, go, pcre2)
+	$(call echo,"regex benchmark")
+	cd $(ROOT)/regex/bench && $(PYTHON) bench.py run --goose $(GOOSE) --work $(REGEX_WORK) --machine "$$(uname -sm)" --out $(REGEX_WORK)/results.json $(BENCH_ARGS)
+	cd $(ROOT)/regex/bench && $(PYTHON) bench.py report $(REGEX_WORK)/results.json
+
 .PHONY: differential-xml
 differential-xml: ## xml canonicalization against lxml (libxml2) on a corpus and random documents (XML_PYTHON with lxml)
 	$(call echo,"XML canonicalization against lxml")
