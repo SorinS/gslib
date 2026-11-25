@@ -45,10 +45,11 @@ later.
 | `service` | Programs as system services, as Go's kardianos/service: one API for Windows services (the service control manager: dispatcher, control handler, stop, shutdown, pause, parameter changes; installing with a description, delayed start and restart on failure; the Application event log), systemd units (a user's or the system's) and launchd agents and daemons; begin, wait for the system's requests, end; install, uninstall, start, stop, restart, status, and those as a program's verbs | [README](service/README.md) |
 | `sys` | The operating system's own calls, as Go's golang.org/x/sys, os/user and x/term with go-win64api's Windows management, on Windows, Linux and macOS: the host, processes (list, arguments, executable, kill), users and groups, files by path and by descriptor (stat, links, locks, pipes, memory maps), errors sorted portably; the Windows registry; local accounts and groups, sessions, services, shares and installed software; signals as values, limits, usage and sysctl; terminals and consoles; its FFI generated from one table, as mksyscall | [README](sys/README.md) |
 | `sspi` | Windows' SSPI, as Go's alexbrainman/sspi: security packages, credentials (the login's or a password's), contexts a token at a time, sign/verify/seal/unseal; a TLS client on Windows' own Schannel (the system's roots, policy and TLS 1.3, peer certificate for x509, manual validation for test servers); HTTP Negotiate (RFC 4559) from the Windows login, Kerberos in a domain and NTLM otherwise, or as a user by password | [README](sspi/README.md) |
+| `regex` | goose's std regex with anchors and word boundaries added, as the Rust regex crate has them: `^ $ \A \z \b \B` and the `m` flag; std's namespace and API, so a program switches by its import, until goose ships the same | [README](regex/README.md) |
 
-## entropy, net, websocket, quic, dns, pkcs11, jwx, mail, openpgp, acme, oauth, tsp, xml, est, scep, saml, ntlm, tpm2, webauthn, radius, smb, kmip, service, sys and sspi
+## entropy, net, websocket, quic, dns, pkcs11, jwx, mail, openpgp, acme, oauth, tsp, xml, est, scep, saml, ntlm, tpm2, webauthn, radius, smb, kmip, service, sys, sspi and regex
 
-These twenty-five have the most to say beyond their table rows: what each
+These twenty-six have the most to say beyond their table rows: what each
 module does, how it was built and how it was tested. Each README has the
 full API.
 
@@ -1065,6 +1066,33 @@ Goose server (examples/krb5/negotiate_server.goose) holding only the
 service's keytab, which verified them and their PACs, and SSPI verified
 the server's reply in turn.
 
+### regex: anchors and word boundaries
+
+goose's std regex follows the Rust regex crate's syntax and semantics,
+but rejects `^ $ \A \z \b \B`. gslib's regex is that module with them
+added, with the crate's meaning. `\A` and `\z` are the ends of the text,
+and so are `^` and `$` except under the `m` flag, where `^` also holds
+after a newline and `$` before one. `\b` and `\B` are a word boundary and
+its absence, with ASCII word bytes. It keeps std's namespace and API, so
+a program switches by changing `import regex;` to `import gslib.regex;`,
+and back once goose has the same: the change is proposed upstream as a
+patch, and this copy is kept in step with std's until then. A program
+imports one or the other; both declare `regex`.
+
+Searches stay one table lookup per byte. Each assertion looks at most one
+byte each way, so a DFA state of a pattern with assertions also records
+the kind of byte before it, and its pending assertions and match wait for
+the next byte, or the end of the text, as the crate's DFAs do. Patterns
+anchored with `\A` stop at the first byte, patterns anchored at line
+starts skip from newline to newline, and patterns without assertions run
+exactly as in std. Tested against the crate itself (regex 1.13.2,
+`regex::bytes`, Unicode off): random patterns mixing the assertions into
+alternations, repetitions, groups and scoped flags, on random texts,
+compared match by match and group by group. 156,000 cases came out the
+same while the patch was made, apart from 51 whose patterns are too
+large for the module's complete DFAs. `make differential-regex` runs more,
+and 605 of them are kept as fixed cases beside goose's own test.
+
 ## Post-quantum cryptography
 
 The NIST post-quantum standards are in crypto/bignum, and the protocols
@@ -1266,6 +1294,7 @@ webauthn.goose, webauthn/             webauthn, the same
 service.goose, service/, service/src/ service, the same, and its C
 sys.goose, sys/, sys/src/             sys and its modules (registry, windows, unix, term, process), the same, and its C
 sspi.goose, sspi/                     sspi, the same
+regex.goose, regex/                   regex, the same
 examples/<lib>/                       each library's examples (excluded too)
 scripts/run_all.py            every library's unit tests
 scripts/split.py              the standalone repositories, synced from here
@@ -1362,7 +1391,7 @@ make interop              # live: OpenSSL, Go, OpenSSH, OpenLDAP, curl, nghttp2,
                           # pyspnego, impacket, go-ntlmssp, swtpm, tpmemu, python-fido2, py_webauthn, go-webauthn,
                           # Autobahn|Testsuite, Python's websockets, aioquic, quic-go
 make differential         # against Go (net/http, net/url, hpack, compress, mime, jwx, miekg/dns), zlib, openssl,
-                          # libxml2 (lxml, xmlsec), go-tpm, cbor2
+                          # libxml2 (lxml, xmlsec), go-tpm, cbor2, the Rust regex crate
 make live-service         # installs, starts, kills, stops and uninstalls a real service (a user's
                           # systemd unit or launchd agent; on Windows, as an administrator)
 make live-sspi            # Windows: Schannel against gslib's TLS server and public sites, Negotiate

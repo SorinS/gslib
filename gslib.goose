@@ -28,12 +28,13 @@
 // programs as
 // Windows services, systemd units and launchd jobs (service), and the
 // operating system's own calls: processes, users, files, the Windows
-// registry and management, signals, terminals (sys), and Windows' SSPI:
-// Schannel TLS and Negotiate (Kerberos/NTLM) from the login (sspi), with
+// registry and management, signals, terminals (sys), Windows' SSPI:
+// Schannel TLS and Negotiate (Kerberos/NTLM) from the login (sspi), and
+// std's regular expressions with anchors and word boundaries added (regex), with
 // the OS's random bytes for keys under all of it (entropy). A program
 // declares the package once and imports the
 // modules it uses, grouped as Go groups them (compress, crypto/,
-// encoding/, mime, net/; websocket, quic, krb5, jwx, pkcs11, dns, mail, acme, oauth, tsp, est, scep, saml, ntlm, tpm2, webauthn, radius, smb, kmip, service, sys, sspi, entropy and
+// encoding/, mime, net/; websocket, quic, krb5, jwx, pkcs11, dns, mail, acme, oauth, tsp, est, scep, saml, ntlm, tpm2, webauthn, radius, smb, kmip, service, sys, sspi, regex, entropy and
 // net's sockets at the top too);
 // each keeps its own namespace:
 //

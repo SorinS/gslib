@@ -14,14 +14,14 @@ PYTHON  ?= python3
 GOOSE   ?= $(or $(shell command -v goose 2>/dev/null),$(abspath $(ROOT)/../goose.git/build/goose))
 export GOOSE
 
-LIBS    := asn1 bignum x509 tls ssh ldap yaml http websocket quic compress mime krb5 jwx pkcs11 dns mail openpgp acme oauth tsp xml est scep saml cbor webauthn ntlm tpm2 radius smb kmip
+LIBS    := asn1 bignum x509 tls ssh ldap yaml http websocket quic compress mime krb5 jwx pkcs11 dns mail openpgp acme oauth tsp xml est scep saml cbor webauthn ntlm tpm2 radius smb kmip regex
 
 # ------------------------------------------------------------------------------
 # Derived values
 # ------------------------------------------------------------------------------
 
 # A program is rebuilt when any of the package's sources changes.
-SOURCES := $(ROOT)/gslib.goose $(ROOT)/gslib.build $(ROOT)/net.goose $(ROOT)/websocket.goose $(ROOT)/quic.goose $(ROOT)/compress.goose $(ROOT)/mime.goose $(ROOT)/krb5.goose $(ROOT)/jwx.goose $(ROOT)/pkcs11.goose $(ROOT)/dns.goose $(ROOT)/mail.goose $(ROOT)/acme.goose $(ROOT)/oauth.goose $(ROOT)/tsp.goose $(ROOT)/est.goose $(ROOT)/scep.goose $(ROOT)/saml.goose $(ROOT)/webauthn.goose $(ROOT)/ntlm.goose $(ROOT)/tpm2.goose $(ROOT)/radius.goose $(ROOT)/smb.goose $(ROOT)/kmip.goose \
+SOURCES := $(ROOT)/gslib.goose $(ROOT)/gslib.build $(ROOT)/net.goose $(ROOT)/websocket.goose $(ROOT)/quic.goose $(ROOT)/compress.goose $(ROOT)/mime.goose $(ROOT)/krb5.goose $(ROOT)/jwx.goose $(ROOT)/pkcs11.goose $(ROOT)/dns.goose $(ROOT)/mail.goose $(ROOT)/acme.goose $(ROOT)/oauth.goose $(ROOT)/tsp.goose $(ROOT)/est.goose $(ROOT)/scep.goose $(ROOT)/saml.goose $(ROOT)/webauthn.goose $(ROOT)/ntlm.goose $(ROOT)/tpm2.goose $(ROOT)/radius.goose $(ROOT)/smb.goose $(ROOT)/kmip.goose $(ROOT)/regex.goose \
 	$(shell find $(ROOT)/crypto $(ROOT)/encoding $(ROOT)/net $(ROOT)/websocket $(ROOT)/quic $(ROOT)/compress $(ROOT)/mime $(ROOT)/krb5 $(ROOT)/jwx $(ROOT)/pkcs11 $(ROOT)/dns $(ROOT)/mail $(ROOT)/acme $(ROOT)/oauth $(ROOT)/tsp $(ROOT)/est $(ROOT)/scep $(ROOT)/saml $(ROOT)/webauthn $(ROOT)/ntlm $(ROOT)/tpm2 $(ROOT)/radius $(ROOT)/smb $(ROOT)/kmip \
 		\( -name '*.goose' -o -name '*.c' -o -name '*.build' \) \
 		-not -path '*/test/*' -not -path '*/examples/*')
@@ -162,7 +162,7 @@ test-native: ## Run the unit tests, also built with the C compiler
 
 # test-asn1, test-bignum, ... (scripts/run_all.py refuses a name not in
 # LIBS). Not .PHONY: make looks for no pattern rule for a phony target.
-test-%: ## Run one library's unit tests: test-entropy test-asn1 test-bignum test-x509 test-tls test-ssh test-net test-ldap test-yaml test-http test-websocket test-quic test-compress test-mime test-krb5 test-jwx test-pkcs11 test-dns test-mail test-openpgp test-acme test-oauth test-tsp test-xml test-est test-scep test-saml test-cbor test-webauthn test-ntlm test-tpm2 test-radius test-smb test-kmip test-service test-sys test-sspi
+test-%: ## Run one library's unit tests: test-entropy test-asn1 test-bignum test-x509 test-tls test-ssh test-net test-ldap test-yaml test-http test-websocket test-quic test-compress test-mime test-krb5 test-jwx test-pkcs11 test-dns test-mail test-openpgp test-acme test-oauth test-tsp test-xml test-est test-scep test-saml test-cbor test-webauthn test-ntlm test-tpm2 test-radius test-smb test-kmip test-regex test-service test-sys test-sspi
 	$(call echo,"Running $* unit tests")
 	cd $(ROOT) && $(PYTHON) scripts/run_all.py --only $*
 
@@ -270,7 +270,7 @@ interop-krb5: ## Kerberos against MIT's KDC, kinit/kvno/klist, gss-client/gss-se
 	cd $(ROOT)/krb5 && $(PYTHON) scripts/interop.py
 
 .PHONY: differential
-differential: differential-http differential-x509 differential-compress differential-mime differential-jwx differential-dns differential-xml differential-cbor differential-tpm2 ## Run every differential
+differential: differential-http differential-x509 differential-compress differential-mime differential-jwx differential-dns differential-xml differential-cbor differential-tpm2 differential-regex ## Run every differential
 
 .PHONY: differential-http
 differential-http: ## HTTP/1.1 parsing, URLs and HPACK against Go; gzip and deflate decoding against zlib
@@ -401,6 +401,11 @@ live-sspi: ## sspi live (Windows): Schannel against gslib's TLS server and publi
 differential-tpm2: ## tpm2 against go-tpm on random cases: KDFa, KDFe, Names of random public areas and NV indices, policy digests (needs Go)
 	$(call echo,"tpm2 against go-tpm")
 	cd $(ROOT)/tpm2 && $(PYTHON) scripts/differential.py -n 3000
+
+.PHONY: differential-regex
+differential-regex: ## regex against the Rust regex crate on random patterns with anchors and word boundaries (needs cargo)
+	$(call echo,"regex against the regex crate")
+	cd $(ROOT)/regex && $(PYTHON) scripts/differential.py -n 2000
 
 .PHONY: differential-xml
 differential-xml: ## xml canonicalization against lxml (libxml2) on a corpus and random documents (XML_PYTHON with lxml)
