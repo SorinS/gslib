@@ -34,7 +34,7 @@ socket, and TLS ([tlsgoose](../../crypto/tls) in `tools/`).
   writes them; change records read as its ldapmodify reads them.
 
 ```goose
-import gslib from "SorinS/gslib@v0.7.0";   // or a path to gslib.git
+import gslib from "SorinS/gslib@v0.9.4";   // or a path to gslib.git
 import gslib.net.ldap;
 import gslib.net.ldap.conn;
 

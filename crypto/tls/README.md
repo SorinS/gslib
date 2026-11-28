@@ -39,7 +39,7 @@ reset, which can reach the peer before it has read the alert
   AES-CBC with HMAC.
 
 ```goose
-import gslib from "SorinS/gslib@v0.7.0";   // or a path to gslib.git
+import gslib from "SorinS/gslib@v0.9.4";   // or a path to gslib.git
 import gslib.crypto.tls;
 import gslib.crypto.tls.schedule;
 import gslib.crypto.tls.record;

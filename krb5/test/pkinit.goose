@@ -265,7 +265,7 @@ fn kdc_reply(signer: const u8[:], kdc_value: const u8[:], nonce: u32, ctype: con
     asn1::put_bits(bits, kdc_value);
     asn1::put(body, asn1::ctx(0, true), bits);
     var n: u8[>..] = [];
-    asn1::put_i64(n, nonce as i64);
+    asn1::put_i64(n, nonce);
     asn1::put(body, asn1::ctx(1, true), n);
     var info: u8[>..] = [];
     asn1::put(info, asn1::SEQUENCE, body);

@@ -35,7 +35,7 @@ fn conn(m: const u8[:], is_client: bool, flags: u8) {
     c.opt.read_limit = 1 << 20;
     websocket::start(c, is_client, p, "");
     // In two pieces, so that a frame may be cut anywhere.
-    let cut = if m.len > 0 { (m[0] as i64) % (m.len + 1) } else { 0 };
+    let cut = if m.len > 0 { m[0] % (m.len + 1) } else { 0 };
     var msg: u8[>..] = [];
     for piece in 2 {
         websocket::feed(c, if piece == 0 { m[..cut] } else { m[cut..] });

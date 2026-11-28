@@ -6,7 +6,7 @@ It is the base of [x509](../../crypto/x509), and works as well for keys,
 CSRs, CMS or anything else in DER.
 
 ```goose
-import gslib from "SorinS/gslib@v0.7.0";   // or a path to gslib.git
+import gslib from "SorinS/gslib@v0.9.4";   // or a path to gslib.git
 import gslib.encoding.asn1;
 
 let ders, ok = asn1::pem_decode(text, "CERTIFICATE");

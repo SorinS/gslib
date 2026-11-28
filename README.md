@@ -1249,7 +1249,7 @@ A program declares the package once, in its root file, and imports the
 modules it uses:
 
 ```goose
-import gslib from "SorinS/gslib@v0.7.0";     // or a path: import gslib from "../gslib.git";
+import gslib from "SorinS/gslib@v0.9.4";     // or a path: import gslib from "../gslib.git";
 import gslib.net.http.fetch;
 import gslib.crypto.tls.handshake;
 
@@ -1260,7 +1260,7 @@ fn main() {
 }
 ```
 
-The tag pins a release; use v0.7.0 or a later one (`git tag` in gslib.git
+The tag pins a release; use v0.9.4 or a later one (`git tag` in gslib.git
 lists them), or a commit by its full hash.
 
 The libraries are grouped as Go groups its packages: `crypto/` (bignum,
@@ -1341,7 +1341,7 @@ top, it copies a library's modules, C, tests, tools, scripts, README and
 examples into its repository beside gslib.git and rewrites the imports
 for a package of its own (`import gslib.crypto.tls.handshake;` becomes
 `import tls.handshake;`, and a library that needs another declares it, as
-`import bignum from "SorinS/bigmongoose@v0.7.0";`). net and ntlm, which
+`import bignum from "SorinS/bigmongoose@v0.9.4";`). net and ntlm, which
 http needs, have repositories of their own too (netgoose, ntlmgoose), and
 so does entropy (entropygoose), which the libraries import by name alone,
 with no requirement line, so that a program's root can declare another
@@ -1382,11 +1382,13 @@ its examples.
 
 ## Requirements
 
-goose.git's master from ee261a4c (#346) on: entropy takes its bytes from
-`os::random_bytes`, which has ProcessPrng on Windows since then; http's
-client keeps its state in a `root struct` (683ebc94 on). The tests ran with master as it is,
-v2026.3-252-g2ed1a63d, on Linux, and on macOS with v2026.3-254-gd402d2c7,
-master and one fix of TinyCC's arm64 code (dfe35659, for `goose run`).
+goose.git's master from 0df078fe (#345, v2026.4-69) on: bignum copies
+with `copy_from`, which #345 added (it renamed `copy_into`). That also
+covers what earlier releases needed: entropy takes its bytes from
+`os::random_bytes`, which has ProcessPrng on Windows from ee261a4c (#346)
+on, and http's client keeps its state in a `root struct` (683ebc94 on).
+The tests ran with master as it is, v2026.4-98-g96bc6e2d, on macOS
+(arm64) and Linux (x86-64).
 
 On Windows, executables `goose build` writes get a 1 MB stack, which
 some tests overflow.

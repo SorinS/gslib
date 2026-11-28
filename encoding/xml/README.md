@@ -64,7 +64,7 @@ An error says what and where: `Error { code, offset, line, column, message }`.
 ## Using it
 
 ```goose
-import gslib from "SorinS/gslib@v0.7.0";
+import gslib from "SorinS/gslib@v0.9.4";
 import gslib.encoding.xml;
 import gslib.encoding.xml.dsig;
 import gslib.encoding.xml.enc;

@@ -11,7 +11,7 @@ three platforms:
 | macOS | a launchd agent (`user_level`) or daemon | nothing, or root |
 
 ```goose
-import gslib from "SorinS/gslib@v0.7.0";
+import gslib from "SorinS/gslib@v0.9.4";
 import gslib.service;
 
 fn main() {

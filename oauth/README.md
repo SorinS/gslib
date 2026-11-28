@@ -76,7 +76,7 @@ another host).
 ## Using it
 
 ```goose
-import gslib from "SorinS/gslib@v0.7.0";
+import gslib from "SorinS/gslib@v0.9.4";
 import gslib.oauth;
 import gslib.oauth.oidc;
 import gslib.net.http.client;

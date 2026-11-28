@@ -11,7 +11,7 @@ is checked as UTF-8 as it arrives. Six modules in namespace `websocket`,
 and two tools, `goose-wscat` and `goose-wsecho`.
 
 ```goose
-import gslib from "SorinS/gslib@v0.7.0";
+import gslib from "SorinS/gslib@v0.9.4";
 import gslib.websocket;
 import gslib.websocket.deflate;
 import gslib.websocket.handshake;

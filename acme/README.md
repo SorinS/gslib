@@ -31,7 +31,7 @@ times (3). Every refusal leaves its problem document (RFC 9457) in
 ## Using it
 
 ```goose
-import gslib from "SorinS/gslib@v0.7.0";
+import gslib from "SorinS/gslib@v0.9.4";
 import gslib.acme;
 import gslib.jwx.jwa;
 import gslib.jwx.jwk;

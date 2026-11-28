@@ -67,7 +67,7 @@ simd fn encode_long(out: u8[>..]&, src: const u8[:], gap: u8) {
 }
 
 // Appends the lowercase hex of src to out: "00ff1a". Not for secrets
-// shorter than 8 bytes, whose digits it looks up: encode_ct is.
+// shorter than 16 bytes, whose digits it looks up: encode_ct is.
 fn encode(out: u8[>..]&, src: const u8[:]) {
     if src.len >= SHORT_ENCODE { encode_long(out, src, 39); return; }
     // A local, not a global: the C reads a global's slice afresh each time.

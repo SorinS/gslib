@@ -12,7 +12,7 @@ function of its function list.
 | `pkcs11.p11` | `p11::` | the layer over it that miekg's `p11` is: Module, Slot, Session, Object, PrivateKey, PublicKey, SecretKey, KeyPair |
 
 ```goose
-import gslib from "SorinS/gslib@v0.7.0";
+import gslib from "SorinS/gslib@v0.9.4";
 import gslib.pkcs11;
 import gslib.pkcs11.p11;
 
@@ -152,7 +152,9 @@ against a fresh SoftHSM token.
 `python3 scripts/run_tests.py` (or `make test-pkcs11`) runs every
 test/*.goose at -O0, -O2 and `--debug` (and natively with `--native`),
 each on a fresh SoftHSM2 token made by `softhsm2-util`; without SoftHSM2
-the tests are skipped. Each cryptographic result is checked with
+the tests are skipped. The Ed25519 checks need SoftHSM 2.6 or later, the
+first with CKM_EDDSA: 2.5 (Ubuntu 20.04's) refuses the key pair with
+`CKR_MECHANISM_INVALID`. Each cryptographic result is checked with
 crypto/bignum, an implementation of its own:
 
 | Test | What |

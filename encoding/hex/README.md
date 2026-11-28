@@ -7,7 +7,7 @@ fingerprints and protocol traces are all shown and read this way; before
 this package, gslib's libraries each carried their own copy.
 
 ```goose
-import gslib from "SorinS/gslib@v0.7.0";
+import gslib from "SorinS/gslib@v0.9.4";
 import gslib.encoding.hex;
 import gslib.entropy;
 

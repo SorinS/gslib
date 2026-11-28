@@ -18,7 +18,7 @@ and macOS. Six modules:
 | `gslib.sys.process` | `process` | child processes on pipes or a pseudo-terminal (a POSIX pty, Windows' ConPTY) | os/exec |
 
 ```goose
-import gslib from "SorinS/gslib@v0.7.0";
+import gslib from "SorinS/gslib@v0.9.4";
 import gslib.sys;
 
 fn main() {

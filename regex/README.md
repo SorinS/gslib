@@ -10,7 +10,7 @@ until then. A program imports one or the other, not both: both declare
 `regex`, and importing both is a compile error.
 
 ```goose
-import gslib from "SorinS/gslib@v0.7.0";
+import gslib from "SorinS/gslib@v0.9.4";
 import gslib.regex;                     // instead of std's `import regex;`
 
 fn main() {

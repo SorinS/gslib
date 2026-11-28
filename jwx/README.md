@@ -95,7 +95,7 @@ or algorithm, and Go's jwx v4 has none either, so they are not here.
 ## Using it
 
 ```goose
-import gslib from "SorinS/gslib@v0.7.0";
+import gslib from "SorinS/gslib@v0.9.4";
 import gslib.jwx.jwk;
 import gslib.jwx.jws;
 import gslib.jwx.jwt;

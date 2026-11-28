@@ -12,7 +12,7 @@ time, and the messages a context protects. Two modules use it:
 | `sspi.negotiate` | HTTP's Negotiate authentication (RFC 4559) from the Windows login: Kerberos in a domain, NTLM otherwise |
 
 ```goose
-import gslib from "SorinS/gslib@v0.7.0";
+import gslib from "SorinS/gslib@v0.9.4";
 import gslib.sspi;
 import gslib.sspi.schannel;
 

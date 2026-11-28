@@ -30,7 +30,7 @@ must do that walk itself, or ask a validating resolver it trusts.
 All of them are in the namespace `dns`, as miekg's are in one package.
 
 ```goose
-import gslib from "SorinS/gslib@v0.7.0";
+import gslib from "SorinS/gslib@v0.9.4";
 import gslib.dns;
 import gslib.dns.msg;
 import gslib.dns.edns;

@@ -83,7 +83,7 @@ as WebAuthn and X.509 have them, or r || s (COSE_Sign1's) with
 ## Using it
 
 ```goose
-import gslib from "SorinS/gslib@v0.7.0";
+import gslib from "SorinS/gslib@v0.9.4";
 import gslib.encoding.cbor;
 import gslib.encoding.cbor.cose;
 

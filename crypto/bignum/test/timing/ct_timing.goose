@@ -42,7 +42,7 @@ fn welch(s: const i64[:], cut: i64) -> f64 {
     for x in s {
         if x / 2 > cut { continue; }
         n[x & 1] += 1.0;
-        sum[x & 1] += (x / 2) as f64;
+        sum[x & 1] += x / 2;
     }
     if n[0] < 2.0 || n[1] < 2.0 { return 0.0; }
     let m0 = sum[0] / n[0];
@@ -50,7 +50,7 @@ fn welch(s: const i64[:], cut: i64) -> f64 {
     var v: f64[2] = [0.0, 0.0];
     for x in s {
         if x / 2 > cut { continue; }
-        let d = (x / 2) as f64 - (if (x & 1) == 0 { m0 } else { m1 });
+        let d = x / 2 - (if (x & 1) == 0 { m0 } else { m1 });
         v[x & 1] += d * d;
     }
     let se = sqrt(v[0] / (n[0] - 1.0) / n[0] + v[1] / (n[1] - 1.0) / n[1]);

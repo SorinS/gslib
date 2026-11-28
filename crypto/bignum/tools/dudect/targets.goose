@@ -176,9 +176,9 @@ export fn dut_plain_mix(data: const u8[:]) -> u8 {
     var i = 32;
     while i > 0 {
         i--;
-        let x = (r << 16) | ((a[i] >> 16) as u64);
+        let x = (r << 16) | (a[i] >> 16);
         r = (x - ((x * 2148557) >> 32) * 1999) & 0xffffffff;
-        let y = (r << 16) | ((a[i] & 0xffff) as u64);
+        let y = (r << 16) | (a[i] & 0xffff);
         r = (y - ((y * 2148557) >> 32) * 1999) & 0xffffffff;
     }
     return r as! u8;

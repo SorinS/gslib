@@ -47,7 +47,7 @@ produces came from an older copy of the library and is deleted, unless
 kept, unless --delete-other. Nothing is committed: review with git
 status and git diff in each repository.
 
-    python3 scripts/split.py [--mode local|pinned] [--tag v0.7.0] [--dest DIR]
+    python3 scripts/split.py [--mode local|pinned] [--tag v0.9.4] [--dest DIR]
                              [--only net,bignum] [--dry-run] [--keep-stale]
                              [--delete-other] [--graph]
 
@@ -89,6 +89,7 @@ LIBRARIES = {
     "smb": "smb",
     "kmip": "kmip",
     "service": "service", "sys": "sys", "sspi": "sspi",
+    "regex": "regex",
 }
 
 # Packages the libraries import by name only, with no requirement line:
@@ -336,6 +337,16 @@ SPLITS = {
             "This repository is gslib's sspi on its own. Its live check\n"
             "(sspi/scripts/sspi_check.py), which drives gslib's TLS server and\n"
             "goose-ntlm, is in gslib.\n"),
+    ),
+    "regex": dict(
+        repo="regexgoose",
+        # bench/rust and scripts/oracle are cargo projects.
+        gitignore=["__pycache__/", "target/"],
+        fixups=[
+            ("README.md", "`bench/` (`make bench-regex`)", "`bench/` (`python3 bench/bench.py`)"),
+            ("README.md", "make test-regex          # scripts/run_tests.py:", "python3 scripts/run_tests.py      #"),
+            ("README.md", "make differential-regex  # scripts/differential.py:", "python3 scripts/differential.py   #"),
+        ],
     ),
     "ldap": dict(repo="ldapgoose"),
     "http": dict(

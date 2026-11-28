@@ -202,7 +202,7 @@ fn round_trip() {
             format(n, (round * 7 + k) % 9);
             v.append("value ");
             format(v, round * k);
-            for j in (round * 13 + k) % 40 { v.push(('a' as i64 + (j % 26)) as! u8); }
+            for j in (round * 13 + k) % 40 { v.push(('a' + (j % 26)) as! u8); }
             let sensitive = k == 3;
             http::hpack_field(e, enc, n, v, sensitive);
             if sensitive { want.push('!'); }
@@ -278,8 +278,8 @@ fn huff_case(s: const u8[:], how: const u8[:]) -> i64 {
     var n: i64 = 0;
     var bytes: u8[>..] = [];
     for c in s {
-        acc = (acc << (http::HUFF_LEN[c] as u64)) | (http::HUFF_CODE[c] as u64);
-        n += http::HUFF_LEN[c] as i64;
+        acc = (acc << http::HUFF_LEN[c]) | http::HUFF_CODE[c];
+        n += http::HUFF_LEN[c];
     }
     if how == "eos" {
         acc = (acc << 30) | 0x3fffffff;

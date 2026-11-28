@@ -10,7 +10,7 @@ driver carries them over UDP. Eleven modules in namespace `quic`, and two
 tools, `goose-h3` and `goose-h3d`.
 
 ```goose
-import gslib from "SorinS/gslib@v0.9.1";
+import gslib from "SorinS/gslib@v0.9.4";
 import gslib.crypto.tls;
 import gslib.crypto.tls.handshake;
 import gslib.crypto.x509.pool;

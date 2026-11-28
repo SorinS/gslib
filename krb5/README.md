@@ -30,7 +30,7 @@ reading theirs. Only `krb5.transport`, the file functions and the tools do I/O.
 | `krb5.claims` | The PAC's claims (client and device): `decode_claims`, `pac_claims`, with MS-XCA's LZ77+Huffman decompression (`xpress_huff_decompress`) for the compressed ones |
 
 ```goose
-import gslib from "SorinS/gslib@v0.7.0";   // or a path to gslib.git
+import gslib from "SorinS/gslib@v0.9.4";   // or a path to gslib.git
 import gslib.krb5;
 import gslib.krb5.config;
 import gslib.krb5.client;

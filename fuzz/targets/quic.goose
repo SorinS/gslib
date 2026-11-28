@@ -100,7 +100,7 @@ fn qpack(m: const u8[:]) {
 }
 
 fn h3(m: const u8[:]) {
-    let cut = if m.len > 0 { (m[0] as i64) % (m.len + 1) } else { 0 };
+    let cut = if m.len > 0 { m[0] % (m.len + 1) } else { 0 };
     for is_request in 2 {
         var msg = quic::h3_message(is_request == 1);
         var n = 0;

@@ -92,7 +92,7 @@ fn frames(b: const u8[:]) -> u8[>..] {
     if b.len >= 24 && b[..24] == http::H2_PREFACE { out.append("PREFACE\n"); p = 24; }
     let names = ["DATA", "HEADERS", "PRIORITY", "RST_STREAM", "SETTINGS", "PUSH_PROMISE", "PING", "GOAWAY", "WINDOW_UPDATE", "CONTINUATION"];
     while p + 9 <= b.len {
-        let len = ((b[p] as i64) << 16) | ((b[p + 1] as i64) << 8) | (b[p + 2] as i64);
+        let len = ((b[p] as i64) << 16) | ((b[p + 1] as i64) << 8) | b[p + 2];
         let ty = b[p + 3] as i64;
         out.append(if ty < 10 { names[ty] } else { "?" });
         out.push(' ');
@@ -209,7 +209,7 @@ fn basics() {
     // Headers past a frame: CONTINUATION.
     var big: u8[>..] = [];
     big.append("X-Big: ");
-    for k in 40000 { big.push(('a' as i64 + (k * 31 + k / 7) % 26) as! u8); }
+    for k in 40000 { big.push(('a' + (k * 31 + k / 7) % 26) as! u8); }
     big.append("\r\n");
     to_s.clear();
     let s3 = http::h2_request(cl, "GET", "https", "example.com", "/big", big, true, to_s);
@@ -222,7 +222,7 @@ fn basics() {
     var b: u8[>..] = [];
     var o: u8[>..] = [];
     let ev = http::h2_read(sv, part, fields, b, o);
-    check_int("a block not all here", ev.kind as i64, http::EV2_NEED_MORE as i64);
+    check_int("a block not all here", ev.kind, http::EV2_NEED_MORE);
     slog.clear();
     drain(sv, to_s, to_c, slog, sbody, true);
     check_int("the big field whole", if find(slog, str("|x-big: ", big[7..big.len - 2], "|")) > 0 { 1 } else { 0 }, 1);

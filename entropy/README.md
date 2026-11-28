@@ -12,7 +12,7 @@ program can put another in its place.
 | Windows | `ProcessPrng` on Windows 10 and later, `RtlGenRandom` before, looked up at run time so no library is linked |
 
 ```goose
-import gslib from "SorinS/gslib@v0.7.0";
+import gslib from "SorinS/gslib@v0.9.4";
 import gslib.entropy;
 
 fn main() {
@@ -47,8 +47,8 @@ from, and any package of that name whose functions match the ones called
 takes this one's place:
 
 ```goose
-import tls from "SorinS/tlsgoose@v0.9.1";
-import entropy from "../fixed_entropy";   // instead of "SorinS/entropygoose@v0.9.1"
+import tls from "SorinS/tlsgoose@v0.9.4";
+import entropy from "../fixed_entropy";   // instead of "SorinS/entropygoose@v0.9.4"
 ```
 
 ```goose

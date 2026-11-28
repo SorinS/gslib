@@ -12,7 +12,7 @@ one namespace:
 | `gslib.net.idna` | host names outside ASCII as `xn--` Punycode | x/net/idna's ToASCII, as cookiejar uses it |
 
 ```goose
-import gslib from "SorinS/gslib@v0.7.0";
+import gslib from "SorinS/gslib@v0.9.4";
 import gslib.net;
 import gslib.net.ip;
 
