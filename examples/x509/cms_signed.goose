@@ -48,7 +48,7 @@ fn receive(signed: const u8[:], ca: const u8[:], now: i64) -> i64 {
 }
 
 fn main() {
-    let now = time() as i64;
+    let now = time_ns() / 1000000000;
     let ca_key = x509::generate_key(x509::KEY_EC_P256);
     var ct, okc = x509::template("CN=Example Code Signing CA,O=Example", now - DAY, now + 5 * 365 * DAY);
     ct.is_ca = true;

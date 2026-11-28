@@ -125,7 +125,7 @@ root struct Args {
 
 fn parse_args(a: u8[:][>..]&, p: webauthn::Policy&, x: Args&) {
     var i = 2;
-    p.now = time() as i64;
+    p.now = time_ns() / 1000000000;
     while i < a.len {
         let s = a[i];
         let has = i + 1 < a.len;

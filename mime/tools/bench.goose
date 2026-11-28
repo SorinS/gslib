@@ -52,7 +52,7 @@ fn main() {
         if ev == multipart::EV_END || ev == multipart::EV_ERROR { break; }
     }
     let t1 = clock();
-    print("multipart read: ", parts, " parts, ", total, " bytes, ", (body.len / (t1 - t0) / 1e6) as i64, " MB/s");
+    print("multipart read: ", parts, " parts, ", total, " bytes, ", (body.len / (t1 - t0) / 1e6) as! i64, " MB/s");
     // many small fields through ReadForm
     var small: u8[>..] = [];
     for i in 1000 { format(small, "--", boundary, "\r\nContent-Disposition: form-data; name=\"field", i, "\"\r\n\r\nvalue ", i, "\r\n"); }
@@ -63,7 +63,7 @@ fn main() {
         multipart::read_form_bytes(f, small, boundary, 32 << 20);
     }
     let t3 = clock();
-    print("ReadForm, 1000 fields: ", ((t3 - t2) * 1e6 / 100.0) as i64, " us/form");
+    print("ReadForm, 1000 fields: ", ((t3 - t2) * 1e6 / 100.0) as! i64, " us/form");
     // quoted-printable both ways
     var text: u8[>..] = [];
     for i in 1 << 20 { text.push(if i % 7 == 0 { 0xe9 } else if i % 61 == 0 { '\n' } else { ('a' + (i % 26)) as u8 }); }
@@ -74,7 +74,7 @@ fn main() {
     var dec: u8[>..] = [];
     for k in 10 { dec.clear(); quotedprintable::decode_all(dec, enc); }
     let t6 = clock();
-    print("QP encode: ", (10.0 * text.len / (t5 - t4) / 1e6) as i64, " MB/s, decode: ", (10.0 * enc.len / (t6 - t5) / 1e6) as i64, " MB/s");
+    print("QP encode: ", (10.0 * text.len / (t5 - t4) / 1e6) as! i64, " MB/s, decode: ", (10.0 * enc.len / (t6 - t5) / 1e6) as! i64, " MB/s");
     let t7 = clock();
     var n = 0;
     for k in 100000 {
@@ -82,5 +82,5 @@ fn main() {
         n += mt.params.len;
     }
     let t8 = clock();
-    print("ParseMediaType: ", ((t8 - t7) * 1e9 / 100000.0) as i64, " ns/op (", n, ")");
+    print("ParseMediaType: ", ((t8 - t7) * 1e9 / 100000.0) as! i64, " ns/op (", n, ")");
 }

@@ -62,6 +62,6 @@ fn main() {
     t0 = clock();
     for i in n { guard bignum::ed448_verify(pk, msg, sig) else { fail("verify"); } }
     let tv = clock() - t0;
-    print("x448: ", (tx * 1000000.0 / n) as i64, " us, ed448 sign: ", (ts * 1000000.0 / n) as i64,
-          " us, verify: ", (tv * 1000000.0 / n) as i64, " us");
+    print("x448: ", (tx * 1000000.0 / n) as! i64, " us, ed448 sign: ", (ts * 1000000.0 / n) as! i64,
+          " us, verify: ", (tv * 1000000.0 / n) as! i64, " us");
 }

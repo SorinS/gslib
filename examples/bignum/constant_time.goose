@@ -55,7 +55,7 @@ fn main() {
     var r = limbs("", p.len);
     let t0 = clock();
     bignum::mont_modexp(r, gl, el, pm, bignum::mont_m0i(pm[0]), r2);
-    let ms = ((clock() - t0) * 1000.0) as i64;
+    let ms = ((clock() - t0) * 1000.0) as! i64;
     var out: u8[>..] = [];
     out.resize(p.len, 0);
     bignum::be_from_limbs(out, r);

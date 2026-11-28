@@ -58,7 +58,7 @@ fn leaf(host: const u8[:], eku: u32, issuer: const u8[:], issuer_key: const x509
 }
 
 fn main() {
-    let now = time() as i64;
+    let now = time_ns() / 1000000000;
     let root_key = x509::generate_key(x509::KEY_EC_P256);
     let root = ca("CN=Example Root CA,O=Example", root_key, "", root_key, now);
     let int_key = x509::generate_key(x509::KEY_EC_P256);

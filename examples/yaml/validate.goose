@@ -66,7 +66,7 @@ fn main() {
     }
     let t0 = clock();
     let v = verdict(bomb);
-    print("alias bomb (", bomb.len, " bytes): ", v, ", in ", ((clock() - t0) * 1000.0) as i64, " ms");
+    print("alias bomb (", bomb.len, " bytes): ", v, ", in ", ((clock() - t0) * 1000.0) as! i64, " ms");
     if !v.starts_with("yaml: document contains excessive aliasing") { failures++; }
 
     guard failures == 0 else { print("validate: ", failures, " unexpected"); exit(1); }

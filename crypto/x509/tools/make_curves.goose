@@ -80,7 +80,7 @@ fn sign_to(dir: const u8[:], name: const u8[:], key: const x509::PrivateKey&, ce
 
 fn main() {
     let dir = args()[1];
-    let now = time() as i64;
+    let now = time_ns() / 1000000000;
     let sign_agree = x509::KU_DIGITAL_SIGNATURE | x509::KU_KEY_AGREEMENT;
 
     let root_key = x509::generate_key(x509::KEY_EC_BP512);

@@ -37,7 +37,7 @@ fn main() {
     var pi = bignum::mul(bignum::big(16), atan_inv(5, scale));
     bignum::sub_from(pi, bignum::mul(bignum::big(4), atan_inv(239, scale)));
     let digits = bignum::to_str(bignum::div(pi, bignum::pow(bignum::big(10), 10)));
-    let ms = ((clock() - t0) * 1000.0) as i64;
+    let ms = ((clock() - t0) * 1000.0) as! i64;
     print(digits[..1], ".", digits[1.. ::min(digits.len, 61)], "...");
     print("last digits: ...", digits[digits.len - 20..]);
     print(n, " digits in ", ms, " ms");

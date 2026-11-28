@@ -20,7 +20,7 @@ let DAY: i64 = 86400;
 fn fail(what: const u8[:], e: i64) { print("csr: ", what, ": ", x509::error_text(e)); exit(1); }
 
 fn main() {
-    let now = time() as i64;
+    let now = time_ns() / 1000000000;
 
     // The applicant: a key, and a request for two names. RFC 4514 text,
     // with an escaped comma in O.

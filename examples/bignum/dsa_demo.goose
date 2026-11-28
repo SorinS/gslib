@@ -25,7 +25,7 @@ fn main() {
     // keeps this quick. (2048, 224), (2048, 256) and (3072, 256) work too.
     let t0 = clock();
     let p, q, g = bignum::dsa_generate_parameters(1024, 160);
-    print("parameters: p ", p.len * 8, " bits, q ", q.len * 8, " bits, made in ", ((clock() - t0) * 1000.0) as i64, " ms");
+    print("parameters: p ", p.len * 8, " bits, q ", q.len * 8, " bits, made in ", ((clock() - t0) * 1000.0) as! i64, " ms");
     let key, ok = bignum::dsa_generate_key(p, q, g);
     guard ok else { fail("key generation"); }
     print("public y ", hex(key.y[..16]), "...");

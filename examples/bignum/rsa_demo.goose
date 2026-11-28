@@ -14,7 +14,7 @@ fn hex(b: const u8[:]) -> u8[>..] {
     return out;
 }
 
-fn ms(t: f64) -> f64 { (t * 10000.0) as i64 / 10.0 }
+fn ms(t: f64) -> f64 { (t * 10000.0) as! i64 / 10.0 }
 
 fn main() {
     var bits = 2048;

@@ -59,7 +59,7 @@ fn main() {
     let dir = a[1];
     var kder: u8[>..] = [];
     assert(read_file(a[2], kder));
-    let now = time() as i64;
+    let now = time_ns() / 1000000000;
     let year: i64 = 31536000;
     let root_key = x509::generate_key(x509::KEY_EC_P384);
     var rt, okr = x509::template("CN=Goose Made Root,O=Goose,C=US", now - 3600, now + 10 * year);

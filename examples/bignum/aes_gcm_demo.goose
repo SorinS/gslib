@@ -37,5 +37,5 @@ fn main() {
     let t0 = clock();
     for i in reps { let tag = bignum::gcm_encrypt(g, nonce, header, data); }
     let mbs = reps / (clock() - t0);
-    print("AES-256-GCM: ", (mbs * 10.0) as i64 / 10.0, " MB/s");
+    print("AES-256-GCM: ", (mbs * 10.0) as! i64 / 10.0, " MB/s");
 }

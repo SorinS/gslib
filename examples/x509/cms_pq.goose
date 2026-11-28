@@ -34,7 +34,7 @@ fn issue(subject: const u8[:], k: const x509::PrivateKey&, usage: u32, ca: const
 }
 
 fn main() {
-    let now = time() as i64;
+    let now = time_ns() / 1000000000;
     let ca_key = x509::generate_key(x509::KEY_MLDSA65);
     var ct, okc = x509::template("CN=Example PQ CA,O=Example", now - DAY, now + 5 * 365 * DAY);
     ct.is_ca = true;

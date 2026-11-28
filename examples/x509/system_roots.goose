@@ -20,7 +20,7 @@ import gslib.crypto.x509.verify;
 let DAY: i64 = 86400;
 
 fn main() {
-    let now = time() as i64;
+    let now = time_ns() / 1000000000;
 
     // A private root and a server certificate under it, for the checks.
     let rk = x509::generate_key(x509::KEY_EC_P256);

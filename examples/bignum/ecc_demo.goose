@@ -17,7 +17,7 @@ fn hex(b: const u8[:]) -> u8[>..] {
     return out;
 }
 
-fn us(t: f64, reps: i64) -> i64 { (t / reps * 1000000.0) as i64 }
+fn us(t: f64, reps: i64) -> i64 { (t / reps * 1000000.0) as! i64 }
 
 fn curve_demo(name: const u8[:], c: const bignum::Curve&) {
     let a, apk = bignum::ec_keypair(c);

@@ -81,6 +81,6 @@ fn main() {
     let g = product(factors);
     let t_split = clock() - t0;
     print("  by prime powers and binary splitting: equal = ", bignum::eq(f, g));
-    print("  direct ", (t_direct * 1000.0) as i64, " ms, split ", (t_split * 1000.0) as i64, " ms");
+    print("  direct ", (t_direct * 1000.0) as! i64, " ms, split ", (t_split * 1000.0) as! i64, " ms");
     assert(bignum::eq(f, g));
 }

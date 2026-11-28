@@ -32,7 +32,7 @@ fn issue(host: const u8[:], ca: const u8[:], ca_key: const x509::PrivateKey&, no
 }
 
 fn main() {
-    let now = time() as i64;
+    let now = time_ns() / 1000000000;
     let ca_key = x509::generate_key(x509::KEY_EC_P256);
     var t, okt = x509::template("CN=Example CA,O=Example", now - 2 * DAY, now + 365 * DAY);
     t.is_ca = true;

@@ -27,7 +27,7 @@ fn save(dir: const u8[:], name: const u8[:], label: const u8[:], der: const u8[:
 }
 
 fn main() {
-    let now = time() as i64;
+    let now = time_ns() / 1000000000;
 
     // The root: self-signed (no issuer certificate), a CA, allowed to sign
     // certificates and CRLs. Its key never leaves the CA.

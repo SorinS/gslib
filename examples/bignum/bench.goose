@@ -36,16 +36,16 @@ fn main() {
     var f = bignum::one();
     for i in 1..10001 { bignum::mul_add_small_to(f, i as u32, 0); }
     let digits = bignum::to_str(f).len;
-    print("10000! (", digits, " digits) computed and printed in ", ((clock() - t0) * 1000.0) as i64, " ms");
+    print("10000! (", digits, " digits) computed and printed in ", ((clock() - t0) * 1000.0) as! i64, " ms");
 
     t0 = clock();
     let m = bignum::sub(bignum::shl(bignum::one(), 2048), bignum::big(1557));
     let e = bignum::sub(m, bignum::big(2));
     let x = bignum::modpow(bignum::big(3), e, m);
-    print("2048-bit modpow in ", ((clock() - t0) * 1000.0) as i64, " ms");
+    print("2048-bit modpow in ", ((clock() - t0) * 1000.0) as! i64, " ms");
 
     t0 = clock();
     let big1 = bignum::pow(bignum::big(3), 200000);
     let sq = bignum::mul(big1, big1);
-    print("3^200000 squared (", bignum::bit_len(sq), " bits) in ", ((clock() - t0) * 1000.0) as i64, " ms");
+    print("3^200000 squared (", bignum::bit_len(sq), " bits) in ", ((clock() - t0) * 1000.0) as! i64, " ms");
 }

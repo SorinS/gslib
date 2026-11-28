@@ -18,7 +18,7 @@ fn fail(what: const u8[:]) { print("keys: ", what); exit(1); }
 
 // A certificate for a key, so verify_with can check its signatures.
 fn self_signed(k: const x509::PrivateKey&) -> x509::Cert {
-    let now = time() as i64;
+    let now = time_ns() / 1000000000;
     var t, ok = x509::template("CN=key holder", now, now + 86400);
     let der, e = x509::create_certificate(t, x509::marshal_public_key(k), "", k);
     let c, ep = x509::parse(der);
@@ -50,7 +50,7 @@ fn round_trip(name: const u8[:], k: const x509::PrivateKey&, ms: i64) {
           " bytes, signature ", sig.len, " bytes");
 }
 
-fn ms_since(t0: f64) -> i64 { ((clock() - t0) * 1000.0) as i64 }
+fn ms_since(t0: f64) -> i64 { ((clock() - t0) * 1000.0) as! i64 }
 
 fn main() {
     // DSA keys work the same way (generate_key(x509::KEY_DSA, 2048)), but

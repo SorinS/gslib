@@ -170,9 +170,9 @@ recursive fn mul_kara(r: u32[:], a: const u32[:], b: const u32[:], scratch: u32[
     let sa = scratch[mark..mark + la];
     let sb = scratch[mark + la..mark + la + lb];
     let t = scratch[mark + la + lb..];
-    copy_into(sa[..a1.len], a1);
+    copy_from(sa[..a1.len], a1);
     add_into(sa, a0);
-    copy_into(sb[..b1.len], b1);
+    copy_from(sb[..b1.len], b1);
     add_into(sb, b0);
     mul_kara(t, sa, sb, scratch);                        // (a0 + a1)(b0 + b1)
     sub_into(t, r[..2 * h]);

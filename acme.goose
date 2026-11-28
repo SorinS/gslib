@@ -517,7 +517,7 @@ fn take_nonce(a: Client&, r: const http::Response&) {
 
 fn take_retry_after(a: Client&, r: const http::Response&) {
     let v, ok = http::response_header(r, "Retry-After");
-    a.retry_after_ms = if ok { retry_after_ms(v, (time() * 1000.0) as i64) } else { 0 };
+    a.retry_after_ms = if ok { retry_after_ms(v, time_ns() / 1000000) } else { 0 };
 }
 
 // A fresh nonce from newNonce (§7.2).

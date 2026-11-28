@@ -22,7 +22,7 @@ let DAY: i64 = 86400;
 
 fn fail(what: const u8[:]) { print("slhdsa_cert: ", what); exit(1); }
 
-fn ms_since(t0: f64) -> i64 { ((clock() - t0) * 1000.0) as i64 }
+fn ms_since(t0: f64) -> i64 { ((clock() - t0) * 1000.0) as! i64 }
 
 fn pem(label: const u8[:], der: const u8[:]) -> u8[>..] {
     var out: u8[>..] = [];
@@ -41,7 +41,7 @@ fn cert_from_pem(text: const u8[:]) -> u8[>..] {
 
 fn main() {
     let a = args();
-    let now = time() as i64;
+    let now = time_ns() / 1000000000;
 
     // The CA: an SLH-DSA-SHA2-128f key and a self-signed certificate.
     var t0 = clock();

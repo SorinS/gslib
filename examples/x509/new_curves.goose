@@ -32,7 +32,7 @@ fn pem(label: const u8[:], der: const u8[:]) -> u8[>..] {
 
 fn main() {
     let a = args();
-    let now = time() as i64;
+    let now = time_ns() / 1000000000;
 
     // The CA: brainpoolP384r1, self-signed (ECDSA with SHA-384).
     let ca_key = x509::generate_key(x509::KEY_EC_BP384);

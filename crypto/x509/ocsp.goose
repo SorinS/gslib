@@ -363,7 +363,7 @@ fn ocsp_check_response(r: const OcspResponse&, c: const Cert&, issuer: const Cer
     if want.name_hash != r.id.name_hash || want.key_hash != r.id.key_hash || want.serial != r.id.serial {
         return ERR_UNKNOWN_ISSUER;
     }
-    let t = if now == 0 { time() as i64 } else { now };
+    let t = if now == 0 { time_ns() / 1000000000 } else { now };
     let direct = ocsp_signed_by(r, issuer);
     // Signed by the issuer, the ResponderID must name the issuer (RFC 6960
     // §4.2.2.3): who signed is who the response says it is.

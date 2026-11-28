@@ -34,5 +34,5 @@ fn main() {
     print("low-order peer rejected: ", !okbad);
     let t0 = clock();
     for i in 1000 { let r = bignum::x25519_base(alice_sk); }
-    print("x25519: ", ((clock() - t0) * 1000.0) as i64, " us per operation");
+    print("x25519: ", ((clock() - t0) * 1000.0) as! i64, " us per operation");
 }
