@@ -18,6 +18,7 @@ later.
 | `encoding/yaml` | YAML 1.2 | [README](encoding/yaml/README.md) |
 | `encoding/xml` | XML 1.0 and Namespaces, parsed for documents from strangers (no DTDs or entities, limits, strict well-formedness, unique IDs), built and written; Canonical XML 1.0 and 1.1 and Exclusive XML Canonicalization; XML Signature (enveloped, RSA, RSA-PSS, ECDSA, Ed25519), verified against signature wrapping; XML Encryption (AES-GCM, RSA-OAEP, ECDH-ES; AES-CBC and RSA 1.5 to decrypt, opted into): what SAML is built on | [README](encoding/xml/README.md) |
 | `encoding/cbor` | CBOR (RFC 8949) decoded strictly for data from strangers (definite lengths unless opted into, no duplicate map keys, UTF-8 checked, depth, item and size limits, the shortest or the deterministic form when asked; tags passed through) and written in the core deterministic encoding; diagnostic notation; COSE_Key (RFC 9052/9053, RFC 8230) for EC2, OKP and RSA keys and signatures by ES256/384/512, EdDSA, Ed25519, Ed448, PS256/384/512, RS256/384/512, converted to and from JWKs and SubjectPublicKeyInfo: what WebAuthn is built on | [README](encoding/cbor/README.md) |
+| `encoding/hex` | Bytes as hex text and back, as Go's encoding/hex: lowercase or uppercase, decoded strictly in either case with the output left alone on bad input; decode and encode_ct constant time (the digits computed, no exits chosen by the bytes), vectorized; dumps in hexdump -C's layout | [README](encoding/hex/README.md) |
 | `compress` | Compression and archives, as Go's compress/* and archive/*, plus xz: DEFLATE, gzip, zlib, LZW, bzip2, xz and LZMA, zip, tar; reading and writing | [README](compress/README.md) |
 | `mime` | MIME, as Go's mime, mime/quotedprintable and mime/multipart, and net/textproto's header sections: media types, RFC 2047 encoded-words, file extensions' types, quoted-printable, multipart bodies and forms | [README](mime/README.md) |
 | `krb5` | Kerberos V5 (RFC 4120) as go-krb5 has it: TGTs and service tickets (password, keytab, cross-realm, referrals, FAST armoring), the acceptor, GSS-API (RFC 4121), SPNEGO and HTTP Negotiate, Microsoft's PAC, keytabs and credential caches; goose-krb5 (kinit, kvno, klist) and goose-gss | [README](krb5/README.md) |
@@ -47,9 +48,9 @@ later.
 | `sspi` | Windows' SSPI, as Go's alexbrainman/sspi: security packages, credentials (the login's or a password's), contexts a token at a time, sign/verify/seal/unseal; a TLS client on Windows' own Schannel (the system's roots, policy and TLS 1.3, peer certificate for x509, manual validation for test servers); HTTP Negotiate (RFC 4559) from the Windows login, Kerberos in a domain and NTLM otherwise, or as a user by password | [README](sspi/README.md) |
 | `regex` | goose's std regex with anchors and word boundaries added, as the Rust regex crate has them: `^ $ \A \z \b \B` and the `m` flag; std's namespace and API, so a program switches by its import, until goose ships the same | [README](regex/README.md) |
 
-## entropy, net, websocket, quic, dns, pkcs11, jwx, mail, openpgp, acme, oauth, tsp, xml, est, scep, saml, ntlm, tpm2, webauthn, radius, smb, kmip, service, sys, sspi and regex
+## entropy, net, websocket, quic, dns, pkcs11, jwx, mail, openpgp, acme, oauth, tsp, xml, est, scep, saml, ntlm, tpm2, webauthn, radius, smb, kmip, service, sys, sspi, regex and hex
 
-These twenty-six have the most to say beyond their table rows: what each
+These twenty-seven have the most to say beyond their table rows: what each
 module does, how it was built and how it was tested. Each README has the
 full API.
 
@@ -1100,6 +1101,27 @@ running the DFAs. It starts `[a-z]+ing` back from each `ing`, exactly, and
 scans for a rare byte such as an email's `@` with a loop clang and GCC
 vectorize. `make bench-regex` compares it with Rust's regex, Go's regexp,
 PCRE2 and POSIX regex.h.
+
+### hex: bytes as hex text
+
+Digests, keys, test vectors, fingerprints and traces are shown and read
+as hex, and gslib's libraries each had their own few lines for it: tsp,
+tpm2, openpgp, kmip, x509, cbor and the tests. `encoding/hex` is the one
+place for it, as Go's encoding/hex: `encode` and `encode_upper` append
+two digits per byte, `to_str` returns them, `decode` reads either case
+and refuses anything but pairs of digits, leaving its output as it was,
+and `dump` writes `hexdump -C`'s layout. `encode_ct` and `decode` follow
+std's base64: the digits are computed rather than looked up in a table,
+and `decode` gathers validity across the whole input rather than
+stopping at the first bad character, so the hex of a key takes the same
+path whatever the key holds. `encode` does too from 16 bytes on, and
+below that uses a 16-byte table, which keeps it as fast as the copies for
+a few bytes; keys go through `encode_ct`. The long loops are `simd fn`s
+the C compiler vectorizes: on an M1, from 16 bytes up encode is 1.4 to 7
+times as fast as the copies and decode 4.7 to 15 times, and below that
+encode is within 5% of them (the same loop) and decode faster. Tested on RFC 4648's
+base16 vectors, all 256 bytes and characters and every length to 40
+against a plain reference, refused input, and hexdump -C's own output.
 
 ## Post-quantum cryptography
 

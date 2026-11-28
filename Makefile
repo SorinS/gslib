@@ -14,7 +14,7 @@ PYTHON  ?= python3
 GOOSE   ?= $(or $(shell command -v goose 2>/dev/null),$(abspath $(ROOT)/../goose.git/build/goose))
 export GOOSE
 
-LIBS    := asn1 bignum x509 tls ssh ldap yaml http websocket quic compress mime krb5 jwx pkcs11 dns mail openpgp acme oauth tsp xml est scep saml cbor webauthn ntlm tpm2 radius smb kmip regex
+LIBS    := asn1 bignum x509 tls ssh ldap yaml http websocket quic compress mime krb5 jwx pkcs11 dns mail openpgp acme oauth tsp xml est scep saml cbor hex webauthn ntlm tpm2 radius smb kmip regex
 
 # ------------------------------------------------------------------------------
 # Derived values
@@ -162,7 +162,7 @@ test-native: ## Run the unit tests, also built with the C compiler
 
 # test-asn1, test-bignum, ... (scripts/run_all.py refuses a name not in
 # LIBS). Not .PHONY: make looks for no pattern rule for a phony target.
-test-%: ## Run one library's unit tests: test-entropy test-asn1 test-bignum test-x509 test-tls test-ssh test-net test-ldap test-yaml test-http test-websocket test-quic test-compress test-mime test-krb5 test-jwx test-pkcs11 test-dns test-mail test-openpgp test-acme test-oauth test-tsp test-xml test-est test-scep test-saml test-cbor test-webauthn test-ntlm test-tpm2 test-radius test-smb test-kmip test-regex test-service test-sys test-sspi
+test-%: ## Run one library's unit tests: test-entropy test-asn1 test-bignum test-x509 test-tls test-ssh test-net test-ldap test-yaml test-http test-websocket test-quic test-compress test-mime test-krb5 test-jwx test-pkcs11 test-dns test-mail test-openpgp test-acme test-oauth test-tsp test-xml test-est test-scep test-saml test-cbor test-hex test-webauthn test-ntlm test-tpm2 test-radius test-smb test-kmip test-regex test-service test-sys test-sspi
 	$(call echo,"Running $* unit tests")
 	cd $(ROOT) && $(PYTHON) scripts/run_all.py --only $*
 

@@ -22,7 +22,7 @@ LIBS = {"entropy": "entropy", "asn1": "encoding/asn1", "bignum": "crypto/bignum"
         "compress": "compress", "mime": "mime", "krb5": "krb5", "jwx": "jwx",
         "pkcs11": "pkcs11", "dns": "dns", "mail": "mail", "openpgp": "crypto/openpgp",
         "acme": "acme", "oauth": "oauth", "tsp": "tsp", "est": "est", "scep": "scep", "ntlm": "ntlm", "saml": "saml",
-        "xml": "encoding/xml", "cbor": "encoding/cbor", "webauthn": "webauthn",
+        "xml": "encoding/xml", "cbor": "encoding/cbor", "hex": "encoding/hex", "webauthn": "webauthn",
         "tpm2": "tpm2", "radius": "radius", "smb": "smb", "kmip": "kmip", "regex": "regex", "service": "service", "sys": "sys", "sspi": "sspi"}
 
 

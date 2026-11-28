@@ -79,7 +79,7 @@ LIBRARIES = {
     "bignum": "crypto/bignum", "x509": "crypto/x509", "tls": "crypto/tls",
     "ssh": "crypto/ssh", "openpgp": "crypto/openpgp",
     "asn1": "encoding/asn1", "yaml": "encoding/yaml", "xml": "encoding/xml",
-    "cbor": "encoding/cbor",
+    "cbor": "encoding/cbor", "hex": "encoding/hex",
     "net": "net", "http": "net/http", "ldap": "net/ldap", "websocket": "websocket", "quic": "quic",
     "compress": "compress", "mime": "mime", "krb5": "krb5", "jwx": "jwx",
     "pkcs11": "pkcs11", "dns": "dns", "mail": "mail", "acme": "acme",

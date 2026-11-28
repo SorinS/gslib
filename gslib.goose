@@ -3,7 +3,8 @@
 // built on it (bignum), ASN.1 and PEM (asn1), X.509 (x509), TLS 1.2 and
 // 1.3 (tls), SSH and SFTP (ssh), LDAP (ldap), YAML (yaml), XML with
 // canonicalization, signatures and encryption (xml), CBOR, strict and
-// deterministic, and COSE keys (cbor), HTTP/1.1 and
+// deterministic, and COSE keys (cbor), bytes as hex text and
+// back, and hex dumps (hex), HTTP/1.1 and
 // HTTP/2 (http), WebSocket with permessage-deflate, client and server
 // (websocket), QUIC and HTTP/3, client and server (quic), TCP sockets (net), compression and archives (compress),
 // MIME (mime), and Kerberos with GSS-API, SPNEGO and the PAC (krb5),
