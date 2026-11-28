@@ -33,6 +33,7 @@ exclude = [
     "encoding/yaml/test",
     "encoding/xml/test", "encoding/xml/tools",
     "encoding/cbor/test", "encoding/cbor/tools",
+    "encoding/hex/test",
     "net/http/test", "net/http/tools",
     "websocket/test", "websocket/tools", "websocket/scripts",
     "quic/test", "quic/tools", "quic/scripts",
