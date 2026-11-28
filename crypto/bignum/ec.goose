@@ -12,7 +12,8 @@
 // for any a), which have no exceptional cases, so doubling is an addition
 // and the point at infinity needs no branch. Scalar multiplication takes
 // 4-bit windows over the full scalar width with a table read by scanning,
-// so its time does not depend on the scalar or the point.
+// so its time does not depend on the scalar or the point. Verifying, whose
+// inputs are all public, computes u1 G + u2 Q in one variable-time pass.
 
 namespace bignum;
 
@@ -398,6 +399,46 @@ fn ec_mul(c: const Curve&, k: const u32[:], p: const EcPoint&) -> EcPoint {
     return acc;
 }
 
+// u1 g + u2 q in one pass (Straus: both scalars' 4-bit windows under the
+// same doublings), for verifying, where every input is public. The time
+// depends on the scalars: a zero window adds nothing, and the doublings
+// start at the first nonzero window.
+fn ec_mul2_vartime(c: const Curve&, u1: const u32[:], g: const EcPoint&, u2: const u32[:], q: const EcPoint&) -> EcPoint {
+    var tg: EcPoint[16] = [ec_infinity(c); 16];
+    var tq: EcPoint[16] = [ec_infinity(c); 16];
+    tg[1] = g;
+    tq[1] = q;
+    for i in 2..16 {
+        tg[i] = ec_add(c, tg[i - 1], g);
+        tq[i] = ec_add(c, tq[i - 1], q);
+    }
+    var acc = ec_infinity(c);
+    var started = false;
+    var w = 8 * u1.len;
+    while w > 0 {
+        w--;
+        if started {
+            for s in 4 {
+                let d = ec_add(c, acc, acc);
+                acc = d;
+            }
+        }
+        let w1 = exp_window(u1, w);
+        if w1 != 0 {
+            let sum = ec_add(c, acc, tg[w1]);
+            acc = sum;
+            started = true;
+        }
+        let w2 = exp_window(u2, w);
+        if w2 != 0 {
+            let sum = ec_add(c, acc, tq[w2]);
+            acc = sum;
+            started = true;
+        }
+    }
+    return acc;
+}
+
 // Affine x and y in normal form, and false for infinity.
 fn ec_affine(c: const Curve&, p: const EcPoint&) -> u32[..17], u32[..17], bool {
     let z = from_mont(c, p.z[..]);
@@ -652,9 +693,7 @@ fn ecdsa_verify_digest(c: const Curve&, pk: const u8[:], digest: const u8[:], si
     let u1 = nmul(c, e[..], w[..]);
     let u2 = nmul(c, r[..], w[..]);
     let g = ec_generator(c);
-    let p1 = ec_mul(c, u1[..], g);
-    let p2 = ec_mul(c, u2[..], q);
-    let pt = ec_add(c, p1, p2);
+    let pt = ec_mul2_vartime(c, u1[..], g, u2[..], q);
     let x, y, ok = ec_affine(c, pt);
     if !ok { return false; }
     return ct_eq(nreduce(c, x[..])[..], r[..]) == 1;

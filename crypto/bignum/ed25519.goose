@@ -6,7 +6,8 @@
 // doubling is an addition. Signing multiplies the base point by secret
 // scalars with 4-bit windows over all 256 bits and a table read by
 // scanning, and reduces its scalars mod L with bignum.mont, so it runs in
-// constant time. Verification works on public data only.
+// constant time. Verification works on public data only, and computes
+// [S]B - [k]A in one variable-time pass.
 
 namespace bignum;
 
@@ -112,6 +113,47 @@ fn ed_mul(k: const u8[:], p: const EdPoint&) -> EdPoint {
         for j in 16 { ed_select(sel, tab[j], 0 - (ct_eq_u32(win, j as! u32) as i64)); }
         let sum = ed_add(acc, sel);
         acc = sum;
+    }
+    return acc;
+}
+
+// a * p + b * q for 32-byte little-endian scalars in one pass (Straus: both
+// scalars' 4-bit windows under the same doublings), for verifying, where
+// every input is public. The time depends on the scalars: a zero window
+// adds nothing, and the doublings start at the first nonzero window.
+fn ed_mul2_vartime(a: const u8[:], p: const EdPoint&, b: const u8[:], q: const EdPoint&) -> EdPoint {
+    assert(a.len == 32 && b.len == 32);
+    var tp: EdPoint[16] = [ed_identity(); 16];
+    var tq: EdPoint[16] = [ed_identity(); 16];
+    tp[1] = p;
+    tq[1] = q;
+    for i in 2..16 {
+        tp[i] = ed_add(tp[i - 1], p);
+        tq[i] = ed_add(tq[i - 1], q);
+    }
+    var acc = ed_identity();
+    var started = false;
+    var w = 64;
+    while w > 0 {
+        w--;
+        if started {
+            for s in 4 {
+                let d = ed_add(acc, acc);
+                acc = d;
+            }
+        }
+        let wa = (a[w / 2] >> (4 * (w % 2))) & 15;
+        if wa != 0 {
+            let sum = ed_add(acc, tp[wa]);
+            acc = sum;
+            started = true;
+        }
+        let wb = (b[w / 2] >> (4 * (w % 2))) & 15;
+        if wb != 0 {
+            let sum = ed_add(acc, tq[wb]);
+            acc = sum;
+            started = true;
+        }
     }
     return acc;
 }
@@ -275,7 +317,7 @@ fn ed25519_sign_ph(seed: const u8[:], digest: const u8[:], ctx: const u8[:] = ""
     return ed_sign_dom(seed, d, digest);
 }
 
-// [8][S]B == [8]R + [8][k]A, with A and R decoded strictly and S < L.
+// [8]([S]B - [k]A) == [8]R, with A and R decoded strictly and S < L.
 fn ed_verify_dom(pk: const u8[:], dom: const u8[:], msg: const u8[:], sig: const u8[:]) -> bool {
     if pk.len != 32 || sig.len != 64 { return false; }
     let a, oka = ed_decode(pk);
@@ -285,9 +327,9 @@ fn ed_verify_dom(pk: const u8[:], dom: const u8[:], msg: const u8[:], sig: const
     if ct_lt(s, ED_L) == 0 { return false; }
     let k = ed_hram(dom, sig[..32], pk, msg);
     let b = ed_base();
-    var lhs = ed_mul(sig[32..], b);
-    let ka = ed_mul(k, a);
-    var rhs = ed_add(r, ka);
+    let na = ed_neg(a);
+    var lhs = ed_mul2_vartime(sig[32..], b, k, na);
+    var rhs = r;
     for i in 3 {
         let l2 = ed_add(lhs, lhs);
         lhs = l2;
